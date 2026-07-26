@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import {
   candidateNames,
   detectPlatform,
+  expectedDigest,
   releaseUrl,
+  verifyArchive,
 } from "./binaries.ts";
 import { buildFdArgs, buildRgArgs } from "./run.ts";
 
@@ -20,14 +25,67 @@ describe("detectPlatform", () => {
 });
 
 describe("releaseUrl", () => {
-  it("builds fd and rg release URLs", () => {
-    const fd = releaseUrl("fd", { os: "darwin", arch: "arm64" });
-    assert.match(fd, /sharkdp\/fd\/releases\/download\/v10\.2\.1\/fd-v10\.2\.1-aarch64-apple-darwin\.tar\.gz$/);
-    const rg = releaseUrl("rg", { os: "linux", arch: "x64" });
-    assert.match(
-      rg,
-      /BurntSushi\/ripgrep\/releases\/download\/14\.1\.1\/ripgrep-14\.1\.1-x86_64-unknown-linux-gnu\.tar\.gz$/,
-    );
+  it("builds official URLs for every supported target", () => {
+    const targets = [
+      { target: { os: "darwin", arch: "arm64" }, triple: "aarch64-apple-darwin" },
+      { target: { os: "darwin", arch: "x64" }, triple: "x86_64-apple-darwin" },
+      { target: { os: "linux", arch: "arm64" }, triple: "aarch64-unknown-linux-gnu" },
+      { target: { os: "linux", arch: "x64" }, triple: "x86_64-unknown-linux-gnu" },
+    ] as const;
+
+    for (const { target, triple } of targets) {
+      assert.equal(
+        releaseUrl("fd", target),
+        `https://github.com/sharkdp/fd/releases/download/v10.2.0/fd-v10.2.0-${triple}.tar.gz`,
+      );
+      const rgTriple =
+        target.os === "linux" && target.arch === "x64"
+          ? "x86_64-unknown-linux-musl"
+          : triple;
+      assert.equal(
+        releaseUrl("rg", target),
+        `https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-${rgTriple}.tar.gz`,
+      );
+    }
+  });
+});
+
+describe("expectedDigest", () => {
+  it("covers every supported binary and target", () => {
+    for (const name of ["fd", "rg"] as const) {
+      for (const os of ["darwin", "linux"] as const) {
+        for (const arch of ["x64", "arm64"] as const) {
+          assert.match(expectedDigest(name, { os, arch }) ?? "", /^[a-f0-9]{64}$/);
+        }
+      }
+    }
+    assert.equal(expectedDigest("fd", { os: "win32", arch: "x64" }), null);
+  });
+});
+
+describe("verifyArchive", () => {
+  it("accepts matching bytes and rejects changed bytes", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-binary-digest-"));
+    const archive = join(dir, "archive.tar.gz");
+    try {
+      await writeFile(archive, "official archive");
+      await verifyArchive(
+        archive,
+        "764884ced8d4b07eac08febddb267116e3422a66ce76eb6dddb016e36d7cd286",
+        "fd 10.2.0 on darwin/arm64",
+      );
+      await writeFile(archive, "changed archive");
+      await assert.rejects(
+        verifyArchive(
+          archive,
+          "764884ced8d4b07eac08febddb267116e3422a66ce76eb6dddb016e36d7cd286",
+          "fd 10.2.0 on darwin/arm64",
+        ),
+        /Digest mismatch for fd 10\.2\.0 on darwin\/arm64/,
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 

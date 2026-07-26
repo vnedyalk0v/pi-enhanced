@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
+  createReadStream,
   createWriteStream,
   existsSync,
   mkdirSync,
@@ -23,8 +25,25 @@ export type PlatformTarget = {
   arch: "x64" | "arm64";
 };
 
-const FD_VERSION = "10.2.1";
+type TargetKey = `${PlatformTarget["os"]}-${PlatformTarget["arch"]}`;
+
+const FD_VERSION = "10.2.0";
 const RG_VERSION = "14.1.1";
+
+const DIGESTS: Record<BinaryName, Record<TargetKey, string>> = {
+  fd: {
+    "darwin-arm64": "ae6327ba8c9a487cd63edd8bddd97da0207887a66d61e067dfe80c1430c5ae36",
+    "darwin-x64": "991a648a58870230af9547c1ae33e72cb5c5199a622fe5e540e162d6dba82d48",
+    "linux-arm64": "6de8be7a3d8ca27954a6d1e22bc327af4cf6fc7622791e68b820197f915c422b",
+    "linux-x64": "5f9030bcb0e1d03818521ed2e3d74fdb046480a45a4418ccff4f070241b4ed25",
+  },
+  rg: {
+    "darwin-arm64": "24ad76777745fbff131c8fbc466742b011f925bfa4fffa2ded6def23b5b937be",
+    "darwin-x64": "fc87e78f7cb3fea12d69072e7ef3b21509754717b746368fd40d88963630e2b3",
+    "linux-arm64": "c827481c4ff4ea10c9dc7a4022c8de5db34a5737cb74484d62eb94a95841ab2f",
+    "linux-x64": "4cf9f2741e6c465ffdb7c26f38056a59e2a2544b51f7cc128ef28337eeae4d8e",
+  },
+};
 
 export function detectPlatform(
   platform = process.platform,
@@ -72,18 +91,39 @@ export async function resolveExisting(
   return null;
 }
 
-function rustTriple(target: PlatformTarget): string {
+function rustTriple(name: BinaryName, target: PlatformTarget): string {
   const arch = target.arch === "x64" ? "x86_64" : "aarch64";
   if (target.os === "darwin") return `${arch}-apple-darwin`;
+  if (name === "rg" && target.arch === "x64") return `${arch}-unknown-linux-musl`;
   return `${arch}-unknown-linux-gnu`;
 }
 
 export function releaseUrl(name: BinaryName, target: PlatformTarget): string {
-  const triple = rustTriple(target);
+  const triple = rustTriple(name, target);
   if (name === "fd") {
     return `https://github.com/sharkdp/fd/releases/download/v${FD_VERSION}/fd-v${FD_VERSION}-${triple}.tar.gz`;
   }
   return `https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/ripgrep-${RG_VERSION}-${triple}.tar.gz`;
+}
+
+export function expectedDigest(
+  name: BinaryName,
+  target: { os: string; arch: string },
+): string | null {
+  const key = `${target.os}-${target.arch}`;
+  return Object.hasOwn(DIGESTS[name], key) ? DIGESTS[name][key as TargetKey] : null;
+}
+
+export async function verifyArchive(
+  archivePath: string,
+  expected: string,
+  label: string,
+): Promise<void> {
+  const hash = createHash("sha256");
+  for await (const chunk of createReadStream(archivePath)) hash.update(chunk);
+  if (hash.digest("hex") !== expected) {
+    throw new Error(`Digest mismatch for ${label}`);
+  }
 }
 
 async function downloadToFile(url: string, dest: string): Promise<void> {
@@ -166,6 +206,12 @@ export async function ensureBinary(
 
   await downloadToFile(url, archive);
   try {
+    const digest = expectedDigest(name, target);
+    if (!digest) {
+      throw new Error(`No pinned digest for ${name} on ${target.os}/${target.arch}`);
+    }
+    const version = name === "fd" ? FD_VERSION : RG_VERSION;
+    await verifyArchive(archive, digest, `${name} ${version} on ${target.os}/${target.arch}`);
     await extractBinary(archive, name, dest);
   } finally {
     rmSync(archive, { force: true });
