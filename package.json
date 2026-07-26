@@ -9,7 +9,9 @@
   ],
   "scripts": {
     "check": "tsc --noEmit",
-    "test": "node --test --experimental-strip-types extensions/**/*.test.ts"
+    "test": "node --test --experimental-strip-types extensions/**/*.test.ts",
+    "smoke:package": "node scripts/package-smoke.mjs",
+    "verify": "npm run check && npm test && npm run smoke:package"
   },
   "pi": {
     "extensions": [
@@ -34,7 +36,7 @@
     "@earendil-works/pi-ai": "0.82.1",
     "@earendil-works/pi-coding-agent": "0.82.1",
     "@earendil-works/pi-tui": "0.82.1",
-    "@types/node": "26.1.1",
+    "@types/node": "^22.20.1",
     "typebox": "1.1.38",
     "typescript": "7.0.2"
   },
