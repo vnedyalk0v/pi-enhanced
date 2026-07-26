@@ -8,11 +8,15 @@
     "pi-package"
   ],
   "scripts": {
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test": "node --test --experimental-strip-types extensions/**/*.test.ts"
   },
   "pi": {
     "extensions": [
       "./extensions"
+    ],
+    "themes": [
+      "./themes"
     ]
   },
   "peerDependencies": {

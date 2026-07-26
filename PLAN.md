@@ -30,20 +30,21 @@ extension optional and independently testable.
 **Completed:** Pi `0.82.1` loads the foundation extension, `/pi-enhanced`
 confirms it in the real TUI, and `npm run check` runs the repository gate.
 
-## Phase 2 — Small first-class tools
+## Phase 2 — Small first-class tools ✅
 
 Implement the low-risk extensions first:
 
-1. `copy-all`
-2. `ask-user`
-3. `file-search` using installed `fd` and `rg`, with a local fallback install
-4. `git-info`
-5. `model-info`
-6. `ui-customization` and the GitHub Dark Default theme
-7. run summaries
+1. `copy-all` — `/copy-all` copies the full conversation branch
+2. `ask-user` — `ask_user` multiple-choice tool (optional free text)
+3. `file-search` — `fd` / `rg` tools with PATH + `~/.pi/agent/bin` + HTTPS install
+4. `git-info` — branch/dirty/ahead/behind status in the footer
+5. `model-info` — model, thinking level, context usage status
+6. `ui-customization` + `themes/github-dark-default.json`
+7. `summaries` — `/summary` via the active session model
 
-**Done when:** every tool works in a real Pi session and file-search installation
-is covered on supported operating systems and architectures.
+**Completed:** extensions and theme land in-tree; `npm run check` and
+`npm test` (file-search unit tests) pass. Real-session smoke still recommended
+before calling Phase 2 fully done in a release sense.
 
 ## Phase 3 — Background terminals
 

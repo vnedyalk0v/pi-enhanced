@@ -12,25 +12,36 @@ intentional differences:
 - Firecrawl is the primary web-search provider, with a normal-search fallback
   when the free-plan quota is exhausted.
 
-## Planned starter features
+## Features
+
+**Phase 2 (available now)**
+
+- `/copy-all` — copy the full conversation branch to the clipboard
+- `ask_user` — structured multiple-choice questions (optional free text)
+- `fd` / `rg` tools — system binaries, or auto-install into `~/.pi/agent/bin/`
+- Git + model/context status in the footer
+- Enhanced footer (`/footer-enhanced`) and GitHub Dark Default theme
+- `/summary` — summarize the session with the active model
+
+**Planned**
 
 - Pi and Codex subagents with background execution and result delivery
 - multi-phase workflows with parallel agents and structured handoffs
 - managed background terminals for servers, watchers, and long-running commands
-- first-class `fd` and `rg` tools
-- structured multiple-choice questions
 - Firecrawl search, scrape, and crawl tools with quota-aware fallback
-- Git, model, context, and working-directory status in the TUI
-- session copy and summary commands
-- a GitHub Dark Default theme
 
 ## Status
 
-Foundation complete on Pi `0.82.1`. Run `/pi-enhanced` in Pi to verify that the
-starter extension loaded.
+Phases 1–2 on Pi `0.82.1`. Install the package (or `pi -e ./`), then try
+`/copy-all`, `ask_user`, `fd`/`rg`, and `/summary`.
 
-See [PLAN.md](PLAN.md) for the remaining implementation sequence and acceptance
-criteria.
+Set the theme in settings if you want it always:
+
+```json
+{ "theme": "github-dark-default" }
+```
+
+See [PLAN.md](PLAN.md) for the remaining implementation sequence.
 
 ## Development
 
@@ -40,7 +51,8 @@ Requires Node.js `22.19.0` or newer. Extensions load as a Pi package via the
 ```sh
 npm install
 npm run check
-pi --extension ./extensions/foundation/index.ts
+npm test
+pi -e ./
 ```
 
 For a normal installation from GitHub:

@@ -14,5 +14,8 @@
   },
   "include": [
     "extensions/**/*.ts"
+  ],
+  "exclude": [
+    "extensions/**/*.test.ts"
   ]
 }
