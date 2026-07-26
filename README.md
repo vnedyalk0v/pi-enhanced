@@ -14,7 +14,7 @@ intentional differences:
 
 ## Features
 
-**Phase 3 (available now)**
+**Phase 4 (available now)**
 
 - `/copy-all` — copy the full conversation branch to the clipboard
 - `ask_user` — structured multiple-choice questions (optional free text)
@@ -24,22 +24,32 @@ intentional differences:
 - `/summary` — summarize the session with the active model
 - Background terminals — `bg_start` / `bg_status` / `bg_list` / `bg_kill`, `/ps`,
   auto completion message, skill guidance for long-running commands
+- Web research — `fc_search` / `fc_scrape` / `fc_crawl` (Firecrawl primary;
+  DuckDuckGo no-key fallback for search on quota exhaustion; `fc_*` names avoid
+  clashing with packages that register `web_search`)
 
 **Planned**
 
 - Pi and Codex subagents with background execution and result delivery
 - multi-phase workflows with parallel agents and structured handoffs
-- Firecrawl search, scrape, and crawl tools with quota-aware fallback
 
 ## Status
 
-Phases 1–3 on Pi `0.82.1`. Install the package (or `pi -e ./`), then try
-`/copy-all`, `ask_user`, `fd`/`rg`, `/summary`, and `bg_start` + `/ps`.
+Phases 1–4 on Pi `0.82.1`. Install the package (or `pi -e ./`), then try
+`/copy-all`, `ask_user`, `fd`/`rg`, `/summary`, `bg_start` + `/ps`, and
+`fc_search`.
 
 Set the theme in settings if you want it always:
 
 ```json
 { "theme": "github-dark-default" }
+```
+
+For Firecrawl scrape/crawl (and preferred search quality):
+
+```sh
+export FIRECRAWL_API_KEY=fc-...
+# or put it in ~/.pi/agent/.env
 ```
 
 See [PLAN.md](PLAN.md) for the remaining implementation sequence.

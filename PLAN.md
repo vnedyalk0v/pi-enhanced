@@ -62,7 +62,7 @@ with truncated model tails, `/ps` list+detail UI, running-count widget, and
 `skills/background-terminals`. Manager unit tests cover start/settle/kill/
 concurrency/dispose; `npm run check` and `npm test` pass.
 
-## Phase 4 — Web research with graceful quota fallback
+## Phase 4 — Web research with graceful quota fallback ✅
 
 - Add Firecrawl search, scrape, and crawl tools using `FIRECRAWL_API_KEY`.
 - Normalize provider results before exposing them to the model.
@@ -75,9 +75,14 @@ concurrency/dispose; `npm run check` and `npm test` pass.
   proven.
 - Surface which provider answered so the model can judge result quality.
 
-**Done when:** tests prove primary search, quota-triggered fallback, and
-non-quota errors; a real Pi session works both with and without remaining
-Firecrawl credits.
+**Completed:** `fc_search` / `fc_scrape` / `fc_crawl` (Firecrawl v2 via
+`fetch`, no SDK; `fc_*` names avoid clashing with packages that own
+`web_search`). Error classifier separates quota (402 / credit messages)
+from auth, rate limit, bad request, and transient. Search falls back to
+no-key DuckDuckGo HTML when Firecrawl is missing or quota-exhausted; scrape
+and crawl return clear quota errors. Results always include `provider`.
+Skill `web-research`. Tests cover classification, normalize, fallback parse,
+and Firecrawl client mocks.
 
 ## Phase 5 — Pi and Codex subagents
 
