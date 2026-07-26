@@ -38,9 +38,8 @@ Implement the low-risk extensions first:
 2. `ask-user` — `ask_user` multiple-choice tool (optional free text)
 3. `file-search` — `fd` / `rg` tools with PATH + `~/.pi/agent/bin` + HTTPS install
 4. `git-info` — branch/dirty/ahead/behind status in the footer
-5. `model-info` — model, thinking level, context usage status
-6. `ui-customization` + `themes/github-dark-default.json`
-7. `summaries` — `/summary` via the active session model
+5. `ui-customization` + `themes/github-dark-default.json`
+6. `summaries` — `/summary` via the active session model
 
 **Completed:** extensions and theme land in-tree; `npm run check` and
 `npm test` (file-search unit tests) pass. Real-session smoke still recommended

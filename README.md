@@ -20,8 +20,8 @@ intentional differences:
 - `ask_user` — structured multiple-choice questions (optional free text)
 - `fd` / `rg` tools — default file discovery (preferred over built-in find/grep);
   system binaries, or auto-install into `~/.pi/agent/bin/`
-- Git + model/context status in the footer
-- Enhanced footer (`/footer-enhanced`) and GitHub Dark Default theme
+- Git dirty/ahead/behind status in Pi's built-in footer
+- GitHub Dark Default theme
 - `/summary` — summarize the session with the active model
 - Background terminals — `bg_start` / `bg_status` / `bg_list` / `bg_kill`, `/ps`,
   auto completion message, skill guidance for long-running commands
