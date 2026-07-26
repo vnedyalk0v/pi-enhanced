@@ -143,11 +143,11 @@ deferred. Manager + handoff tests cover the partial-failure path;
 - [ ] Exercise real `fd`/`rg` downloads on macOS and Linux x64/arm64. Windows
   and other unsupported auto-install targets require the documented manual
   fallback.
-- [ ] Resolve and add the project license (plan 017).
+- [x] Resolve and add the project license (plan 017).
 - [ ] Publish and tag `v0.1.0`.
 
 `v0.1.0` remains blocked on the model-backed feature checks, supported-platform
-download checks, and plan 017's license decision.
+download checks.
 
 ## Initial delivery order
 
