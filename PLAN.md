@@ -84,7 +84,7 @@ and crawl return clear quota errors. Results always include `provider`.
 Skill `web-research`. Tests cover classification, normalize, fallback parse,
 and Firecrawl client mocks.
 
-## Phase 5 — Pi and Codex subagents
+## Phase 5 — Pi and Codex subagents ✅
 
 - Define one backend contract with only `pi` and `codex` implementations.
 - Support spawn, check, list, wait, cancel, completion delivery, and bounded
@@ -99,9 +99,13 @@ and Firecrawl client mocks.
   main agent.
 - Add a routing skill explaining when Pi or Codex is the better worker.
 
-**Done when:** one parent Pi session can run both harnesses concurrently,
-receive results exactly once, cancel them cleanly, and survive one backend
-failure.
+**Completed (lifecycle v1):** `sa_spawn` / `sa_status` / `sa_list` / `sa_wait` /
+`sa_cancel` with backends `pi` and `codex` only (`sa_*` names avoid clashing
+with packages that own `subagent` / `subagent_wait`); isolated `--no-session`
+Pi / `codex exec --ephemeral`; one-shot completion via followUp; concurrency
+cap 4; `/btw` Pi side task; routing skill. Status shows result/output tail
+(basic transcript). Follow-up messages and interactive takeover deferred until
+needed. Manager tests use injected backends; `npm run check` / `npm test` pass.
 
 ## Phase 6 — Workflows
 

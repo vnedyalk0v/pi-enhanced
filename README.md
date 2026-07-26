@@ -14,7 +14,7 @@ intentional differences:
 
 ## Features
 
-**Phase 4 (available now)**
+**Phase 5 (available now)**
 
 - `/copy-all` — copy the full conversation branch to the clipboard
 - `ask_user` — structured multiple-choice questions (optional free text)
@@ -27,17 +27,20 @@ intentional differences:
 - Web research — `fc_search` / `fc_scrape` / `fc_crawl` (Firecrawl primary;
   DuckDuckGo no-key fallback for search on quota exhaustion; `fc_*` names avoid
   clashing with packages that register `web_search`)
+- Subagents — `sa_spawn` (pi|codex), `sa_status` / `sa_list` / `sa_wait` /
+  `sa_cancel`, `/btw`, completion delivery, routing skill (`sa_*` names avoid
+  clashing with packages that register `subagent` / `subagent_wait`)
 
 **Planned**
 
-- Pi and Codex subagents with background execution and result delivery
 - multi-phase workflows with parallel agents and structured handoffs
+- Subagent follow-up messages and interactive takeover
 
 ## Status
 
-Phases 1–4 on Pi `0.82.1`. Install the package (or `pi -e ./`), then try
-`/copy-all`, `ask_user`, `fd`/`rg`, `/summary`, `bg_start` + `/ps`, and
-`fc_search`.
+Phases 1–5 on Pi `0.82.1`. Install the package (or `pi -e ./`), then try
+`/copy-all`, `ask_user`, `fd`/`rg`, `/summary`, `bg_start` + `/ps`,
+`fc_search`, and `sa_spawn`.
 
 Set the theme in settings if you want it always:
 
