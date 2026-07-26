@@ -1,0 +1,107 @@
+import type { BackendName } from "../subagents/domain.ts";
+
+export type WorkflowStatus =
+  | "running"
+  | "done"
+  | "partial"
+  | "failed"
+  | "cancelled";
+
+export type TaskRunStatus = "pending" | "running" | "done" | "failed" | "killed";
+
+export type PhaseRunStatus = "pending" | "running" | "done" | "failed" | "skipped";
+
+/** One parallel agent slot inside a phase. */
+export type WorkflowTaskDef = {
+  key: string;
+  title: string;
+  backend: BackendName;
+  /** Role instructions embedded in the child prompt. */
+  role: string;
+  model?: string;
+  thinking?: string;
+};
+
+export type WorkflowPhaseDef = {
+  name: string;
+  tasks: WorkflowTaskDef[];
+};
+
+export type WorkflowDef = {
+  name: string;
+  phases: WorkflowPhaseDef[];
+};
+
+/** Validated handoff record stored as artifact and fed to later phases. */
+export type StructuredOutput = {
+  phase: string;
+  taskKey: string;
+  title: string;
+  status: "ok" | "failed" | "killed";
+  /** Short validated summary for later prompts (empty when not ok). */
+  summary: string;
+  /** Absolute path to the full artifact file. */
+  artifactPath: string;
+  subagentId?: string;
+  error?: string;
+};
+
+export type TaskRunSnapshot = {
+  key: string;
+  title: string;
+  backend: BackendName;
+  status: TaskRunStatus;
+  subagentId?: string;
+  summary?: string;
+  artifactPath?: string;
+  error?: string;
+};
+
+export type PhaseRunSnapshot = {
+  name: string;
+  status: PhaseRunStatus;
+  tasks: TaskRunSnapshot[];
+};
+
+export type WorkflowSnapshot = {
+  id: string;
+  title: string;
+  goal: string;
+  template: string;
+  status: WorkflowStatus;
+  cwd: string;
+  artifactsDir: string;
+  createdAt: number;
+  settledAt?: number;
+  currentPhase?: string;
+  phases: PhaseRunSnapshot[];
+  /** Compact path to final synthesis artifact when available. */
+  finalArtifactPath?: string;
+  /** Truncated final synthesis text for status peeks. */
+  finalSummary?: string;
+  errorText?: string;
+  /** Count of task failures across all phases (including recovered partials). */
+  failedTaskCount: number;
+};
+
+export type StartWorkflowOptions = {
+  goal: string;
+  title?: string;
+  cwd: string;
+  /** Parent model label for pi defaults (provider/id). */
+  model?: string;
+  thinking?: string;
+  template?: string;
+};
+
+export function formatElapsed(createdAt: number, settledAt?: number) {
+  const end = settledAt ?? Date.now();
+  const ms = Math.max(0, end - createdAt);
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  const rem = sec % 60;
+  if (min < 60) return `${min}m${rem}s`;
+  const hr = Math.floor(min / 60);
+  return `${hr}h${min % 60}m`;
+}

@@ -14,7 +14,7 @@ intentional differences:
 
 ## Features
 
-**Phase 5 (available now)**
+**Phase 6 (available now)**
 
 - `/copy-all` — copy the full conversation branch to the clipboard
 - `ask_user` — structured multiple-choice questions (optional free text)
@@ -31,17 +31,20 @@ intentional differences:
 - Subagents — `sa_spawn` (pi|codex), `sa_status` / `sa_list` / `sa_wait` /
   `sa_cancel`, `/btw`, completion delivery, routing skill (`sa_*` names avoid
   clashing with packages that register `subagent` / `subagent_wait`)
+- Workflows — `wf_start` / `wf_status` / `wf_list` / `wf_wait` / `wf_cancel`,
+  `/workflow` for recon → implement → review → synthesis; on-disk artifacts and
+  structured handoffs reusing the subagent lifecycle (`wf_*` names)
 
 **Planned**
 
-- multi-phase workflows with parallel agents and structured handoffs
 - Subagent follow-up messages and interactive takeover
+- Interactive workflow dashboard (after more real-session use)
 
 ## Status
 
-Phases 1–5 on Pi `0.82.1`. Install the package (or `pi -e ./`), then try
+Phases 1–6 on Pi `0.82.1`. Install the package (or `pi -e ./`), then try
 `/copy-all`, `ask_user`, `fd`/`rg`, `/summary`, `bg_start` + `/ps`,
-`fc_search`, and `sa_spawn`.
+`fc_search`, `sa_spawn`, and `wf_start` / `/workflow`.
 
 Set the theme in settings if you want it always:
 

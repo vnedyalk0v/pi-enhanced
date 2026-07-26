@@ -44,8 +44,9 @@ export async function startCodexBackend(options: CodexBackendOptions): Promise<B
     "-o",
     lastMessagePath,
   ];
-  if (options.model) {
-    args.push("-m", options.model);
+  const model = normalizeCodexModelId(options.model);
+  if (model) {
+    args.push("-m", model);
   }
   args.push(options.prompt);
 
@@ -94,4 +95,27 @@ export async function startCodexBackend(options: CodexBackendOptions): Promise<B
 
 function tailText(s: string, n: number) {
   return s.length <= n ? s : s.slice(s.length - n);
+}
+
+/**
+ * Codex CLI expects a bare model id (`gpt-5.6-sol`), not Pi's provider/id
+ * (`openai-codex/gpt-5.6-sol`). Passing the latter fails with ChatGPT accounts.
+ */
+export function normalizeCodexModelId(model?: string) {
+  const raw = model?.trim();
+  if (!raw) return undefined;
+  const slash = raw.indexOf("/");
+  if (slash > 0) {
+    const provider = raw.slice(0, slash).toLowerCase();
+    // Pi-style provider prefixes only — leave other slashful ids alone.
+    if (
+      provider === "openai-codex" ||
+      provider === "openai" ||
+      provider === "codex"
+    ) {
+      const id = raw.slice(slash + 1).trim();
+      return id || undefined;
+    }
+  }
+  return raw;
 }

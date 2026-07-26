@@ -107,7 +107,7 @@ cap 4; `/btw` Pi side task; routing skill. Status shows result/output tail
 (basic transcript). Follow-up messages and interactive takeover deferred until
 needed. Manager tests use injected backends; `npm run check` / `npm test` pass.
 
-## Phase 6 — Workflows
+## Phase 6 — Workflows ✅
 
 - Represent a workflow as ordered phases containing parallel agent tasks.
 - Pass validated structured outputs into later phases.
@@ -116,8 +116,15 @@ needed. Manager tests use injected backends; `npm run check` / `npm test` pass.
 - Store workflow artifacts outside the prompt and expose a compact status view.
 - Add an interactive dashboard only after headless execution is reliable.
 
-**Done when:** a sample repository task completes all four phases, preserves
-artifacts, and returns one synthesized result after partial-agent failure.
+**Completed:** `wf_start` / `wf_status` / `wf_list` / `wf_wait` / `wf_cancel`
+and `/workflow` for template `repo-task` (recon → implement → review →
+synthesis). Parallel tasks per phase via `SubagentManager` (pi/codex);
+validated handoffs + full artifacts under a per-workflow dir; compact
+`wf_status`; one-shot completion via followUp. Partial agent failure still
+runs later phases and synthesis (`partial` status); synthesis-agent failure
+writes a fallback report from preserved artifacts. Interactive dashboard
+deferred. Manager + handoff tests cover the partial-failure path;
+`npm run check` / `npm test` pass.
 
 ## Phase 7 — Release and adoption
 
