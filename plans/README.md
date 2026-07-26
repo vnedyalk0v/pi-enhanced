@@ -11,13 +11,13 @@ when a listed STOP condition applies.
 
 | Plan | Priority | Effort | Risk | Depends on | Status |
 |---|---:|---:|---:|---|---|
-| [001 Effective subagent kill escalation](001-effective-subagent-kill-escalation.md) | P0 | S | HIGH | — | TODO |
-| [002 Private workflow artifacts](002-private-workflow-artifacts.md) | P0 | M | HIGH | — | TODO |
-| [003 Terminate fd options](003-terminate-fd-options.md) | P1 | S | MED | — | TODO |
-| [004 Verified file-search downloads](004-verified-file-search-downloads.md) | P1 | M | MED | — | TODO |
-| [005 Reserve concurrency slots](005-reserve-concurrency-slots.md) | P1 | M | MED | — | TODO |
-| [006 Untrusted workflow handoffs](006-untrusted-workflow-handoffs.md) | P1 | M | MED | — | TODO |
-| [007 Stream file-search output](007-stream-file-search-output.md) | P1 | M | MED | 003 | TODO |
+| [001 Effective subagent kill escalation](001-effective-subagent-kill-escalation.md) | P0 | S | HIGH | — | DONE (`c220aa4`) |
+| [002 Private workflow artifacts](002-private-workflow-artifacts.md) | P0 | M | HIGH | — | DONE (`1387221`) |
+| [003 Terminate fd options](003-terminate-fd-options.md) | P1 | S | MED | — | DONE (`256317c`) |
+| [004 Verified file-search downloads](004-verified-file-search-downloads.md) | P1 | M | MED | — | DONE (`efd6185`) |
+| [005 Reserve concurrency slots](005-reserve-concurrency-slots.md) | P1 | M | MED | — | DONE (`2d61914`) |
+| [006 Untrusted workflow handoffs](006-untrusted-workflow-handoffs.md) | P1 | M | MED | — | DONE (`0e04fd5`) |
+| [007 Stream file-search output](007-stream-file-search-output.md) | P1 | M | MED | 003 | DONE (`bbfc7a4`, includes `256317c`) |
 | [008 Cap concurrent workflows](008-cap-concurrent-workflows.md) | P1 | M | MED | 005 | TODO |
 | [009 Wait for subprocess streams](009-wait-for-subprocess-streams.md) | P1 | M | MED | 001 | TODO |
 | [010 Preserve large Pi results](010-preserve-large-pi-results.md) | P1 | M | MED | 009 | TODO |
