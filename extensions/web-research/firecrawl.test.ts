@@ -3,10 +3,16 @@ import { describe, it } from "node:test";
 import { classifyThrown } from "./errors.ts";
 import { firecrawlCrawl, firecrawlScrape, firecrawlSearch } from "./firecrawl.ts";
 
-function mockFetch(handlers: Array<(url: string, init?: RequestInit) => Promise<Response> | Response>) {
+type RequestRecord = { method: string; url: string };
+
+function mockFetch(
+  handlers: Array<(url: string, init?: RequestInit) => Promise<Response> | Response>,
+  requests: RequestRecord[] = [],
+) {
   let i = 0;
   return async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
+    requests.push({ method: init?.method ?? "GET", url });
     const handler = handlers[i++];
     if (!handler) throw new Error(`Unexpected fetch: ${url}`);
     return handler(url, init);
@@ -84,6 +90,7 @@ describe("firecrawl", () => {
   });
 
   it("crawl polls until completed", async () => {
+    const requests: RequestRecord[] = [];
     const fetchImpl = mockFetch([
       () => new Response(JSON.stringify({ success: true, id: "job-1" }), { status: 200 }),
       () =>
@@ -111,7 +118,7 @@ describe("firecrawl", () => {
           }),
           { status: 200 },
         ),
-    ]);
+    ], requests);
     const result = await firecrawlCrawl({
       apiKey: "fc-test",
       url: "https://example.com",
@@ -121,5 +128,111 @@ describe("firecrawl", () => {
     });
     assert.equal(result.status, "completed");
     assert.equal(result.pages.length, 1);
+    assert.deepEqual(
+      requests.map(({ method, url }) => [method, url]),
+      [
+        ["POST", "https://api.firecrawl.dev/v2/crawl"],
+        ["GET", "https://api.firecrawl.dev/v2/crawl/job-1"],
+        ["GET", "https://api.firecrawl.dev/v2/crawl/job-1"],
+      ],
+    );
+  });
+
+  it("cancels a crawl that times out without masking cleanup failure", async () => {
+    const requests: RequestRecord[] = [];
+    const fetchImpl = mockFetch(
+      [
+        () => new Response(JSON.stringify({ success: true, id: "job/1" }), { status: 200 }),
+        () => new Response(JSON.stringify({ error: "cleanup failed" }), { status: 500 }),
+      ],
+      requests,
+    );
+
+    await assert.rejects(
+      () =>
+        firecrawlCrawl({
+          apiKey: "fc-test",
+          url: "https://example.com",
+          maxWaitMs: 0,
+          fetchImpl: fetchImpl as typeof fetch,
+        }),
+      /Firecrawl crawl timed out after 0ms \(job job\/1\)/,
+    );
+    assert.deepEqual(
+      requests.map(({ method, url }) => [method, url]),
+      [
+        ["POST", "https://api.firecrawl.dev/v2/crawl"],
+        ["DELETE", "https://api.firecrawl.dev/v2/crawl/job%2F1"],
+      ],
+    );
+  });
+
+  it("cancels an aborted crawl without masking cleanup failure", async () => {
+    const controller = new AbortController();
+    const requests: RequestRecord[] = [];
+    const fetchImpl = mockFetch(
+      [
+        () => new Response(JSON.stringify({ success: true, id: "job-1" }), { status: 200 }),
+        () => {
+          controller.abort();
+          return new Response(JSON.stringify({ status: "scraping" }), { status: 200 });
+        },
+        () => {
+          throw new Error("cleanup failed");
+        },
+      ],
+      requests,
+    );
+
+    await assert.rejects(
+      () =>
+        firecrawlCrawl({
+          apiKey: "fc-test",
+          url: "https://example.com",
+          maxWaitMs: 1,
+          signal: controller.signal,
+          fetchImpl: fetchImpl as typeof fetch,
+        }),
+      { name: "AbortError" },
+    );
+    assert.deepEqual(
+      requests.map(({ method, url }) => [method, url]),
+      [
+        ["POST", "https://api.firecrawl.dev/v2/crawl"],
+        ["GET", "https://api.firecrawl.dev/v2/crawl/job-1"],
+        ["DELETE", "https://api.firecrawl.dev/v2/crawl/job-1"],
+      ],
+    );
+  });
+
+  it("does not cancel provider-terminal crawls", async () => {
+    for (const status of ["failed", "cancelled"]) {
+      const requests: RequestRecord[] = [];
+      const fetchImpl = mockFetch(
+        [
+          () => new Response(JSON.stringify({ success: true, id: "job-1" }), { status: 200 }),
+          () => new Response(JSON.stringify({ status }), { status: 200 }),
+        ],
+        requests,
+      );
+
+      await assert.rejects(
+        () =>
+          firecrawlCrawl({
+            apiKey: "fc-test",
+            url: "https://example.com",
+            maxWaitMs: 1,
+            fetchImpl: fetchImpl as typeof fetch,
+          }),
+        new RegExp(`Firecrawl crawl ${status}`),
+      );
+      assert.deepEqual(
+        requests.map(({ method, url }) => [method, url]),
+        [
+          ["POST", "https://api.firecrawl.dev/v2/crawl"],
+          ["GET", "https://api.firecrawl.dev/v2/crawl/job-1"],
+        ],
+      );
+    }
   });
 });

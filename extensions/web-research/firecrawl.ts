@@ -84,34 +84,47 @@ export async function firecrawlCrawl(
 
   const deadline = Date.now() + maxWaitMs;
   let last: unknown = started;
+  let terminal = false;
 
-  while (Date.now() < deadline) {
-    if (options.signal?.aborted) {
-      throw new Error("Crawl wait aborted");
-    }
-    last = await requestJson(options, "GET", `/crawl/${encodeURIComponent(id)}`, {
-      signal: options.signal,
-    });
-    const status = String((last as { status?: unknown }).status ?? "");
-    if (status === "completed" || status === "failed" || status === "cancelled") {
-      const result = normalizeFirecrawlCrawl(options.url, last);
-      if (status !== "completed") {
-        throwClassified({
-          kind: "unknown",
-          message: `Firecrawl crawl ${status}`,
-          fallbackEligible: false,
-        });
+  try {
+    while (Date.now() < deadline) {
+      if (options.signal?.aborted) {
+        throw new Error("Crawl wait aborted");
       }
-      return result;
+      last = await requestJson(options, "GET", `/crawl/${encodeURIComponent(id)}`, {
+        signal: options.signal,
+      });
+      const status = String((last as { status?: unknown }).status ?? "");
+      if (status === "completed" || status === "failed" || status === "cancelled") {
+        terminal = true;
+        const result = normalizeFirecrawlCrawl(options.url, last);
+        if (status !== "completed") {
+          throwClassified({
+            kind: "unknown",
+            message: `Firecrawl crawl ${status}`,
+            fallbackEligible: false,
+          });
+        }
+        return result;
+      }
+      await sleep(Math.min(1500, Math.max(100, Math.floor(maxWaitMs / 30))), options.signal);
     }
-    await sleep(Math.min(1500, Math.max(100, Math.floor(maxWaitMs / 30))), options.signal);
-  }
 
-  throwClassified({
-    kind: "transient",
-    message: `Firecrawl crawl timed out after ${maxWaitMs}ms (job ${id})`,
-    fallbackEligible: false,
-  });
+    throwClassified({
+      kind: "transient",
+      message: `Firecrawl crawl timed out after ${maxWaitMs}ms (job ${id})`,
+      fallbackEligible: false,
+    });
+  } catch (error) {
+    if (!terminal) {
+      try {
+        await requestJson(options, "DELETE", `/crawl/${encodeURIComponent(id)}`);
+      } catch {
+        // Preserve the original crawl error.
+      }
+    }
+    throw error;
+  }
 }
 
 export function resolveApiKey(env: NodeJS.ProcessEnv = process.env): string | undefined {
@@ -121,7 +134,7 @@ export function resolveApiKey(env: NodeJS.ProcessEnv = process.env): string | un
 
 async function requestJson(
   options: FirecrawlOptions,
-  method: "GET" | "POST",
+  method: "DELETE" | "GET" | "POST",
   path: string,
   req: { body?: unknown; signal?: AbortSignal } = {},
 ): Promise<unknown> {
