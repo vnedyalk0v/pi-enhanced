@@ -36,11 +36,3 @@ export type SettledInfo = {
   snapshot: SubagentSnapshot;
   consumed: boolean;
 };
-
-export function formatExit(snap: SubagentSnapshot) {
-  if (snap.status === "running") return "running";
-  if (snap.signal) return snap.signal;
-  if (snap.exitCode !== undefined) return `exit ${snap.exitCode}`;
-  if (snap.errorText) return "error";
-  return snap.status;
-}

@@ -19,43 +19,24 @@ export function validateStructuredOutput(options: {
   const { phase, taskKey, title, artifactPath, subagentId } = options;
 
   if (options.subagentStatus === "killed") {
-    return {
-      phase,
-      taskKey,
-      title,
-      status: "killed",
-      summary: "",
-      artifactPath,
-      subagentId,
-      error: options.errorText || "cancelled",
-    };
+    return failedOut(phase, taskKey, title, artifactPath, "killed", options.errorText || "cancelled", subagentId);
   }
 
   if (options.subagentStatus === "failed") {
-    return {
-      phase,
-      taskKey,
-      title,
-      status: "failed",
-      summary: "",
-      artifactPath,
-      subagentId,
-      error: options.errorText || "failed",
-    };
+    return failedOut(phase, taskKey, title, artifactPath, "failed", options.errorText || "failed", subagentId);
   }
 
   const body = (options.resultText ?? "").trim();
   if (!body) {
-    return {
+    return failedOut(
       phase,
       taskKey,
       title,
-      status: "failed",
-      summary: "",
       artifactPath,
+      "failed",
+      "empty result (validation failed)",
       subagentId,
-      error: "empty result (validation failed)",
-    };
+    );
   }
 
   return {
@@ -67,6 +48,18 @@ export function validateStructuredOutput(options: {
     artifactPath,
     subagentId,
   };
+}
+
+function failedOut(
+  phase: string,
+  taskKey: string,
+  title: string,
+  artifactPath: string,
+  status: "failed" | "killed",
+  error: string,
+  subagentId?: string,
+): StructuredOutput {
+  return { phase, taskKey, title, status, summary: "", artifactPath, subagentId, error };
 }
 
 export function extractSummary(body: string) {

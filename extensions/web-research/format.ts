@@ -1,11 +1,6 @@
-import {
-  DEFAULT_MAX_BYTES,
-  DEFAULT_MAX_LINES,
-  formatSize,
-  truncateHead,
-} from "@earendil-works/pi-coding-agent";
-import type { CrawlResult, ScrapeResult, SearchResult } from "./normalize.ts";
+import { truncateForModel } from "../shared/text.ts";
 import type { ClassifiedError } from "./errors.ts";
+import type { CrawlResult, ScrapeResult, SearchResult } from "./normalize.ts";
 
 export function formatSearchResult(result: SearchResult): string {
   const lines = [
@@ -30,7 +25,7 @@ export function formatSearchResult(result: SearchResult): string {
     lines.push("");
   });
 
-  return truncateForModel(lines.join("\n").trimEnd());
+  return truncateForModel(lines.join("\n").trimEnd(), { mode: "head" });
 }
 
 export function formatScrapeResult(result: ScrapeResult): string {
@@ -41,7 +36,7 @@ export function formatScrapeResult(result: ScrapeResult): string {
   if (result.title) lines.push(`title: ${result.title}`);
   if (result.warning) lines.push(`warning: ${result.warning}`);
   lines.push("", result.markdown || "(empty)");
-  return truncateForModel(lines.join("\n"));
+  return truncateForModel(lines.join("\n"), { mode: "head" });
 }
 
 export function formatCrawlResult(result: CrawlResult): string {
@@ -65,7 +60,7 @@ export function formatCrawlResult(result: CrawlResult): string {
     lines.push("");
   }
 
-  return truncateForModel(lines.join("\n").trimEnd());
+  return truncateForModel(lines.join("\n").trimEnd(), { mode: "head" });
 }
 
 export function formatProviderError(err: ClassifiedError, tool: string): string {
@@ -85,19 +80,3 @@ export function formatProviderError(err: ClassifiedError, tool: string): string 
   }
   return lines.join("\n");
 }
-
-function truncateForModel(text: string): string {
-  const truncation = truncateHead(text, {
-    maxLines: DEFAULT_MAX_LINES,
-    maxBytes: DEFAULT_MAX_BYTES,
-  });
-  if (!truncation.truncated) return truncation.content;
-  return (
-    truncation.content +
-    `\n\n[truncated: showing ${truncation.outputLines} of ${truncation.totalLines} lines` +
-    ` (${formatSize(truncation.outputBytes)} of ${formatSize(truncation.totalBytes)})]`
-  );
-}
-
-export const TOOL_LIMITS_NOTE =
-  `Output truncated to ${DEFAULT_MAX_LINES} lines or ${formatSize(DEFAULT_MAX_BYTES)}.`;

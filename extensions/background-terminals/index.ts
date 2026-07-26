@@ -2,13 +2,13 @@ import { resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { ResultDelivery } from "../shared/delivery.ts";
+import { TOOL_LIMITS_NOTE } from "../shared/text.ts";
 import {
   buildKillResult,
   buildListResult,
   buildStartResult,
   buildStatusResult,
   buildTerminalResultMessage,
-  TOOL_LIMITS_NOTE,
 } from "./format.ts";
 import { TerminalManager, type TerminalSnapshot } from "./manager.ts";
 import { PsOverlay } from "./ps.ts";

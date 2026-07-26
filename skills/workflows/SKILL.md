@@ -9,12 +9,12 @@ description: Multi-phase workflows (recon → implement → review → synthesis
 
 Named `wf_*` so they do not clash with other packages.
 
-- `wf_start` — start template `repo-task` (default): reconnaissance → implementation → review → synthesis
+- `wf_start` — reconnaissance → implementation → review → synthesis (fixed pipeline)
 - `wf_status` / `wf_list` — compact status (full outputs live under `artifacts/`)
 - `wf_wait` — block until finished (returns synthesis; skips async completion message)
 - `wf_cancel` — stop a running workflow and its child subagents
 
-Command: `/workflow <goal>` starts the same default template.
+Command: `/workflow <goal>` starts the same pipeline.
 
 ## When to use
 
@@ -39,6 +39,6 @@ After `wf_start`, keep working. A completion message arrives when the workflow f
 
 ## Limits
 
-- Default template only in v1 (`repo-task`).
+- Fixed pipeline only (no template param).
 - Interactive dashboard deferred; use `wf_status` and the artifacts tree.
 - Session shutdown cancels remaining workflows.

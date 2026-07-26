@@ -3,6 +3,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import { ResultDelivery } from "../shared/delivery.ts";
 import type { WorkflowSnapshot } from "./domain.ts";
+import { TOOL_LIMITS_NOTE } from "../shared/text.ts";
 import {
   buildCancelResult,
   buildCompletionMessage,
@@ -10,7 +11,6 @@ import {
   buildStartResult,
   buildStatusResult,
   buildWaitResult,
-  TOOL_LIMITS_NOTE,
 } from "./format.ts";
 import { WorkflowManager } from "./manager.ts";
 
@@ -23,11 +23,6 @@ const StartParams = Type.Object({
   title: Type.Optional(Type.String({ description: "Short label for listings and completion" })),
   working_dir: Type.Optional(
     Type.String({ description: "Working directory (default: current session cwd)" }),
-  ),
-  template: Type.Optional(
-    Type.String({
-      description: 'Workflow template (default: "repo-task" — recon → implement → review → synthesis)',
-    }),
   ),
 });
 
@@ -150,7 +145,6 @@ export default function (pi: ExtensionAPI) {
         cwd,
         model: parentModelLabel,
         thinking: parentThinking,
-        template: params.template,
       });
       updateWidget();
       return {
@@ -159,7 +153,6 @@ export default function (pi: ExtensionAPI) {
           id: snap.id,
           status: snap.status,
           artifactsDir: snap.artifactsDir,
-          template: snap.template,
         },
       };
     },

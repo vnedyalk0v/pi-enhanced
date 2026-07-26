@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { contentToText } from "../shared/text.ts";
 
 export type RunHandle = {
   pid?: number;
@@ -151,18 +152,6 @@ export function extractCodexLastMessage(stdout: string, fileContents?: string) {
     }
   }
   return last;
-}
-
-function contentToText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  const parts: string[] = [];
-  for (const part of content) {
-    if (!part || typeof part !== "object") continue;
-    const p = part as { type?: string; text?: string };
-    if (p.type === "text" && typeof p.text === "string") parts.push(p.text);
-  }
-  return parts.join("\n").trim();
 }
 
 function stringField(obj: Record<string, unknown>, key: string) {

@@ -1,8 +1,9 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
-import { formatElapsed } from "../shared/time.ts";
-import { formatExit, type TerminalManager, type TerminalSnapshot } from "./manager.ts";
 import { formatSize } from "@earendil-works/pi-coding-agent";
+import { formatExit } from "../shared/text.ts";
+import { formatElapsed } from "../shared/time.ts";
+import type { TerminalManager, TerminalSnapshot } from "./manager.ts";
 
 type Mode = { kind: "list" } | { kind: "detail"; id: string; scroll: number; stream: "stdout" | "stderr" };
 

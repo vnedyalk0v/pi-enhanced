@@ -6,13 +6,6 @@ export class ResultDelivery<T> {
     this.pending.set(id, value);
   }
 
-  take(id: string) {
-    const value = this.pending.get(id);
-    if (value === undefined) return undefined;
-    this.pending.delete(id);
-    return value;
-  }
-
   consume(ids: readonly string[]) {
     for (const id of ids) this.pending.delete(id);
   }

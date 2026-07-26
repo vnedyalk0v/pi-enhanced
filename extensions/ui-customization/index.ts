@@ -40,12 +40,9 @@ function installFooter(ctx: ExtensionContext) {
         const statuses = [...footerData.getExtensionStatuses().values()].filter(Boolean);
         const mid = statuses.length > 0 ? theme.fg("dim", statuses.join("  ")) : "";
 
-        const branch = footerData.getGitBranch();
+        // Branch/model live in extension statuses (git-info / model-info); right is cwd only.
         const cwdLabel = basename(ctx.cwd) || shortPath(ctx.cwd);
-        const rightParts = [cwdLabel];
-        if (branch) rightParts.push(branch);
-        if (ctx.model) rightParts.push(ctx.model.id);
-        const right = theme.fg("dim", rightParts.join(" · "));
+        const right = theme.fg("dim", cwdLabel);
 
         const gap = Math.max(1, width - visibleWidth(left) - visibleWidth(mid) - visibleWidth(right));
         const leftGap = mid ? Math.floor(gap / 2) : gap;

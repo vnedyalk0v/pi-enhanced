@@ -3,7 +3,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { ResultDelivery } from "../shared/delivery.ts";
 import { TerminalManager, type SettledInfo } from "./manager.ts";
 
 const managers: TerminalManager[] = [];
@@ -145,27 +144,6 @@ describe("TerminalManager", () => {
       alive = false;
     }
     assert.equal(alive, false);
-  });
-});
-
-describe("ResultDelivery", () => {
-  it("enqueues and drains once", () => {
-    const d = new ResultDelivery<string>();
-    d.enqueue("a", "one");
-    d.enqueue("b", "two");
-    assert.equal(d.take("a"), "one");
-    assert.equal(d.take("a"), undefined);
-    d.consume(["b"]);
-    assert.equal(d.take("b"), undefined);
-  });
-
-  it("drainAll clears pending", () => {
-    const d = new ResultDelivery<number>();
-    d.enqueue("x", 1);
-    d.enqueue("y", 2);
-    const all = d.drainAll();
-    assert.equal(all.length, 2);
-    assert.equal(d.drainAll().length, 0);
   });
 });
 

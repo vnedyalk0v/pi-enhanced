@@ -1,19 +1,11 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { existsSync, statSync } from "node:fs";
 import { abortPromise, sleep } from "../shared/time.ts";
 import type { ManagerOptions as SubagentManagerOptions } from "../subagents/manager.ts";
 import { SubagentManager } from "../subagents/manager.ts";
-import {
-  phaseDir,
-  writeFinalArtifact,
-  writeGoal,
-  writeMeta,
-  writeSnapshot,
-  writeStructuredIndex,
-  writeTaskArtifact,
-} from "./artifacts.ts";
+import { phaseDir, writeFinalArtifact, writeTaskArtifact } from "./artifacts.ts";
 import type {
   PhaseRunSnapshot,
   StartWorkflowOptions,
@@ -24,8 +16,8 @@ import type {
   WorkflowStatus,
   WorkflowTaskDef,
 } from "./domain.ts";
-import { buildTaskPrompt, validateStructuredOutput } from "./handoff.ts";
-import { defaultRepoTaskTemplate } from "./template.ts";
+import { buildTaskPrompt, extractSummary, validateStructuredOutput } from "./handoff.ts";
+import { REPO_TASK_TEMPLATE } from "./template.ts";
 
 const DEFAULT_MAX_TRACKED = 16;
 
@@ -116,16 +108,7 @@ export class WorkflowManager {
       throw new Error(`Working directory does not exist or is not a directory: ${cwd}`);
     }
 
-    const templateKey = (options.template ?? "repo-task").trim().toLowerCase();
-    if (templateKey && templateKey !== "repo-task" && templateKey !== "default") {
-      throw new Error(`Unknown workflow template: ${options.template}. Supported: repo-task`);
-    }
-    const def = defaultRepoTaskTemplate();
-    for (const phase of def.phases) {
-      if (phase.tasks.length === 0) {
-        throw new Error(`Workflow phase "${phase.name}" has no tasks.`);
-      }
-    }
+    const def = REPO_TASK_TEMPLATE;
 
     this.counter += 1;
     const id = `wf-${this.counter}`;
@@ -135,15 +118,23 @@ export class WorkflowManager {
 
     const artifactsDir = join(this.artifactsRoot, id);
     await mkdir(artifactsDir, { recursive: true });
-    await writeGoal(artifactsDir, goal);
-    await writeMeta(artifactsDir, {
-      id,
-      title,
-      template: def.name,
-      goal,
-      cwd,
-      createdAt: new Date().toISOString(),
-    });
+    await writeFile(join(artifactsDir, "goal.txt"), `${goal.trim()}\n`, "utf8");
+    await writeFile(
+      join(artifactsDir, "meta.json"),
+      `${JSON.stringify(
+        {
+          id,
+          title,
+          template: def.name,
+          goal,
+          cwd,
+          createdAt: new Date().toISOString(),
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
 
     let resolveSettle!: () => void;
     const settlePromise = new Promise<void>((r) => {
@@ -248,7 +239,7 @@ export class WorkflowManager {
           entry.finalSummary ||
           buildFallbackSynthesis(entry.goal, entry.priorOutputs, entry.failedTaskCount);
         entry.finalArtifactPath = await writeFinalArtifact(entry.artifactsDir, body);
-        entry.finalSummary = extractFirstLine(body);
+        entry.finalSummary = extractSummary(body);
       }
 
       if (!synthOk) {
@@ -259,7 +250,7 @@ export class WorkflowManager {
           entry.failedTaskCount,
         );
         entry.finalArtifactPath = await writeFinalArtifact(entry.artifactsDir, fallback);
-        entry.finalSummary = extractFirstLine(fallback);
+        entry.finalSummary = extractSummary(fallback);
         await this.finish(
           entry,
           entry.failedTaskCount > 0 ? "partial" : "failed",
@@ -280,7 +271,7 @@ export class WorkflowManager {
           message,
         );
         entry.finalArtifactPath = await writeFinalArtifact(entry.artifactsDir, fallback);
-        entry.finalSummary = extractFirstLine(fallback);
+        entry.finalSummary = extractSummary(fallback);
       } catch {
         // ignore artifact write errors during failure
       }
@@ -453,7 +444,7 @@ export class WorkflowManager {
       }
     }
 
-    await writeStructuredIndex(dir, outputs);
+    await writeFile(join(dir, "outputs.json"), `${JSON.stringify(outputs, null, 2)}\n`, "utf8");
     this.notify();
     return outputs;
   }
@@ -486,7 +477,11 @@ export class WorkflowManager {
 
   private async persist(entry: Entry) {
     try {
-      await writeSnapshot(entry.artifactsDir, this.snapshotOf(entry));
+      await writeFile(
+        join(entry.artifactsDir, "status.json"),
+        `${JSON.stringify(this.snapshotOf(entry), null, 2)}\n`,
+        "utf8",
+      );
     } catch {
       // ignore disk errors mid-run
     }
@@ -645,12 +640,4 @@ function buildFallbackSynthesis(
     "The synthesis agent did not produce a valid result; this report is assembled from preserved artifacts.",
   ].filter((l) => l !== undefined);
   return lines.join("\n");
-}
-
-function extractFirstLine(body: string) {
-  const line = body
-    .split(/\n+/)
-    .map((l) => l.trim())
-    .find((l) => l.length > 0 && !l.startsWith("#"));
-  return (line ?? body.trim()).slice(0, 400);
 }

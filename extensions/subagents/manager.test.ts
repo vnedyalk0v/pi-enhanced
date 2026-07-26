@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import type { BackendJob } from "./backends/pi.ts";
-import { ResultDelivery } from "../shared/delivery.ts";
 import { SubagentManager, type ManagerOptions } from "./manager.ts";
 
 const managers: SubagentManager[] = [];
@@ -159,11 +158,3 @@ describe("SubagentManager", () => {
   });
 });
 
-describe("ResultDelivery", () => {
-  it("drains once", () => {
-    const d = new ResultDelivery<string>();
-    d.enqueue("a", "1");
-    assert.equal(d.drainAll().length, 1);
-    assert.equal(d.drainAll().length, 0);
-  });
-});

@@ -2,8 +2,12 @@ import {
   DEFAULT_MAX_BYTES,
   DEFAULT_MAX_LINES,
   formatSize,
+  truncateHead,
   truncateTail,
 } from "@earendil-works/pi-coding-agent";
+
+export const TOOL_LIMITS_NOTE =
+  `Output truncated to ${DEFAULT_MAX_LINES} lines or ${formatSize(DEFAULT_MAX_BYTES)}.`;
 
 export function formatTokens(n: number) {
   if (n < 1000) return String(n);
@@ -17,20 +21,40 @@ export function truncateOneLine(s: string, max: number) {
   return one.length <= max ? one : `${one.slice(0, max)}…`;
 }
 
-export function truncateForModel(text: string) {
-  const truncation = truncateTail(text, {
-    maxLines: DEFAULT_MAX_LINES,
-    maxBytes: DEFAULT_MAX_BYTES,
-  });
+export function truncateForModel(text: string, options?: { mode?: "head" | "tail" }) {
+  const mode = options?.mode ?? "tail";
+  const truncation =
+    mode === "head"
+      ? truncateHead(text, { maxLines: DEFAULT_MAX_LINES, maxBytes: DEFAULT_MAX_BYTES })
+      : truncateTail(text, { maxLines: DEFAULT_MAX_LINES, maxBytes: DEFAULT_MAX_BYTES });
   if (!truncation.truncated) return truncation.content || "(empty)";
+  const where = mode === "head" ? "first" : "last";
   return (
     truncation.content +
-    `\n\n[truncated: last ${formatSize(truncation.outputBytes)} of ${formatSize(truncation.totalBytes)}]`
+    `\n\n[truncated: ${where} ${formatSize(truncation.outputBytes)} of ${formatSize(truncation.totalBytes)}]`
   );
 }
 
 export function tailText(s: string, n: number) {
   return s.length <= n ? s : s.slice(s.length - n);
+}
+
+export function formatExit(snap: {
+  status: string;
+  signal?: string;
+  exitCode?: number;
+  errorText?: string;
+}) {
+  if (snap.status === "running") return "running";
+  if (snap.signal) return snap.signal;
+  if (snap.exitCode !== undefined) return `exit ${snap.exitCode}`;
+  if (snap.errorText) return "error";
+  return snap.status;
+}
+
+/** Flatten message content blocks (string or text parts) to a single string. */
+export function contentToText(content: unknown): string {
+  return extractBlocks(content).join("\n").trim();
 }
 
 type ContentBlock = {

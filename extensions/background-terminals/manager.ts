@@ -476,10 +476,4 @@ async function runTaskKill(pid: number, force: boolean) {
   });
 }
 
-export function formatExit(snap: TerminalSnapshot) {
-  if (snap.status === "running") return "running";
-  if (snap.signal) return snap.signal;
-  if (snap.exitCode !== undefined) return `exit ${snap.exitCode}`;
-  if (snap.errorText) return "error";
-  return snap.status;
-}
+

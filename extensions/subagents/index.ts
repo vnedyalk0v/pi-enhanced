@@ -3,6 +3,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { ResultDelivery } from "../shared/delivery.ts";
+import { TOOL_LIMITS_NOTE } from "../shared/text.ts";
 import type { BackendName, SubagentSnapshot } from "./domain.ts";
 import {
   buildCancelResult,
@@ -11,7 +12,6 @@ import {
   buildSpawnResult,
   buildStatusResult,
   buildWaitResult,
-  TOOL_LIMITS_NOTE,
 } from "./format.ts";
 import { SubagentManager } from "./manager.ts";
 

@@ -10,10 +10,23 @@ export function formatElapsed(createdAt: number, settledAt?: number) {
   return `${hr}h${min % 60}m`;
 }
 
-export function sleep(ms: number) {
-  return new Promise<void>((resolve) => {
+export function sleep(ms: number, signal?: AbortSignal) {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error("aborted"));
+      return;
+    }
     const t = setTimeout(resolve, ms);
     t.unref?.();
+    if (!signal) return;
+    signal.addEventListener(
+      "abort",
+      () => {
+        clearTimeout(t);
+        reject(new Error("aborted"));
+      },
+      { once: true },
+    );
   });
 }
 

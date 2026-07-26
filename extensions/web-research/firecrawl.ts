@@ -1,3 +1,4 @@
+import { sleep } from "../shared/time.ts";
 import { classifyHttpError, throwClassified } from "./errors.ts";
 import {
   normalizeFirecrawlCrawl,
@@ -157,23 +158,4 @@ async function requestJson(
 function clampInt(value: number | undefined, min: number, max: number, fallback: number) {
   if (value === undefined || !Number.isFinite(value)) return fallback;
   return Math.min(max, Math.max(min, Math.floor(value)));
-}
-
-function sleep(ms: number, signal?: AbortSignal) {
-  return new Promise<void>((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(new Error("aborted"));
-      return;
-    }
-    const t = setTimeout(resolve, ms);
-    t.unref?.();
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(t);
-        reject(new Error("aborted"));
-      },
-      { once: true },
-    );
-  });
 }

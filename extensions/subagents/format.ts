@@ -1,11 +1,6 @@
-import {
-  DEFAULT_MAX_BYTES,
-  DEFAULT_MAX_LINES,
-  formatSize,
-} from "@earendil-works/pi-coding-agent";
 import { formatElapsed } from "../shared/time.ts";
-import { truncateForModel, truncateOneLine } from "../shared/text.ts";
-import { formatExit, type SubagentSnapshot } from "./domain.ts";
+import { formatExit, truncateForModel, truncateOneLine } from "../shared/text.ts";
+import type { SubagentSnapshot } from "./domain.ts";
 
 export function describeSubagent(snap: SubagentSnapshot) {
   const elapsed = formatElapsed(snap.createdAt, snap.settledAt);
@@ -84,6 +79,3 @@ export function buildCompletionMessage(snap: SubagentSnapshot) {
   }
   return lines.join("\n");
 }
-
-export const TOOL_LIMITS_NOTE =
-  `Results truncated to ${DEFAULT_MAX_LINES} lines or ${formatSize(DEFAULT_MAX_BYTES)}.`;

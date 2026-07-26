@@ -1,8 +1,3 @@
-import {
-  DEFAULT_MAX_BYTES,
-  DEFAULT_MAX_LINES,
-  formatSize,
-} from "@earendil-works/pi-coding-agent";
 import { formatElapsed } from "../shared/time.ts";
 import { truncateForModel, truncateOneLine } from "../shared/text.ts";
 import type { WorkflowSnapshot } from "./domain.ts";
@@ -127,6 +122,3 @@ function statusIcon(status: string) {
       return "·";
   }
 }
-
-export const TOOL_LIMITS_NOTE =
-  `Results truncated to ${DEFAULT_MAX_LINES} lines or ${formatSize(DEFAULT_MAX_BYTES)}. Artifacts on disk are full.`;

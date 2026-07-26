@@ -9,7 +9,7 @@ export type WorkflowStatus =
 
 export type TaskRunStatus = "pending" | "running" | "done" | "failed" | "killed";
 
-export type PhaseRunStatus = "pending" | "running" | "done" | "failed" | "skipped";
+export type PhaseRunStatus = "pending" | "running" | "done" | "failed";
 
 /** One parallel agent slot inside a phase. */
 export type WorkflowTaskDef = {
@@ -67,6 +67,7 @@ export type WorkflowSnapshot = {
   id: string;
   title: string;
   goal: string;
+  /** Fixed pipeline label (always repo-task). */
   template: string;
   status: WorkflowStatus;
   cwd: string;
@@ -91,5 +92,4 @@ export type StartWorkflowOptions = {
   /** Parent model label for pi defaults (provider/id). */
   model?: string;
   thinking?: string;
-  template?: string;
 };

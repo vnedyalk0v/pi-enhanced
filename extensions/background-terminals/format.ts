@@ -4,8 +4,9 @@ import {
   formatSize,
   truncateTail,
 } from "@earendil-works/pi-coding-agent";
+import { formatExit } from "../shared/text.ts";
 import { formatElapsed } from "../shared/time.ts";
-import { formatExit, type TerminalSnapshot } from "./manager.ts";
+import type { TerminalSnapshot } from "./manager.ts";
 
 export function describeTerminal(snap: TerminalSnapshot) {
   const elapsed = formatElapsed(snap.createdAt, snap.settledAt);
@@ -96,6 +97,3 @@ function formatStreamTail(stream: TerminalSnapshot["stdout"]) {
   }
   return text;
 }
-
-export const TOOL_LIMITS_NOTE =
-  `Output shown to the model is truncated to the last ${DEFAULT_MAX_LINES} lines or ${formatSize(DEFAULT_MAX_BYTES)} (whichever first). Full logs are kept on disk for /ps.`;

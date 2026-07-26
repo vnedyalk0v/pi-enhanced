@@ -8,12 +8,12 @@ import {
   firecrawlSearch,
   resolveApiKey,
 } from "./firecrawl.ts";
+import { TOOL_LIMITS_NOTE } from "../shared/text.ts";
 import {
   formatCrawlResult,
   formatProviderError,
   formatScrapeResult,
   formatSearchResult,
-  TOOL_LIMITS_NOTE,
 } from "./format.ts";
 
 const SearchParams = Type.Object({
