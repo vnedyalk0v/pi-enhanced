@@ -37,7 +37,6 @@ themes/*.json                # only when a theme is needed
 - Use `node:` built-ins. Prefer Node + Pi APIs over new dependencies.
 - Runtime third-party packages go in `dependencies`. Bundled Pi packages go in `peerDependencies` with `"*"`: `@earendil-works/pi-ai`, `@earendil-works/pi-agent-core`, `@earendil-works/pi-coding-agent`, `@earendil-works/pi-tui`, `typebox`.
 - Top-level imports only. No dynamic/inline imports.
-- No `any` unless unavoidable. Prefer inference; avoid redundant explicit return types.
 - No speculative abstractions, config layers, or plugin frameworks. Solve the current phase in PLAN.md only (YAGNI).
 - Do not add a Claude (or other) subagent backend.
 
@@ -47,13 +46,19 @@ themes/*.json                # only when a theme is needed
 - Keep modules small and focused. Delete dead code; do not leave stubs "for later".
 - Comments only when behavior is non-obvious. No narrative comments.
 - No emojis in code, commits, or docs unless the user asks.
+- Avoid explicit return types unless absolutely needed.
+- `as any` is an absolute last resort. Always use real type safety. Lean on type
+  inference instead of manually writing new types over and over again.
 
 ## Commands
 
 ```sh
 npm run check          # required after code changes
+npm test               # run when tests exist for the touched area
 ```
 
+- When you finish a change, run the project's check/format/lint commands. If they
+  do not exist for the project you are in, suggest adding them.
 - Add a focused `node:test` (or package-local test) for every non-trivial lifecycle, parser, or fallback path.
 - Do not run full interactive Pi sessions or install packages globally unless the user asks.
 - Local smoke load: `pi --extension ./extensions/<name>/index.ts` or install this package path.
