@@ -1,68 +1,83 @@
 # pi-enhanced
 
-An opinionated set of extensions and skills that turns the minimal
-[Pi coding agent](https://pi.dev/) into a practical multi-agent development
-harness.
+`pi-enhanced` is an opinionated [Pi coding agent](https://pi.dev/) package for
+repository work. It adds focused tools, background execution, web research,
+Pi/Codex subagents, structured workflows, skills, and a GitHub-inspired theme
+while keeping every extension independently disableable.
 
-The project starts from the ideas demonstrated in
-[davis7dotsh/my-pi-setup](https://github.com/davis7dotsh/my-pi-setup), with two
-intentional differences:
+The package follows three boundaries:
 
-- subagents use only the Pi and Codex harnesses;
-- Firecrawl is the primary web-search provider, with a normal-search fallback
-  when the free-plan quota is exhausted.
+- subagent backends are Pi and Codex only;
+- Firecrawl is the primary research provider, with a no-key search fallback;
+- implementations are original and use Pi's public extension primitives.
 
-## Features
+## Requirements
 
-**Phase 6 (available now)**
+| Dependency | Requirement |
+| --- | --- |
+| Pi | `0.82.1` |
+| Node.js | `24.12.0` or newer |
+| npm and Git | Available on `PATH` |
+| Codex CLI | Optional; required only for Codex subagents and workflow implementation |
 
-- `/copy-all` — copy the full conversation branch to the clipboard
-- `ask_user` — structured multiple-choice questions (optional free text)
-- `fd` / `rg` tools — default file discovery (preferred over built-in find/grep);
-  system binaries, or auto-install into `~/.pi/agent/bin/`
-- Git dirty/ahead/behind status in Pi's built-in footer
-- GitHub Dark Default theme
-- `/summary` — summarize the session with the active model
-- Background terminals — `bg_start` / `bg_status` / `bg_list` / `bg_kill`, `/ps`,
-  auto completion message, skill guidance for long-running commands
-- Web research — `fc_search` / `fc_scrape` / `fc_crawl` (Firecrawl primary;
-  DuckDuckGo no-key fallback for search on quota exhaustion; `fc_*` names avoid
-  clashing with packages that register `web_search`)
-- Subagents — `sa_spawn` (pi|codex), `sa_status` / `sa_list` / `sa_wait` /
-  `sa_cancel`, `/btw`, completion delivery, routing skill (`sa_*` names avoid
-  clashing with packages that register `subagent` / `subagent_wait`)
-- Workflows — `wf_start` / `wf_status` / `wf_list` / `wf_wait` / `wf_cancel`,
-  `/workflow` for recon → implement → review → synthesis; on-disk artifacts and
-  structured handoffs reusing the subagent lifecycle (`wf_*` names)
-
-**Planned**
-
-- Subagent follow-up messages and interactive takeover
-- Interactive workflow dashboard (after more real-session use)
+Node `24.12.0` is the minimum because its built-in TypeScript type stripping is
+stable. The package does not need a TypeScript runtime dependency.
 
 ## Install
 
-Requirements: Pi `0.82.1`, Node.js `22.19.0` or newer, and npm. The `pi`
-executable must be on `PATH`; `codex` is required only for Codex subagents and
-the workflow implementation phase.
+Install the latest tagged release globally:
 
 ```sh
 pi install git:github.com/vnedyalk0v/pi-enhanced@v0.1.0
 ```
 
-To load a checkout for one run without changing Pi settings:
+For a project-local installation:
+
+```sh
+pi install -l git:github.com/vnedyalk0v/pi-enhanced@v0.1.0
+```
+
+Try the package for one run without changing Pi settings:
+
+```sh
+pi -e git:github.com/vnedyalk0v/pi-enhanced@v0.1.0
+```
+
+To load a local checkout:
 
 ```sh
 pi -e ./
 ```
 
-Pi packages execute with the user's system permissions. Review the package
-before installing it and use it only in trusted working directories.
+Pi packages execute with the user's system permissions. Review the source
+before installation and use it only in trusted working directories.
+
+## Features
+
+| Area | Interfaces | What it adds |
+| --- | --- | --- |
+| Conversation | `ask_user`, `/copy-all`, `/summary` | Structured choices, clipboard export, and model-generated session summaries |
+| File search | `fd`, `rg` | Fast filename and content search with bounded model output |
+| Git and UI | `/git-info`, `github-dark-default` | Footer branch status and an automatically selected GitHub-style theme |
+| Background terminals | `bg_start`, `bg_status`, `bg_list`, `bg_kill`, `/ps` | Long-running non-interactive commands with completion delivery and full spill logs |
+| Web research | `fc_search`, `fc_scrape`, `fc_crawl` | Firecrawl search/scrape/crawl with DuckDuckGo fallback for no-key or quota-exhausted search |
+| Subagents | `sa_spawn`, `sa_status`, `sa_list`, `sa_wait`, `sa_cancel`, `/btw` | Isolated Pi or Codex workers with bounded concurrency |
+| Workflows | `wf_start`, `wf_status`, `wf_list`, `wf_wait`, `wf_cancel`, `/workflow` | Reconnaissance, implementation, review, and synthesis with validated handoffs and artifacts |
+
+The package also provides on-demand skills for background terminals,
+subagents, web research, and workflows.
 
 ## Configure
 
 Run `pi config` to enable or disable individual extensions, skills, and themes.
-Package filters can also narrow one installation; omitted resource types still
+Press Tab to switch between global and project-local settings, or start directly
+in project-local mode:
+
+```sh
+pi config -l
+```
+
+Package filters can narrow what is loaded. Omitted resource types continue to
 load in full:
 
 ```json
@@ -76,83 +91,96 @@ load in full:
 }
 ```
 
-Set the theme in Pi settings if you want it always:
+### Theme
+
+When Pi is using its default dark or light theme, `pi-enhanced` selects
+`github-dark-default` automatically. Set it explicitly to keep it selected:
 
 ```json
-{ "theme": "github-dark-default" }
+{
+  "theme": "github-dark-default"
+}
 ```
 
-`FIRECRAWL_API_KEY` is optional. Export it or put it in
-`~/.pi/agent/.env` to enable `fc_scrape`, `fc_crawl`, and preferred
-`fc_search` results. Without a key, or when Firecrawl quota is exhausted,
-`fc_search` uses the no-key DuckDuckGo fallback; authentication, rate-limit,
-bad-request, and transient errors do not trigger fallback.
+### Firecrawl
 
-`fd` and `rg` are resolved from `PATH` first (`fdfind` is also accepted for
-`fd` on Linux), then from `~/.pi/agent/bin/`. Missing binaries are downloaded
-there only on macOS and Linux, for x64 and arm64, and verified against pinned
-SHA-256 digests. On Windows or another unsupported target, install `fd` and
-`rg` with the platform package manager and make them available on `PATH`.
+`FIRECRAWL_API_KEY` is optional. Export it in your shell or add it to
+`~/.pi/agent/.env`:
 
-## Operations
+```sh
+export FIRECRAWL_API_KEY=fc-your-key-here
+```
 
-- Background terminals allow 8 running jobs and retain 32 settled jobs. Each
-  stream keeps a 2 MiB in-memory tail; full logs live in a private OS-temp
-  session directory and are removed at Pi session shutdown.
-- Standalone subagents allow 4 running children and retain 32 settled children.
-  A workflow allows 1 running workflow, retains 16 settled workflows, and has
-  its own 4-child pool; its two reconnaissance tasks are the widest parallel
-  phase. Jobs still starting reserve capacity in each limit.
-- `bg_kill`, `sa_cancel`, and `wf_cancel` terminate process trees; shutdown
-  cancels remaining jobs. Firecrawl also makes a best-effort request to cancel
-  a crawl abandoned by timeout, error, or caller abort.
-- `wf_status` reports each workflow's collision-proof private OS-temp artifact
-  directory. Completed artifacts are preserved after the session, but OS-temp
-  storage is not a durable or cross-machine archive.
-- Truncated `fd`/`rg` output reports a full-output OS-temp path. Untruncated
-  temporary output is deleted immediately; truncated spill files are left for
-  operating-system temp cleanup.
+With a key, all `fc_*` tools use Firecrawl. Without one, or when Firecrawl quota
+is exhausted, `fc_search` falls back to no-key DuckDuckGo HTML search.
+`fc_scrape` and `fc_crawl` require Firecrawl. Authentication, rate-limit,
+bad-request, and transient provider errors do not trigger fallback.
 
-Background commands and Pi/Codex children inherit the Pi process environment
-and run in the requested working directory. Codex children use its
-`workspace-write` sandbox with approvals disabled, but that is a guardrail, not
-a security boundary. Pass self-contained prompts, restrict children to trusted
-directories, and treat repository contents, workflow handoffs, and artifacts
-as untrusted evidence.
+### `fd` and `rg`
 
-### Troubleshooting
+The file-search extension resolves `fd` and `rg` from `PATH` first (`fdfind` is
+also accepted on Linux), then from `~/.pi/agent/bin/`.
 
-- `pi` or `codex` not found: install the CLI and confirm it is on `PATH`;
+When missing, pinned binaries are downloaded on macOS and Linux for x64 and
+arm64, verified with SHA-256, and installed into that directory. On Windows or
+another unsupported target, install `fd` and `rg` with the platform package
+manager and expose them on `PATH`.
+
+## Operational limits
+
+| Resource | Running limit | Retained results |
+| --- | ---: | ---: |
+| Background terminals | 8 | 32 |
+| Standalone subagents | 4 | 32 |
+| Workflows | 1 | 16 |
+
+Each workflow owns a separate four-child subagent pool. Starting jobs reserve
+capacity immediately.
+
+Background streams retain a 2 MiB in-memory tail while full logs spill to a
+private OS-temporary directory. Those logs are removed at Pi session shutdown.
+Workflow artifacts use private OS-temporary directories reported by
+`wf_status`; completed artifacts survive the session but are not durable or
+cross-machine storage.
+
+Background commands and child agents inherit the Pi process environment and
+run in the requested working directory. Codex children use its
+`workspace-write` sandbox with approvals disabled, but this is a guardrail, not
+a security boundary. Treat repository contents, agent output, workflow
+handoffs, and artifacts as untrusted evidence.
+
+## Troubleshooting
+
+- `pi` or `codex` not found: install the CLI and confirm it is on `PATH`.
   `codex` is unnecessary when using only Pi workers.
-- `fd` or `rg` installation fails: install the binary manually on unsupported
-  platforms; on supported targets, check HTTPS access, `tar`, directory
-  permissions, and the reported digest error.
-- Firecrawl fails: set `FIRECRAWL_API_KEY` for scrape/crawl; quota exhaustion
-  falls back only for search. Other provider errors are returned directly.
-- Concurrency limit: wait for or cancel an existing `bg-*`, `sa-*`, or `wf-*`
-  job. Starting jobs already consume their reserved slot.
-- Missing output: use `bg_status` for spill-log paths, `wf_status` for workflow
-  artifact paths, or the full-output path printed by a truncated `fd`/`rg`
-  result. Background logs disappear at shutdown; workflow and file-search
-  paths may later disappear when OS temp is cleaned.
+- `fd` or `rg` installation fails: check HTTPS access, `tar`, directory
+  permissions, and the reported digest; install manually on unsupported
+  platforms.
+- Firecrawl fails: set `FIRECRAWL_API_KEY` for scrape/crawl. Only missing-key or
+  quota-exhausted search uses the fallback.
+- Concurrency limit reached: wait for or cancel an existing `bg-*`, `sa-*`, or
+  `wf-*` job.
+- Missing output: inspect `bg_status` for spill logs, `wf_status` for workflow
+  artifacts, or the full-output path returned by truncated `fd`/`rg` results.
 
 ## Development
 
 ```sh
 npm install
 npm run verify
+npm pack --dry-run --json
 ```
 
-`npm run verify` runs type-checking, tests, and the non-interactive aggregate
-package smoke check. See [PLAN.md](PLAN.md) for release readiness.
+`npm run verify` runs TypeScript type-checking, the Node test suite, and an
+aggregate-package smoke load. CI runs the same gate on the latest Node 24
+release.
+
+## Acknowledgments
+
+The package takes behavioral inspiration from
+[`davis7dotsh/my-pi-setup`](https://github.com/davis7dotsh/my-pi-setup).
+Implementations in this repository are original.
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
-
-## Reference boundary
-
-The reference repository currently has no declared license. This project will
-use it as a product and behavior reference, but implementations will be written
-independently unless compatible licensing is added or explicit permission is
-obtained.
+Licensed under the [MIT License](LICENSE).

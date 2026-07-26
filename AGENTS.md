@@ -37,7 +37,8 @@ themes/*.json                # only when a theme is needed
 - Use `node:` built-ins. Prefer Node + Pi APIs over new dependencies.
 - Runtime third-party packages go in `dependencies`. Bundled Pi packages go in `peerDependencies` with `"*"`: `@earendil-works/pi-ai`, `@earendil-works/pi-agent-core`, `@earendil-works/pi-coding-agent`, `@earendil-works/pi-tui`, `typebox`.
 - Top-level imports only. No dynamic/inline imports.
-- No speculative abstractions, config layers, or plugin frameworks. Solve the current phase in PLAN.md only (YAGNI).
+- No speculative abstractions, config layers, or plugin frameworks. Solve only
+  the current user-requested scope (YAGNI).
 - Do not add a Claude (or other) subagent backend.
 
 ## Style
