@@ -206,7 +206,7 @@ export class WorkflowManager {
     this.entries.set(id, entry);
     this.startingCount -= 1;
     this.notify();
-    void this.persist(entry);
+    await this.persist(entry);
 
     // Background orchestration — never await here.
     void this.runWorkflow(entry);
@@ -482,7 +482,6 @@ export class WorkflowManager {
 
     // Capture before resolveSettle — waiters release interest in finally after settle.
     const consumed = (this.waitInterest.get(entry.id) ?? 0) > 0;
-    entry.resolveSettle();
 
     try {
       await entry.subagents.disposeAll();
@@ -491,6 +490,7 @@ export class WorkflowManager {
     }
 
     await this.persist(entry);
+    entry.resolveSettle();
     this.pruneSettled();
     this.notify();
 
