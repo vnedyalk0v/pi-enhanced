@@ -7,7 +7,6 @@ import {
   DEFAULT_MAX_LINES,
   formatSize,
   truncateHead,
-  withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
 
 export type RunResult = {
@@ -105,9 +104,7 @@ export async function truncateToolOutput(output: string, prefix: string): Promis
 
   const tempDir = await mkdtemp(join(tmpdir(), `${prefix}-`));
   const tempFile = join(tempDir, "output.txt");
-  await withFileMutationQueue(tempFile, async () => {
-    await writeFile(tempFile, output, "utf8");
-  });
+  await writeFile(tempFile, output, "utf8");
 
   const notice =
     `\n\n[Output truncated: showing ${truncation.outputLines} of ${truncation.totalLines} lines` +

@@ -93,15 +93,3 @@ export type StartWorkflowOptions = {
   thinking?: string;
   template?: string;
 };
-
-export function formatElapsed(createdAt: number, settledAt?: number) {
-  const end = settledAt ?? Date.now();
-  const ms = Math.max(0, end - createdAt);
-  const sec = Math.floor(ms / 1000);
-  if (sec < 60) return `${sec}s`;
-  const min = Math.floor(sec / 60);
-  const rem = sec % 60;
-  if (min < 60) return `${min}m${rem}s`;
-  const hr = Math.floor(min / 60);
-  return `${hr}h${min % 60}m`;
-}

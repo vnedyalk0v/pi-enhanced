@@ -88,9 +88,3 @@ export function defaultRepoTaskTemplate(): WorkflowDef {
     ],
   };
 }
-
-export function resolveTemplate(name?: string): WorkflowDef {
-  const key = (name ?? "repo-task").trim().toLowerCase();
-  if (key === "repo-task" || key === "default") return defaultRepoTaskTemplate();
-  throw new Error(`Unknown workflow template: ${name}. Supported: repo-task`);
-}

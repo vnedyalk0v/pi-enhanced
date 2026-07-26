@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { ResultDelivery } from "./delivery.ts";
+import { ResultDelivery } from "../shared/delivery.ts";
 import { TerminalManager, type SettledInfo } from "./manager.ts";
 
 const managers: TerminalManager[] = [];

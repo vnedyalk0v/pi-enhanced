@@ -1,4 +1,4 @@
-/** One-shot deferred delivery of subagent completion messages. */
+/** One-shot deferred delivery of completion messages. Settle handlers enqueue; consumers drain. */
 export class ResultDelivery<T> {
   private pending = new Map<string, T>();
 

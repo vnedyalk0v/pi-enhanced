@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { ResultDelivery } from "./delivery.ts";
+import { ResultDelivery } from "../shared/delivery.ts";
 import {
   buildKillResult,
   buildListResult,
@@ -134,21 +134,16 @@ export default function (pi: ExtensionAPI) {
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const m = getManager(ctx);
       const cwd = resolve(ctx.cwd, params.working_dir ?? ".");
-      try {
-        const snap = await m.start({
-          command: params.command,
-          title: params.title,
-          cwd,
-        });
-        updateWidget();
-        return {
-          content: [{ type: "text" as const, text: buildStartResult(snap) }],
-          details: { id: snap.id, pid: snap.pid, status: snap.status },
-        };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(message);
-      }
+      const snap = await m.start({
+        command: params.command,
+        title: params.title,
+        cwd,
+      });
+      updateWidget();
+      return {
+        content: [{ type: "text" as const, text: buildStartResult(snap) }],
+        details: { id: snap.id, pid: snap.pid, status: snap.status },
+      };
     },
   });
 
@@ -229,7 +224,7 @@ export default function (pi: ExtensionAPI) {
           delivery.consume(params.ids);
           updateWidget();
         }
-        throw new Error(message);
+        throw error;
       }
     },
   });

@@ -4,7 +4,8 @@ import {
   formatSize,
   truncateTail,
 } from "@earendil-works/pi-coding-agent";
-import { formatElapsed, formatExit, type TerminalSnapshot } from "./manager.ts";
+import { formatElapsed } from "../shared/time.ts";
+import { formatExit, type TerminalSnapshot } from "./manager.ts";
 
 export function describeTerminal(snap: TerminalSnapshot) {
   const elapsed = formatElapsed(snap.createdAt, snap.settledAt);

@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+import { abortPromise, sleep } from "../shared/time.ts";
 import { OutputBuffer, openSpillStreams, removeSpillDir, type OutputView } from "./output.ts";
 
 export type TerminalStatus = "running" | "done" | "failed" | "killed";
@@ -92,10 +93,6 @@ export class TerminalManager {
     this.killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
     this.onSettled = options.onSettled;
     this.onChange = options.onChange;
-  }
-
-  setOnSettled(handler: (info: SettledInfo) => void) {
-    this.onSettled = handler;
   }
 
   subscribe(listener: () => void) {
@@ -465,27 +462,6 @@ export class TerminalManager {
   }
 }
 
-function sleep(ms: number) {
-  return new Promise<void>((resolve) => {
-    const t = setTimeout(resolve, ms);
-    t.unref?.();
-  });
-}
-
-function abortPromise(signal: AbortSignal | undefined, message: string) {
-  if (!signal) return new Promise<never>(() => {});
-  if (signal.aborted) return Promise.reject(new Error(message));
-  return new Promise<never>((_, reject) => {
-    signal.addEventListener(
-      "abort",
-      () => {
-        reject(new Error(message));
-      },
-      { once: true },
-    );
-  });
-}
-
 function boundedError(error: unknown, max = 500) {
   const text = error instanceof Error ? error.message : String(error);
   return text.length > max ? `${text.slice(0, max)}…` : text;
@@ -498,19 +474,6 @@ async function runTaskKill(pid: number, force: boolean) {
     child.on("close", () => resolve());
     child.on("error", () => resolve());
   });
-}
-
-export function formatElapsed(createdAt: number, settledAt?: number) {
-  const end = settledAt ?? Date.now();
-  const ms = Math.max(0, end - createdAt);
-  const sec = Math.floor(ms / 1000);
-  if (sec < 60) return `${sec}s`;
-  const min = Math.floor(sec / 60);
-  const rem = sec % 60;
-  if (min < 60) return `${min}m${rem}s`;
-  const hr = Math.floor(min / 60);
-  const remMin = min % 60;
-  return `${hr}h${remMin}m`;
 }
 
 export function formatExit(snap: TerminalSnapshot) {

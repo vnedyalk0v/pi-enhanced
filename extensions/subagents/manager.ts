@@ -1,5 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+import { abortPromise, sleep } from "../shared/time.ts";
 import { startCodexBackend } from "./backends/codex.ts";
 import { startPiBackend, type BackendJob } from "./backends/pi.ts";
 import type {
@@ -57,7 +58,6 @@ export class SubagentManager {
   private counter = 0;
   private disposed = false;
   private waitInterest = new Map<string, number>();
-  private listeners = new Set<() => void>();
   private readonly maxRunning: number;
   private readonly maxTracked: number;
   private readonly killGraceMs: number;
@@ -80,24 +80,8 @@ export class SubagentManager {
     };
   }
 
-  setOnSettled(handler: (info: SettledInfo) => void) {
-    this.onSettled = handler;
-  }
-
-  subscribe(listener: () => void) {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  }
-
   private notify() {
     this.onChange?.();
-    for (const l of this.listeners) {
-      try {
-        l();
-      } catch {
-        // ignore UI errors
-      }
-    }
   }
 
   private runningCount() {
@@ -389,23 +373,7 @@ export class SubagentManager {
       if (entry.status === "running") entry.job?.handle.kill("SIGKILL");
     }
     this.entries.clear();
-    this.listeners.clear();
     this.waitInterest.clear();
     this.notify();
   }
-}
-
-function sleep(ms: number) {
-  return new Promise<void>((r) => {
-    const t = setTimeout(r, ms);
-    t.unref?.();
-  });
-}
-
-function abortPromise(signal: AbortSignal | undefined, message: string) {
-  if (!signal) return new Promise<never>(() => {});
-  if (signal.aborted) return Promise.reject(new Error(message));
-  return new Promise<never>((_, reject) => {
-    signal.addEventListener("abort", () => reject(new Error(message)), { once: true });
-  });
 }

@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { ResultDelivery } from "./delivery.ts";
+import { ResultDelivery } from "../shared/delivery.ts";
 import type { BackendName, SubagentSnapshot } from "./domain.ts";
 import {
   buildCancelResult,
@@ -171,23 +171,19 @@ export default function (pi: ExtensionAPI) {
         model ??= process.env.CODEX_DEFAULT_MODEL?.trim() || undefined;
       }
 
-      try {
-        const snap = await m.spawn({
-          backend,
-          prompt: params.prompt,
-          title: params.title,
-          cwd,
-          model,
-          thinking,
-        });
-        updateWidget();
-        return {
-          content: [{ type: "text" as const, text: buildSpawnResult(snap) }],
-          details: { id: snap.id, backend: snap.backend, status: snap.status, pid: snap.pid },
-        };
-      } catch (error) {
-        throw new Error(error instanceof Error ? error.message : String(error));
-      }
+      const snap = await m.spawn({
+        backend,
+        prompt: params.prompt,
+        title: params.title,
+        cwd,
+        model,
+        thinking,
+      });
+      updateWidget();
+      return {
+        content: [{ type: "text" as const, text: buildSpawnResult(snap) }],
+        details: { id: snap.id, backend: snap.backend, status: snap.status, pid: snap.pid },
+      };
     },
   });
 
@@ -234,20 +230,15 @@ export default function (pi: ExtensionAPI) {
     async execute(_toolCallId, params, signal) {
       if (params.ids.length === 0) throw new Error("ids must not be empty");
       const m = getManager();
-      try {
-        const snaps = await m.wait(params.ids, signal);
-        delivery.consume(params.ids);
-        updateWidget();
-        return {
-          content: [{ type: "text" as const, text: buildWaitResult(snaps) }],
-          details: {
-            results: snaps.map((s) => ({ id: s.id, status: s.status, backend: s.backend })),
-          },
-        };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(message);
-      }
+      const snaps = await m.wait(params.ids, signal);
+      delivery.consume(params.ids);
+      updateWidget();
+      return {
+        content: [{ type: "text" as const, text: buildWaitResult(snaps) }],
+        details: {
+          results: snaps.map((s) => ({ id: s.id, status: s.status, backend: s.backend })),
+        },
+      };
     },
   });
 
@@ -276,7 +267,7 @@ export default function (pi: ExtensionAPI) {
           delivery.consume(params.ids);
           updateWidget();
         }
-        throw new Error(message);
+        throw error;
       }
     },
   });

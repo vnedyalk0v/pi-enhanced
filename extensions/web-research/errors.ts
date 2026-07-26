@@ -79,9 +79,7 @@ export function classifyHttpError(status: number, bodyText: string): ClassifiedE
 }
 
 export function classifyThrown(error: unknown): ClassifiedError {
-  if (error && typeof error === "object" && "kind" in error && "fallbackEligible" in error) {
-    return error as ClassifiedError;
-  }
+  if (isClassifiedError(error)) return error;
   const message = error instanceof Error ? error.message : String(error);
   if (QUOTA_RE.test(message)) {
     return { kind: "quota", message, fallbackEligible: true };
@@ -93,6 +91,26 @@ export function classifyThrown(error: unknown): ClassifiedError {
     return { kind: "rate_limit", message, fallbackEligible: false };
   }
   return { kind: "unknown", message, fallbackEligible: false };
+}
+
+export function isClassifiedError(error: unknown): error is ClassifiedError {
+  return (
+    !!error &&
+    typeof error === "object" &&
+    "kind" in error &&
+    "fallbackEligible" in error &&
+    "message" in error &&
+    typeof (error as ClassifiedError).message === "string"
+  );
+}
+
+/** Throw a ClassifiedError-shaped Error for catch paths that use classifyThrown. */
+export function throwClassified(classified: ClassifiedError): never {
+  const err = new Error(classified.message) as Error & ClassifiedError;
+  err.kind = classified.kind;
+  err.status = classified.status;
+  err.fallbackEligible = classified.fallbackEligible;
+  throw err;
 }
 
 function extractErrorMessage(bodyText: string): string {
@@ -107,18 +125,4 @@ function extractErrorMessage(bodyText: string): string {
     // plain text body
   }
   return trimmed.slice(0, 500);
-}
-
-export class ProviderError extends Error {
-  readonly kind: ProviderErrorKind;
-  readonly status?: number;
-  readonly fallbackEligible: boolean;
-
-  constructor(classified: ClassifiedError) {
-    super(classified.message);
-    this.name = "ProviderError";
-    this.kind = classified.kind;
-    this.status = classified.status;
-    this.fallbackEligible = classified.fallbackEligible;
-  }
 }

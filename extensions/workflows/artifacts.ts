@@ -2,11 +2,6 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { StructuredOutput, WorkflowSnapshot } from "./domain.ts";
 
-export async function ensureArtifactsDir(root: string) {
-  await mkdir(root, { recursive: true });
-  return root;
-}
-
 export function phaseDir(artifactsDir: string, phaseIndex: number, phaseName: string) {
   const slug = slugify(phaseName);
   return join(artifactsDir, "phases", `${String(phaseIndex + 1).padStart(2, "0")}-${slug}`);

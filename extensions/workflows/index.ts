@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { ResultDelivery } from "../subagents/delivery.ts";
+import { ResultDelivery } from "../shared/delivery.ts";
 import type { WorkflowSnapshot } from "./domain.ts";
 import {
   buildCancelResult,
@@ -144,28 +144,24 @@ export default function (pi: ExtensionAPI) {
       captureParentDefaults(ctx);
       const m = getManager();
       const cwd = resolve(ctx.cwd, params.working_dir ?? ".");
-      try {
-        const snap = await m.start({
-          goal: params.goal,
-          title: params.title,
-          cwd,
-          model: parentModelLabel,
-          thinking: parentThinking,
-          template: params.template,
-        });
-        updateWidget();
-        return {
-          content: [{ type: "text" as const, text: buildStartResult(snap) }],
-          details: {
-            id: snap.id,
-            status: snap.status,
-            artifactsDir: snap.artifactsDir,
-            template: snap.template,
-          },
-        };
-      } catch (error) {
-        throw new Error(error instanceof Error ? error.message : String(error));
-      }
+      const snap = await m.start({
+        goal: params.goal,
+        title: params.title,
+        cwd,
+        model: parentModelLabel,
+        thinking: parentThinking,
+        template: params.template,
+      });
+      updateWidget();
+      return {
+        content: [{ type: "text" as const, text: buildStartResult(snap) }],
+        details: {
+          id: snap.id,
+          status: snap.status,
+          artifactsDir: snap.artifactsDir,
+          template: snap.template,
+        },
+      };
     },
   });
 
@@ -217,24 +213,20 @@ export default function (pi: ExtensionAPI) {
     async execute(_toolCallId, params, signal) {
       if (params.ids.length === 0) throw new Error("ids must not be empty");
       const m = getManager();
-      try {
-        const snaps = await m.wait(params.ids, signal);
-        delivery.consume(params.ids);
-        updateWidget();
-        return {
-          content: [{ type: "text" as const, text: buildWaitResult(snaps) }],
-          details: {
-            results: snaps.map((s) => ({
-              id: s.id,
-              status: s.status,
-              artifactsDir: s.artifactsDir,
-              finalArtifactPath: s.finalArtifactPath,
-            })),
-          },
-        };
-      } catch (error) {
-        throw new Error(error instanceof Error ? error.message : String(error));
-      }
+      const snaps = await m.wait(params.ids, signal);
+      delivery.consume(params.ids);
+      updateWidget();
+      return {
+        content: [{ type: "text" as const, text: buildWaitResult(snaps) }],
+        details: {
+          results: snaps.map((s) => ({
+            id: s.id,
+            status: s.status,
+            artifactsDir: s.artifactsDir,
+            finalArtifactPath: s.finalArtifactPath,
+          })),
+        },
+      };
     },
   });
 
@@ -263,7 +255,7 @@ export default function (pi: ExtensionAPI) {
           delivery.consume(params.ids);
           updateWidget();
         }
-        throw new Error(message);
+        throw error;
       }
     },
   });

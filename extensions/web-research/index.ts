@@ -1,8 +1,13 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { classifyThrown, ProviderError, type ClassifiedError } from "./errors.ts";
+import { classifyThrown } from "./errors.ts";
 import { duckDuckGoSearch } from "./fallback-search.ts";
-import { FirecrawlClient, resolveApiKey } from "./firecrawl.ts";
+import {
+  firecrawlCrawl,
+  firecrawlScrape,
+  firecrawlSearch,
+  resolveApiKey,
+} from "./firecrawl.ts";
 import {
   formatCrawlResult,
   formatProviderError,
@@ -55,8 +60,12 @@ export default function (pi: ExtensionAPI) {
 
       if (key) {
         try {
-          const client = new FirecrawlClient({ apiKey: key });
-          const result = await client.search(params.query, { limit, signal });
+          const result = await firecrawlSearch({
+            apiKey: key,
+            query: params.query,
+            limit,
+            signal,
+          });
           const details: SearchDetails = {
             provider: result.provider,
             count: result.results.length,
@@ -67,7 +76,7 @@ export default function (pi: ExtensionAPI) {
             details,
           };
         } catch (error) {
-          const classified = toClassified(error);
+          const classified = classifyThrown(error);
           if (classified.fallbackEligible || classified.kind === "quota") {
             try {
               const fallback = await duckDuckGoSearch(params.query, { limit, signal });
@@ -132,14 +141,13 @@ export default function (pi: ExtensionAPI) {
     async execute(_toolCallId, params, signal) {
       const key = requireKey();
       try {
-        const client = new FirecrawlClient({ apiKey: key });
-        const result = await client.scrape(params.url, { signal });
+        const result = await firecrawlScrape({ apiKey: key, url: params.url, signal });
         return {
           content: [{ type: "text" as const, text: formatScrapeResult(result) }],
           details: { provider: result.provider, url: result.url },
         };
       } catch (error) {
-        throw new Error(formatProviderError(toClassified(error), "fc_scrape"));
+        throw new Error(formatProviderError(classifyThrown(error), "fc_scrape"));
       }
     },
   });
@@ -156,8 +164,9 @@ export default function (pi: ExtensionAPI) {
     async execute(_toolCallId, params, signal) {
       const key = requireKey();
       try {
-        const client = new FirecrawlClient({ apiKey: key });
-        const result = await client.crawl(params.url, {
+        const result = await firecrawlCrawl({
+          apiKey: key,
+          url: params.url,
           limit: params.limit,
           signal,
         });
@@ -171,7 +180,7 @@ export default function (pi: ExtensionAPI) {
           },
         };
       } catch (error) {
-        throw new Error(formatProviderError(toClassified(error), "fc_crawl"));
+        throw new Error(formatProviderError(classifyThrown(error), "fc_crawl"));
       }
     },
   });
@@ -185,16 +194,4 @@ function requireKey(): string {
     );
   }
   return key;
-}
-
-function toClassified(error: unknown): ClassifiedError {
-  if (error instanceof ProviderError) {
-    return {
-      kind: error.kind,
-      status: error.status,
-      message: error.message,
-      fallbackEligible: error.fallbackEligible,
-    };
-  }
-  return classifyThrown(error);
 }

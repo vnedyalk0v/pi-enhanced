@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import type { BackendJob } from "./backends/pi.ts";
-import { ResultDelivery } from "./delivery.ts";
+import { ResultDelivery } from "../shared/delivery.ts";
 import { SubagentManager, type ManagerOptions } from "./manager.ts";
 
 const managers: SubagentManager[] = [];

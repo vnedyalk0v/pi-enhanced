@@ -3,45 +3,7 @@ import { complete } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { DynamicBorder, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, matchesKey, Text } from "@earendil-works/pi-tui";
-
-type ContentBlock = {
-  type?: string;
-  text?: string;
-  name?: string;
-  arguments?: Record<string, unknown>;
-};
-
-function extractText(content: unknown): string[] {
-  if (typeof content === "string") return content.trim() ? [content] : [];
-  if (!Array.isArray(content)) return [];
-  const parts: string[] = [];
-  for (const part of content) {
-    if (!part || typeof part !== "object") continue;
-    const block = part as ContentBlock;
-    if (block.type === "text" && typeof block.text === "string" && block.text.trim()) {
-      parts.push(block.text);
-    }
-    if (block.type === "toolCall" && typeof block.name === "string") {
-      parts.push(`[tool ${block.name}]`);
-    }
-  }
-  return parts;
-}
-
-function buildConversationText(
-  entries: Array<{ type: string; message?: { role?: string; content?: unknown } }>,
-): string {
-  const sections: string[] = [];
-  for (const entry of entries) {
-    if (entry.type !== "message" || !entry.message?.role) continue;
-    const role = entry.message.role;
-    if (role !== "user" && role !== "assistant") continue;
-    const body = extractText(entry.message.content).join("\n").trim();
-    if (!body) continue;
-    sections.push(`${role === "user" ? "User" : "Assistant"}:\n${body}`);
-  }
-  return sections.join("\n\n");
-}
+import { extractConversationText } from "../shared/text.ts";
 
 function buildPrompt(conversationText: string): string {
   return [
@@ -84,7 +46,9 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("summary", {
     description: "Summarize the current conversation with the active model",
     handler: async (_args, ctx) => {
-      const conversationText = buildConversationText(ctx.sessionManager.getBranch());
+      const conversationText = extractConversationText(ctx.sessionManager.getBranch(), {
+        includeToolCalls: true,
+      });
       if (!conversationText.trim()) {
         if (ctx.hasUI) ctx.ui.notify("No conversation to summarize", "warning");
         return;

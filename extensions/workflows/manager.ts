@@ -2,10 +2,10 @@ import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { existsSync, statSync } from "node:fs";
+import { abortPromise, sleep } from "../shared/time.ts";
 import type { ManagerOptions as SubagentManagerOptions } from "../subagents/manager.ts";
 import { SubagentManager } from "../subagents/manager.ts";
 import {
-  ensureArtifactsDir,
   phaseDir,
   writeFinalArtifact,
   writeGoal,
@@ -25,7 +25,7 @@ import type {
   WorkflowTaskDef,
 } from "./domain.ts";
 import { buildTaskPrompt, validateStructuredOutput } from "./handoff.ts";
-import { resolveTemplate } from "./template.ts";
+import { defaultRepoTaskTemplate } from "./template.ts";
 
 const DEFAULT_MAX_TRACKED = 16;
 
@@ -116,7 +116,11 @@ export class WorkflowManager {
       throw new Error(`Working directory does not exist or is not a directory: ${cwd}`);
     }
 
-    const def = resolveTemplate(options.template);
+    const templateKey = (options.template ?? "repo-task").trim().toLowerCase();
+    if (templateKey && templateKey !== "repo-task" && templateKey !== "default") {
+      throw new Error(`Unknown workflow template: ${options.template}. Supported: repo-task`);
+    }
+    const def = defaultRepoTaskTemplate();
     for (const phase of def.phases) {
       if (phase.tasks.length === 0) {
         throw new Error(`Workflow phase "${phase.name}" has no tasks.`);
@@ -130,7 +134,7 @@ export class WorkflowManager {
       `workflow: ${goal.replace(/\s+/g, " ").slice(0, 48)}`;
 
     const artifactsDir = join(this.artifactsRoot, id);
-    await ensureArtifactsDir(artifactsDir);
+    await mkdir(artifactsDir, { recursive: true });
     await writeGoal(artifactsDir, goal);
     await writeMeta(artifactsDir, {
       id,
@@ -649,19 +653,4 @@ function extractFirstLine(body: string) {
     .map((l) => l.trim())
     .find((l) => l.length > 0 && !l.startsWith("#"));
   return (line ?? body.trim()).slice(0, 400);
-}
-
-function sleep(ms: number) {
-  return new Promise<void>((r) => {
-    const t = setTimeout(r, ms);
-    t.unref?.();
-  });
-}
-
-function abortPromise(signal: AbortSignal | undefined, message: string) {
-  if (!signal) return new Promise<never>(() => {});
-  if (signal.aborted) return Promise.reject(new Error(message));
-  return new Promise<never>((_, reject) => {
-    signal.addEventListener("abort", () => reject(new Error(message)), { once: true });
-  });
 }

@@ -4,9 +4,9 @@ import { join } from "node:path";
 import {
   appendBounded,
   extractCodexLastMessage,
-  resolveCodexInvocation,
   runProcess,
 } from "../run.ts";
+import { tailText } from "../../shared/text.ts";
 import type { BackendJob } from "./pi.ts";
 
 export type CodexBackendOptions = {
@@ -51,10 +51,9 @@ export async function startCodexBackend(options: CodexBackendOptions): Promise<B
   args.push(options.prompt);
 
   let output = "";
-  const inv = resolveCodexInvocation(args);
   const handle = runProcess({
-    command: inv.command,
-    args: inv.args,
+    command: "codex",
+    args,
     cwd: options.cwd,
     signal: options.signal,
     onStdout: (c) => {
@@ -91,10 +90,6 @@ export async function startCodexBackend(options: CodexBackendOptions): Promise<B
       };
     },
   };
-}
-
-function tailText(s: string, n: number) {
-  return s.length <= n ? s : s.slice(s.length - n);
 }
 
 /**

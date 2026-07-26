@@ -4,10 +4,10 @@ import { join } from "node:path";
 import {
   appendBounded,
   extractPiLastAssistantText,
-  resolvePiInvocation,
   runProcess,
   type RunHandle,
 } from "../run.ts";
+import { tailText } from "../../shared/text.ts";
 
 export type PiBackendOptions = {
   prompt: string;
@@ -59,10 +59,9 @@ export async function startPiBackend(options: PiBackendOptions): Promise<Backend
   args.push(options.prompt);
 
   let output = "";
-  const inv = resolvePiInvocation(args);
   const handle = runProcess({
-    command: inv.command,
-    args: inv.args,
+    command: "pi",
+    args,
     cwd: options.cwd,
     signal: options.signal,
     onStdout: (c) => {
@@ -93,8 +92,4 @@ export async function startPiBackend(options: PiBackendOptions): Promise<Backend
       };
     },
   };
-}
-
-function tailText(s: string, n: number) {
-  return s.length <= n ? s : s.slice(s.length - n);
 }

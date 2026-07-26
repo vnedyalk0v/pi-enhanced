@@ -170,11 +170,4 @@ function stringField(obj: Record<string, unknown>, key: string) {
   return typeof v === "string" ? v : "";
 }
 
-export function resolvePiInvocation(args: string[]) {
-  // Prefer the same pi binary on PATH that users run interactively.
-  return { command: "pi", args };
-}
 
-export function resolveCodexInvocation(args: string[]) {
-  return { command: "codex", args };
-}

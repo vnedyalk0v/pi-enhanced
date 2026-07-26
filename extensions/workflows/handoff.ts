@@ -1,7 +1,6 @@
 import type { StructuredOutput, WorkflowTaskDef } from "./domain.ts";
 
 const SUMMARY_MAX = 400;
-const BODY_IN_PROMPT_MAX = 2_500;
 
 /**
  * Validate a settled subagent result into a structured handoff.
@@ -121,23 +120,4 @@ export function formatPriorForPrompt(prior: StructuredOutput[]) {
       return `${head}\n${bodyNote}`;
     })
     .join("\n\n");
-}
-
-/** Compact model-facing dump of handoffs (for status / synthesis context notes). */
-export function formatPriorCompact(prior: StructuredOutput[]) {
-  if (prior.length === 0) return "(none)";
-  return prior
-    .map((p) => {
-      if (p.status !== "ok") return `- ${p.phase}/${p.taskKey}: ${p.status}${p.error ? ` (${p.error})` : ""}`;
-      const s =
-        p.summary.length <= 120 ? p.summary : `${p.summary.slice(0, 120)}…`;
-      return `- ${p.phase}/${p.taskKey}: ok — ${s}`;
-    })
-    .join("\n");
-}
-
-export function clipForPrompt(text: string, max = BODY_IN_PROMPT_MAX) {
-  const t = text.trim();
-  if (t.length <= max) return t;
-  return `${t.slice(0, max)}\n…[truncated ${t.length - max} chars; see artifact]`;
 }

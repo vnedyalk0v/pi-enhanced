@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { ProviderError } from "./errors.ts";
-import { FirecrawlClient } from "./firecrawl.ts";
+import { classifyThrown } from "./errors.ts";
+import { firecrawlCrawl, firecrawlScrape, firecrawlSearch } from "./firecrawl.ts";
 
 function mockFetch(handlers: Array<(url: string, init?: RequestInit) => Promise<Response> | Response>) {
   let i = 0;
@@ -13,7 +13,7 @@ function mockFetch(handlers: Array<(url: string, init?: RequestInit) => Promise<
   };
 }
 
-describe("FirecrawlClient", () => {
+describe("firecrawl", () => {
   it("search returns normalized firecrawl results", async () => {
     const fetchImpl = mockFetch([
       () =>
@@ -28,32 +28,33 @@ describe("FirecrawlClient", () => {
           { status: 200 },
         ),
     ]);
-    const client = new FirecrawlClient({
+    const result = await firecrawlSearch({
       apiKey: "fc-test",
+      query: "pi",
       fetchImpl: fetchImpl as typeof fetch,
     });
-    const result = await client.search("pi");
     assert.equal(result.provider, "firecrawl");
     assert.equal(result.results[0]?.url, "https://pi.dev/");
   });
 
-  it("throws ProviderError with quota on 402", async () => {
+  it("throws classified quota on 402", async () => {
     const fetchImpl = mockFetch([
       () =>
         new Response(JSON.stringify({ error: "Payment required to access this resource." }), {
           status: 402,
         }),
     ]);
-    const client = new FirecrawlClient({
-      apiKey: "fc-test",
-      fetchImpl: fetchImpl as typeof fetch,
-    });
     await assert.rejects(
-      () => client.search("q"),
+      () =>
+        firecrawlSearch({
+          apiKey: "fc-test",
+          query: "q",
+          fetchImpl: fetchImpl as typeof fetch,
+        }),
       (err: unknown) => {
-        assert.ok(err instanceof ProviderError);
-        assert.equal(err.kind, "quota");
-        assert.equal(err.fallbackEligible, true);
+        const c = classifyThrown(err);
+        assert.equal(c.kind, "quota");
+        assert.equal(c.fallbackEligible, true);
         return true;
       },
     );
@@ -73,11 +74,11 @@ describe("FirecrawlClient", () => {
         );
       },
     ]);
-    const client = new FirecrawlClient({
+    const result = await firecrawlScrape({
       apiKey: "fc-test",
+      url: "https://x.test",
       fetchImpl: fetchImpl as typeof fetch,
     });
-    const result = await client.scrape("https://x.test");
     assert.match(body, /markdown/);
     assert.equal(result.markdown, "# Hi");
   });
@@ -111,13 +112,13 @@ describe("FirecrawlClient", () => {
           { status: 200 },
         ),
     ]);
-    const client = new FirecrawlClient({
+    const result = await firecrawlCrawl({
       apiKey: "fc-test",
+      url: "https://example.com",
+      limit: 1,
+      maxWaitMs: 10_000,
       fetchImpl: fetchImpl as typeof fetch,
     });
-    // Patch sleep via maxWait and fast path: crawl uses 1500ms sleep — use fake short by completing second poll
-    // Override: temporarily shorten by using completed on second get only — first get scraping still waits 1.5s
-    const result = await client.crawl("https://example.com", { limit: 1, maxWaitMs: 10_000 });
     assert.equal(result.status, "completed");
     assert.equal(result.pages.length, 1);
   });
