@@ -108,6 +108,26 @@ describe("TerminalManager", () => {
     );
   });
 
+  it("reserves concurrency while terminals are starting", async () => {
+    const m = createManager({ maxRunning: 1 });
+    const starts = await Promise.allSettled(
+      Array.from({ length: 4 }, (_, i) =>
+        m.start({ command: "sleep 30", title: `terminal-${i}`, cwd: process.cwd() }),
+      ),
+    );
+    const successes = starts.filter((result) => result.status === "fulfilled");
+    const failures = starts.filter((result) => result.status === "rejected");
+
+    assert.equal(successes.length, 1);
+    assert.equal(failures.length, 3);
+    for (const failure of failures) {
+      assert.match(String(failure.reason), /Concurrency limit/);
+    }
+
+    const killed = await m.kill([successes[0]!.value.id]);
+    assert.equal(killed[0]?.snapshot.status, "killed");
+  });
+
   it("rejects unknown kill ids", async () => {
     const m = createManager();
     await assert.rejects(() => m.kill(["bt-999"]), /Unknown terminal/);

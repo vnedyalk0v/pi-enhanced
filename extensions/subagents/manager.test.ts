@@ -130,6 +130,61 @@ describe("SubagentManager", () => {
     );
   });
 
+  it("reserves concurrency while a subagent is starting", async () => {
+    let releaseStart!: () => void;
+    const startGate = new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+    let calls = 0;
+    const m = createManager({
+      maxRunning: 1,
+      starters: {
+        pi: async () => {
+          calls += 1;
+          if (calls === 1) await startGate;
+          return fakeJob({ exitCode: 0, resultText: "a", delayMs: 2000 });
+        },
+      },
+    });
+
+    const first = m.spawn({ backend: "pi", prompt: "one", cwd: process.cwd() });
+    await Promise.resolve();
+    await assert.rejects(
+      () => m.spawn({ backend: "pi", prompt: "two", cwd: process.cwd() }),
+      /Concurrency limit/,
+    );
+
+    releaseStart();
+    const started = await first;
+    await m.cancel([started.id]);
+  });
+
+  it("releases a reserved slot when startup fails", async () => {
+    let calls = 0;
+    const m = createManager({
+      maxRunning: 1,
+      starters: {
+        pi: async () => {
+          calls += 1;
+          if (calls === 1) throw new Error("starter failed");
+          return fakeJob({ exitCode: 0, resultText: "recovered", delayMs: 20 });
+        },
+      },
+    });
+
+    await assert.rejects(
+      () => m.spawn({ backend: "pi", prompt: "first", cwd: process.cwd() }),
+      /starter failed/,
+    );
+    const started = await m.spawn({
+      backend: "pi",
+      prompt: "second",
+      cwd: process.cwd(),
+    });
+    await m.wait([started.id]);
+    assert.equal(m.get(started.id)?.status, "done");
+  });
+
   it("lists both backends", async () => {
     const m = createManager({
       starters: {
@@ -157,4 +212,3 @@ describe("SubagentManager", () => {
     assert.equal(m.get(snap.id)?.exitCode, 2);
   });
 });
-

@@ -76,6 +76,7 @@ const DEFAULT_KILL_GRACE_MS = 2000;
 export class TerminalManager {
   private entries = new Map<string, Entry>();
   private counter = 0;
+  private startingCount = 0;
   private disposed = false;
   private killInterest = new Map<string, number>();
   private listeners = new Set<() => void>();
@@ -152,7 +153,7 @@ export class TerminalManager {
     if (this.disposed) {
       throw new Error("Background terminal manager is disposed.");
     }
-    if (this.runningCount() >= this.maxRunning) {
+    if (this.runningCount() + this.startingCount >= this.maxRunning) {
       throw new Error(
         `Concurrency limit: at most ${this.maxRunning} background terminals may run at once.`,
       );
@@ -169,10 +170,14 @@ export class TerminalManager {
     }
     const title = (options.title.trim().slice(0, 80) || "terminal");
 
+    this.startingCount += 1;
     this.counter += 1;
     const id = `bt-${this.counter}`;
 
-    const spill = await openSpillStreams(this.sessionKey, id);
+    const spill = await openSpillStreams(this.sessionKey, id).catch((error) => {
+      this.startingCount -= 1;
+      throw error;
+    });
     const stdout = new OutputBuffer(undefined, spill.stdout);
     const stderr = new OutputBuffer(undefined, spill.stderr);
 
@@ -209,8 +214,12 @@ export class TerminalManager {
         windowsHide: true,
       });
     } catch (error) {
-      await stdout.close();
-      await stderr.close();
+      try {
+        await stdout.close();
+        await stderr.close();
+      } finally {
+        this.startingCount -= 1;
+      }
       throw new Error(boundedError(error));
     }
 
@@ -267,6 +276,7 @@ export class TerminalManager {
     });
 
     this.entries.set(id, entry);
+    this.startingCount -= 1;
     this.notify();
     return this.snapshotOf(entry);
   }
@@ -475,5 +485,3 @@ async function runTaskKill(pid: number, force: boolean) {
     child.on("error", () => resolve());
   });
 }
-
-

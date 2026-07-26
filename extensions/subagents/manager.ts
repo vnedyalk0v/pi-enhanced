@@ -56,6 +56,7 @@ export type ManagerOptions = {
 export class SubagentManager {
   private entries = new Map<string, Entry>();
   private counter = 0;
+  private startingCount = 0;
   private disposed = false;
   private waitInterest = new Map<string, number>();
   private readonly maxRunning: number;
@@ -124,7 +125,7 @@ export class SubagentManager {
 
   async spawn(options: SpawnOptions): Promise<SubagentSnapshot> {
     if (this.disposed) throw new Error("Subagent manager is disposed.");
-    if (this.runningCount() >= this.maxRunning) {
+    if (this.runningCount() + this.startingCount >= this.maxRunning) {
       throw new Error(
         `Concurrency limit: at most ${this.maxRunning} subagents may run at once.`,
       );
@@ -141,6 +142,7 @@ export class SubagentManager {
       throw new Error(`Working directory does not exist or is not a directory: ${cwd}`);
     }
 
+    this.startingCount += 1;
     this.counter += 1;
     const id = `sa-${this.counter}`;
     const title =
@@ -192,6 +194,7 @@ export class SubagentManager {
         });
       }
     } catch (error) {
+      this.startingCount -= 1;
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(`Failed to start ${options.backend} subagent: ${message}`);
     }
@@ -199,6 +202,7 @@ export class SubagentManager {
     entry.job = job;
     entry.pid = job.handle.pid;
     this.entries.set(id, entry);
+    this.startingCount -= 1;
     this.notify();
 
     // Background collection — never await here.
