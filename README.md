@@ -34,7 +34,8 @@ criteria.
 
 ## Development
 
-Requires Node.js `22.19.0` or newer.
+Requires Node.js `22.19.0` or newer. Extensions load as a Pi package via the
+`pi` manifest in `package.json` (or convention directories).
 
 ```sh
 npm install
@@ -46,6 +47,12 @@ For a normal installation from GitHub:
 
 ```sh
 pi install git:github.com/vnedyalk0v/pi-enhanced
+```
+
+To try without installing into `~/.pi/agent`:
+
+```sh
+pi -e ./
 ```
 
 ## Reference boundary
