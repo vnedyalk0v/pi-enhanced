@@ -171,6 +171,38 @@ describe("WorkflowManager", () => {
     }
   });
 
+  it("rejects starts at capacity and releases capacity after settlement", async () => {
+    const { m } = await createManager({
+      maxRunning: 1,
+      maxTracked: 1,
+      subagentOptions: {
+        starters: {
+          pi: async () =>
+            fakeJob({ exitCode: 0, resultText: "ok scout/review/synth", delayMs: 30 }),
+          codex: async () =>
+            fakeJob({ exitCode: 0, resultText: "ok implement", delayMs: 30 }),
+        },
+      },
+    });
+
+    const firstStart = m.start({ goal: "first workflow", cwd: process.cwd() });
+    await assert.rejects(
+      () => m.start({ goal: "second workflow", cwd: process.cwd() }),
+      /Concurrency limit/,
+    );
+
+    const first = await firstStart;
+    await m.wait([first.id]);
+    const later = await m.start({ goal: "later workflow", cwd: process.cwd() });
+    await m.wait([later.id]);
+
+    for (let i = 0; i < 20 && m.get(first.id); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.equal(m.get(first.id), undefined);
+    assert.equal(m.get(later.id)?.status, "done");
+  });
+
   it("runs four phases, preserves artifacts, synthesizes after partial failure", async () => {
     const settled: Array<{ status: string; consumed: boolean }> = [];
     const { m, artifactsRoot } = await createManager({

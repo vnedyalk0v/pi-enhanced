@@ -18,6 +18,7 @@ import type {
 import { buildTaskPrompt, extractSummary, validateStructuredOutput } from "./handoff.ts";
 import { REPO_TASK_PHASES } from "./template.ts";
 
+const DEFAULT_MAX_RUNNING = 1;
 const DEFAULT_MAX_TRACKED = 16;
 
 type PhaseRuntime = {
@@ -57,6 +58,7 @@ export type WorkflowSettledInfo = {
 };
 
 export type WorkflowManagerOptions = {
+  maxRunning?: number;
   maxTracked?: number;
   /** Root for artifact dirs (default: tmpdir/pi-enhanced-workflows). */
   artifactsRoot?: string;
@@ -69,8 +71,10 @@ export type WorkflowManagerOptions = {
 export class WorkflowManager {
   private entries = new Map<string, Entry>();
   private counter = 0;
+  private startingCount = 0;
   private disposed = false;
   private waitInterest = new Map<string, number>();
+  private readonly maxRunning: number;
   private readonly maxTracked: number;
   private readonly artifactsRoot: string;
   private onSettled?: (info: WorkflowSettledInfo) => void;
@@ -78,6 +82,7 @@ export class WorkflowManager {
   private subagentOptions?: Omit<SubagentManagerOptions, "onSettled" | "onChange">;
 
   constructor(options: WorkflowManagerOptions = {}) {
+    this.maxRunning = options.maxRunning ?? DEFAULT_MAX_RUNNING;
     this.maxTracked = options.maxTracked ?? DEFAULT_MAX_TRACKED;
     this.artifactsRoot = options.artifactsRoot ?? join(tmpdir(), "pi-enhanced-workflows");
     this.onSettled = options.onSettled;
@@ -94,8 +99,21 @@ export class WorkflowManager {
     return e ? this.snapshotOf(e) : undefined;
   }
 
+  private runningCount() {
+    let n = 0;
+    for (const e of this.entries.values()) {
+      if (e.status === "running") n++;
+    }
+    return n;
+  }
+
   async start(options: StartWorkflowOptions): Promise<WorkflowSnapshot> {
     if (this.disposed) throw new Error("Workflow manager is disposed.");
+    if (this.runningCount() + this.startingCount >= this.maxRunning) {
+      throw new Error(
+        `Concurrency limit: at most ${this.maxRunning} workflows may run at once.`,
+      );
+    }
 
     const goal = options.goal.trim();
     if (!goal) throw new Error("goal must not be empty");
@@ -105,33 +123,40 @@ export class WorkflowManager {
       throw new Error(`Working directory does not exist or is not a directory: ${cwd}`);
     }
 
+    this.startingCount += 1;
     this.counter += 1;
     const id = `wf-${this.counter}`;
     const title =
       options.title?.trim().slice(0, 80) ||
       `workflow: ${goal.replace(/\s+/g, " ").slice(0, 48)}`;
 
-    await mkdir(this.artifactsRoot, { recursive: true, mode: 0o700 });
-    const artifactsDir = await mkdtemp(join(this.artifactsRoot, `${id}-`));
-    await writeFile(join(artifactsDir, "goal.txt"), `${goal.trim()}\n`, {
-      encoding: "utf8",
-      mode: 0o600,
-    });
-    await writeFile(
-      join(artifactsDir, "meta.json"),
-      `${JSON.stringify(
-        {
-          id,
-          title,
-          goal,
-          cwd,
-          createdAt: new Date().toISOString(),
-        },
-        null,
-        2,
-      )}\n`,
-      { encoding: "utf8", mode: 0o600 },
-    );
+    let artifactsDir: string;
+    try {
+      await mkdir(this.artifactsRoot, { recursive: true, mode: 0o700 });
+      artifactsDir = await mkdtemp(join(this.artifactsRoot, `${id}-`));
+      await writeFile(join(artifactsDir, "goal.txt"), `${goal.trim()}\n`, {
+        encoding: "utf8",
+        mode: 0o600,
+      });
+      await writeFile(
+        join(artifactsDir, "meta.json"),
+        `${JSON.stringify(
+          {
+            id,
+            title,
+            goal,
+            cwd,
+            createdAt: new Date().toISOString(),
+          },
+          null,
+          2,
+        )}\n`,
+        { encoding: "utf8", mode: 0o600 },
+      );
+    } catch (error) {
+      this.startingCount -= 1;
+      throw error;
+    }
 
     let resolveSettle!: () => void;
     const settlePromise = new Promise<void>((r) => {
@@ -179,6 +204,7 @@ export class WorkflowManager {
     };
 
     this.entries.set(id, entry);
+    this.startingCount -= 1;
     this.notify();
     void this.persist(entry);
 
