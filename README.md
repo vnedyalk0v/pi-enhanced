@@ -14,7 +14,7 @@ intentional differences:
 
 ## Features
 
-**Phase 2 (available now)**
+**Phase 3 (available now)**
 
 - `/copy-all` — copy the full conversation branch to the clipboard
 - `ask_user` — structured multiple-choice questions (optional free text)
@@ -22,18 +22,19 @@ intentional differences:
 - Git + model/context status in the footer
 - Enhanced footer (`/footer-enhanced`) and GitHub Dark Default theme
 - `/summary` — summarize the session with the active model
+- Background terminals — `bg_start` / `bg_status` / `bg_list` / `bg_kill`, `/ps`,
+  auto completion message, skill guidance for long-running commands
 
 **Planned**
 
 - Pi and Codex subagents with background execution and result delivery
 - multi-phase workflows with parallel agents and structured handoffs
-- managed background terminals for servers, watchers, and long-running commands
 - Firecrawl search, scrape, and crawl tools with quota-aware fallback
 
 ## Status
 
-Phases 1–2 on Pi `0.82.1`. Install the package (or `pi -e ./`), then try
-`/copy-all`, `ask_user`, `fd`/`rg`, and `/summary`.
+Phases 1–3 on Pi `0.82.1`. Install the package (or `pi -e ./`), then try
+`/copy-all`, `ask_user`, `fd`/`rg`, `/summary`, and `bg_start` + `/ps`.
 
 Set the theme in settings if you want it always:
 

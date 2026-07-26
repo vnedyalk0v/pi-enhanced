@@ -46,7 +46,7 @@ Implement the low-risk extensions first:
 `npm test` (file-search unit tests) pass. Real-session smoke still recommended
 before calling Phase 2 fully done in a release sense.
 
-## Phase 3 — Background terminals
+## Phase 3 — Background terminals ✅
 
 - Add start, list, status, and stop tools for long-lived non-interactive
   commands.
@@ -56,8 +56,11 @@ before calling Phase 2 fully done in a release sense.
 - Add a skill that directs long-running commands to background terminals and
   keeps quick commands in the normal shell tool.
 
-**Done when:** Pi can start a development server, continue other work, inspect
-its output, and terminate it without leaking the process.
+**Completed:** `bg_start` / `bg_status` / `bg_list` / `bg_kill`, one-shot
+completion via `sendMessage` (followUp + triggerTurn), spill-file full logs
+with truncated model tails, `/ps` list+detail UI, running-count widget, and
+`skills/background-terminals`. Manager unit tests cover start/settle/kill/
+concurrency/dispose; `npm run check` and `npm test` pass.
 
 ## Phase 4 — Web research with graceful quota fallback
 
