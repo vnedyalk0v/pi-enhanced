@@ -1,3 +1,5 @@
+import { setTimeout as delay } from "node:timers/promises";
+
 export function formatElapsed(createdAt: number, settledAt?: number) {
   const end = settledAt ?? Date.now();
   const ms = Math.max(0, end - createdAt);
@@ -11,23 +13,7 @@ export function formatElapsed(createdAt: number, settledAt?: number) {
 }
 
 export function sleep(ms: number, signal?: AbortSignal) {
-  return new Promise<void>((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(new Error("aborted"));
-      return;
-    }
-    const t = setTimeout(resolve, ms);
-    t.unref?.();
-    if (!signal) return;
-    signal.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(t);
-        reject(new Error("aborted"));
-      },
-      { once: true },
-    );
-  });
+  return delay(ms, undefined, { ref: false, signal });
 }
 
 export function abortPromise(signal: AbortSignal | undefined, message: string) {
