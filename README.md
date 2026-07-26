@@ -18,7 +18,8 @@ intentional differences:
 
 - `/copy-all` — copy the full conversation branch to the clipboard
 - `ask_user` — structured multiple-choice questions (optional free text)
-- `fd` / `rg` tools — system binaries, or auto-install into `~/.pi/agent/bin/`
+- `fd` / `rg` tools — default file discovery (preferred over built-in find/grep);
+  system binaries, or auto-install into `~/.pi/agent/bin/`
 - Git + model/context status in the footer
 - Enhanced footer (`/footer-enhanced`) and GitHub Dark Default theme
 - `/summary` — summarize the session with the active model

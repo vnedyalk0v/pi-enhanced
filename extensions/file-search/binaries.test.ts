@@ -43,12 +43,13 @@ describe("candidateNames", () => {
 });
 
 describe("arg builders", () => {
-  it("builds fd args", () => {
+  it("builds fd args with --glob by default so *.ts works", () => {
     assert.deepEqual(
       buildFdArgs({ pattern: "*.ts", path: "src", type: "f", extension: "ts", hidden: true, maxResults: 20 }),
       [
         "--color",
         "never",
+        "--glob",
         "--hidden",
         "--type",
         "f",
@@ -60,6 +61,15 @@ describe("arg builders", () => {
         "src",
       ],
     );
+  });
+
+  it("builds fd args without --glob when regex=true", () => {
+    assert.deepEqual(buildFdArgs({ pattern: ".*\\.ts$", path: "extensions", regex: true }), [
+      "--color",
+      "never",
+      ".*\\.ts$",
+      "extensions",
+    ]);
   });
 
   it("builds rg args with terminator before pattern", () => {

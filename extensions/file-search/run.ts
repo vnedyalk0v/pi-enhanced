@@ -25,8 +25,13 @@ export function buildFdArgs(params: {
   extension?: string;
   hidden?: boolean;
   maxResults?: number;
+  /** When true, pattern is a regex (fd default). When false/omitted, use --glob so *.ts works. */
+  regex?: boolean;
 }): string[] {
   const args = ["--color", "never"];
+  // Agents and users almost always pass globs (*.ts). fd defaults to regex, which
+  // treats * as a repetition operator and fails on patterns like "*.ts".
+  if (!params.regex) args.push("--glob");
   if (params.hidden) args.push("--hidden");
   if (params.type) args.push("--type", params.type);
   if (params.extension) args.push("--extension", params.extension);

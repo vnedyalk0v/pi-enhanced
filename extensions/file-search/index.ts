@@ -6,7 +6,10 @@ import { type BinaryName, ensureBinary } from "./binaries.ts";
 import { buildFdArgs, buildRgArgs, runBinary, truncateToolOutput } from "./run.ts";
 
 const FdParams = Type.Object({
-  pattern: Type.String({ description: "Filename glob/pattern for fd" }),
+  pattern: Type.String({
+    description:
+      "Filename pattern. Glob by default (e.g. *.ts, **/*.tsx). Set regex=true for fd regex syntax (e.g. .*\\.ts$).",
+  }),
   path: Type.Optional(Type.String({ description: "Root directory (default: cwd)" })),
   type: Type.Optional(
     Type.String({ description: "Entry type filter: f (file), d (directory), l (symlink)" }),
@@ -14,6 +17,11 @@ const FdParams = Type.Object({
   extension: Type.Optional(Type.String({ description: "File extension without dot" })),
   hidden: Type.Optional(Type.Boolean({ description: "Include hidden files" })),
   maxResults: Type.Optional(Type.Number({ description: "Max results to return" })),
+  regex: Type.Optional(
+    Type.Boolean({
+      description: "Treat pattern as a regular expression instead of a glob (default false)",
+    }),
+  ),
 });
 
 const RgParams = Type.Object({
@@ -40,6 +48,26 @@ async function getBinary(
   return result.path;
 }
 
+/**
+ * Make fd/rg the default discovery tools for this package:
+ * keep them active and deactivate built-in find/grep when present.
+ */
+function preferFdAndRg(pi: ExtensionAPI) {
+  const active = pi.getActiveTools();
+  const next = active.filter((name) => name !== "find" && name !== "grep");
+  if (!next.includes("fd")) next.push("fd");
+  if (!next.includes("rg")) next.push("rg");
+
+  const same =
+    next.length === active.length &&
+    next.every((name) => active.includes(name)) &&
+    active.includes("fd") &&
+    active.includes("rg") &&
+    !active.includes("find") &&
+    !active.includes("grep");
+  if (!same) pi.setActiveTools(next);
+}
+
 export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     // Resolve quietly at startup; install only if missing.
@@ -54,13 +82,24 @@ export default function (pi: ExtensionAPI) {
         // Leave resolution to first tool use so the model sees a clear error.
       }
     }
+    // Prefer our tools over built-in find/grep for this package.
+    preferFdAndRg(pi);
+  });
+
+  // Re-apply after branch/session switches that may restore tool sets.
+  pi.on("session_tree", async () => {
+    preferFdAndRg(pi);
   });
 
   pi.registerTool({
     name: "fd",
     label: "fd",
-    description: `Find files by name using fd. Output truncated to ${DEFAULT_MAX_LINES} lines or ${formatSize(DEFAULT_MAX_BYTES)}. Prefer this over shell find for filename discovery.`,
-    promptSnippet: "Find files by name (fd)",
+    description: `Find files by name using fd (default for this package). Patterns are globs by default (*.ts works). Set regex=true for regex. Output truncated to ${DEFAULT_MAX_LINES} lines or ${formatSize(DEFAULT_MAX_BYTES)}. Prefer fd over find, bash find, or ls pipelines for filename discovery.`,
+    promptSnippet: "Default file finder (fd globs, e.g. *.ts)",
+    promptGuidelines: [
+      "Use fd for finding files by name or glob (e.g. *.ts, **/index.ts). Do not use find, bash find, or ls pipelines for filename discovery when fd is available.",
+      "fd patterns are globs by default; use regex=true only when you need regular expressions.",
+    ],
     parameters: FdParams,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       try {
@@ -104,8 +143,12 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "rg",
     label: "rg",
-    description: `Search file contents using ripgrep. Output truncated to ${DEFAULT_MAX_LINES} lines or ${formatSize(DEFAULT_MAX_BYTES)}. Prefer this over shell grep for content search.`,
-    promptSnippet: "Search file contents (rg)",
+    description: `Search file contents using ripgrep (default for this package). Output truncated to ${DEFAULT_MAX_LINES} lines or ${formatSize(DEFAULT_MAX_BYTES)}. Prefer rg over grep or bash grep for content search.`,
+    promptSnippet: "Default content search (rg)",
+    promptGuidelines: [
+      "Use rg for searching code/text by regex. Do not use grep, bash grep, or find+xargs for content search when rg is available.",
+      "Use rg's path and glob parameters to narrow the search instead of grepping the whole disk.",
+    ],
     parameters: RgParams,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       try {
