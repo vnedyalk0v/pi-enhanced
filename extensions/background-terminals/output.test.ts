@@ -9,8 +9,8 @@ import { MAX_RETAINED_BYTES, OutputBuffer } from "./output.ts";
 describe("OutputBuffer", () => {
   it("retains small output fully", () => {
     const buf = new OutputBuffer(64);
-    buf.push("hello ");
-    buf.push("world");
+    assert.equal(buf.push("hello "), true);
+    assert.equal(buf.push("world"), true);
     const view = buf.view();
     assert.equal(view.text, "hello world");
     assert.equal(view.totalBytes, Buffer.byteLength("hello world"));
@@ -39,16 +39,33 @@ describe("OutputBuffer", () => {
   it("spills full stream to disk", async () => {
     const dir = await mkdtemp(join(tmpdir(), "pi-bt-out-"));
     const path = join(dir, "out.log");
-    const stream = createWriteStream(path, { flags: "a", mode: 0o600 });
+    const stream = createWriteStream(path, { flags: "a", mode: 0o600, highWaterMark: 1 });
     const buf = new OutputBuffer(8, { path, stream });
-    buf.push("abcdefgh");
-    buf.push("ijkl");
+    assert.equal(buf.push("abcdefgh"), false);
+    await buf.waitForDrain();
+    assert.equal(buf.push("ijkl"), false);
+    await buf.waitForDrain();
     await buf.close();
     const disk = await readFile(path, "utf8");
     assert.equal(disk, "abcdefghijkl");
     const view = buf.view();
+    assert.equal(view.text, "ijkl");
+    assert.equal(view.totalBytes, 12);
+    assert.equal(view.truncatedBytes, 8);
     assert.equal(view.spillPath, path);
-    assert.ok(view.truncatedBytes > 0);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("stops advertising a failed spill file", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-bt-out-"));
+    const path = join(dir, "missing", "out.log");
+    const stream = createWriteStream(path, { highWaterMark: 1 });
+    const buf = new OutputBuffer(8, { path, stream });
+
+    assert.equal(buf.push("data"), false);
+    await buf.waitForDrain();
+    assert.equal(buf.view().spillPath, undefined);
+    await buf.close();
     await rm(dir, { recursive: true, force: true });
   });
 

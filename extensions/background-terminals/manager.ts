@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+import type { Readable } from "node:stream";
 import { abortPromise, sleep } from "../shared/time.ts";
 import { OutputBuffer, openSpillStreams, removeSpillDir, type OutputView } from "./output.ts";
 
@@ -72,6 +73,7 @@ type Entry = {
 const DEFAULT_MAX_RUNNING = 8;
 const DEFAULT_MAX_TRACKED = 32;
 const DEFAULT_KILL_GRACE_MS = 2000;
+const OUTPUT_NOTIFY_INTERVAL_MS = 100;
 
 export class TerminalManager {
   private entries = new Map<string, Entry>();
@@ -80,6 +82,7 @@ export class TerminalManager {
   private disposed = false;
   private killInterest = new Map<string, number>();
   private listeners = new Set<() => void>();
+  private outputNotifyTimer?: ReturnType<typeof setTimeout>;
   private readonly sessionKey: string;
   private readonly maxRunning: number;
   private readonly maxTracked: number;
@@ -104,6 +107,10 @@ export class TerminalManager {
   }
 
   private notify() {
+    if (this.outputNotifyTimer) {
+      clearTimeout(this.outputNotifyTimer);
+      this.outputNotifyTimer = undefined;
+    }
     this.onChange?.();
     for (const listener of this.listeners) {
       try {
@@ -114,7 +121,16 @@ export class TerminalManager {
     }
   }
 
-  private runningCount() {
+  private notifyOutput() {
+    if (this.disposed || this.outputNotifyTimer) return;
+    this.outputNotifyTimer = setTimeout(() => {
+      this.outputNotifyTimer = undefined;
+      this.notify();
+    }, OUTPUT_NOTIFY_INTERVAL_MS);
+    this.outputNotifyTimer.unref?.();
+  }
+
+  getRunningCount() {
     let n = 0;
     for (const e of this.entries.values()) {
       if (e.status === "running") n++;
@@ -153,7 +169,7 @@ export class TerminalManager {
     if (this.disposed) {
       throw new Error("Background terminal manager is disposed.");
     }
-    if (this.runningCount() + this.startingCount >= this.maxRunning) {
+    if (this.getRunningCount() + this.startingCount >= this.maxRunning) {
       throw new Error(
         `Concurrency limit: at most ${this.maxRunning} background terminals may run at once.`,
       );
@@ -233,14 +249,24 @@ export class TerminalManager {
       entry.errorText = boundedError(error);
     });
 
-    child.stdout?.on("data", (buf: Buffer) => {
-      entry.stdout.push(buf.toString("utf8"));
-      this.notify();
-    });
-    child.stderr?.on("data", (buf: Buffer) => {
-      entry.stderr.push(buf.toString("utf8"));
-      this.notify();
-    });
+    const captureOutput = (stream: Readable | null, output: OutputBuffer) => {
+      let waitingForDrain = false;
+      stream?.on("data", (buf: Buffer) => {
+        if (!output.push(buf.toString("utf8"))) {
+          stream.pause();
+          if (!waitingForDrain) {
+            waitingForDrain = true;
+            void output.waitForDrain().then(() => {
+              waitingForDrain = false;
+              if (entry.status === "running") stream.resume();
+            });
+          }
+        }
+        this.notifyOutput();
+      });
+    };
+    captureOutput(child.stdout, entry.stdout);
+    captureOutput(child.stderr, entry.stderr);
 
     child.once("close", (code, signal) => {
       if (spawnFailed) {
@@ -448,6 +474,10 @@ export class TerminalManager {
   async disposeAll() {
     if (this.disposed) return;
     this.disposed = true;
+    if (this.outputNotifyTimer) {
+      clearTimeout(this.outputNotifyTimer);
+      this.outputNotifyTimer = undefined;
+    }
 
     const running = [...this.entries.values()].filter((e) => e.status === "running");
     for (const entry of running) {

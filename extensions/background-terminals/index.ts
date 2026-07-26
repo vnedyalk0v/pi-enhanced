@@ -64,7 +64,7 @@ export default function (pi: ExtensionAPI) {
 
   const updateWidget = () => {
     if (!uiCtx?.hasUI || !manager) return;
-    const running = manager.list().filter((s) => s.status === "running").length;
+    const running = manager.getRunningCount();
     if (running === 0) {
       uiCtx.ui.setWidget(WIDGET_ID, undefined);
       return;

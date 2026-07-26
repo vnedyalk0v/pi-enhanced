@@ -39,18 +39,20 @@ export class OutputBuffer {
       this.spillStream.on("error", (err) => {
         this.spillError = err instanceof Error ? err.message : String(err);
         this.spillPath = undefined;
+        this.spillStream = undefined;
       });
     }
   }
 
   push(chunk: string) {
-    if (this.closed || chunk.length === 0) return;
+    if (this.closed || chunk.length === 0) return true;
 
     const chunkBytes = Buffer.byteLength(chunk, "utf8");
     this.totalBytes += chunkBytes;
 
+    let accepted = true;
     if (this.spillStream && !this.spillError) {
-      this.spillStream.write(chunk);
+      accepted = this.spillStream.write(chunk);
     }
 
     if (chunkBytes >= this.maxRetainedBytes) {
@@ -62,7 +64,7 @@ export class OutputBuffer {
       this.chunks.push(tail);
       this.retainedBytes = Buffer.byteLength(tail, "utf8");
       this.truncatedBytes = this.totalBytes - this.retainedBytes;
-      return;
+      return accepted;
     }
 
     this.chunks.push(chunk);
@@ -74,6 +76,25 @@ export class OutputBuffer {
       this.retainedBytes -= droppedBytes;
       this.truncatedBytes += droppedBytes;
     }
+    return accepted;
+  }
+
+  async waitForDrain() {
+    const stream = this.spillStream;
+    if (!stream || this.spillError || !stream.writableNeedDrain) return;
+
+    await new Promise<void>((resolve) => {
+      const done = () => {
+        stream.off("drain", done);
+        stream.off("error", done);
+        stream.off("close", done);
+        resolve();
+      };
+      stream.once("drain", done);
+      stream.once("error", done);
+      stream.once("close", done);
+      if (!stream.writableNeedDrain) done();
+    });
   }
 
   view(): OutputView {
@@ -92,9 +113,13 @@ export class OutputBuffer {
     this.spillStream = undefined;
     if (!stream) return;
     await new Promise<void>((resolve) => {
-      stream.end(() => resolve());
       // Avoid hanging forever if the stream is stuck.
-      setTimeout(resolve, 2000).unref?.();
+      const timeout = setTimeout(resolve, 2000);
+      timeout.unref?.();
+      stream.end(() => {
+        clearTimeout(timeout);
+        resolve();
+      });
     });
   }
 }

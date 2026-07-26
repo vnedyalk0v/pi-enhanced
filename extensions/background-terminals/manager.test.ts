@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -14,7 +14,13 @@ afterEach(async () => {
   }
 });
 
-function createManager(opts: { onSettled?: (info: SettledInfo) => void; maxRunning?: number } = {}) {
+function createManager(
+  opts: {
+    onSettled?: (info: SettledInfo) => void;
+    onChange?: () => void;
+    maxRunning?: number;
+  } = {},
+) {
   const sessionKey = `test-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const m = new TerminalManager({
     sessionKey,
@@ -22,6 +28,7 @@ function createManager(opts: { onSettled?: (info: SettledInfo) => void; maxRunni
     maxTracked: 8,
     killGraceMs: 500,
     onSettled: opts.onSettled,
+    onChange: opts.onChange,
   });
   managers.push(m);
   return m;
@@ -29,6 +36,14 @@ function createManager(opts: { onSettled?: (info: SettledInfo) => void; maxRunni
 
 function sleep(ms: number) {
   return new Promise<void>((r) => setTimeout(r, ms));
+}
+
+async function waitFor(predicate: () => boolean, message: string) {
+  const deadline = Date.now() + 5_000;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error(message);
+    await sleep(20);
+  }
 }
 
 describe("TerminalManager", () => {
@@ -42,6 +57,7 @@ describe("TerminalManager", () => {
       cwd: process.cwd(),
     });
     assert.equal(snap.status, "running");
+    assert.equal(m.getRunningCount(), 1);
     assert.match(snap.id, /^bt-\d+$/);
     assert.ok(snap.pid !== undefined);
 
@@ -49,6 +65,7 @@ describe("TerminalManager", () => {
     const after = m.get(snap.id);
     assert.ok(after);
     assert.equal(after.status, "done");
+    assert.equal(m.getRunningCount(), 0);
     assert.equal(after.exitCode, 0);
     assert.match(after.stdout.text, /hello-bg/);
     assert.equal(settled.length, 1);
@@ -83,6 +100,65 @@ describe("TerminalManager", () => {
 
       assert.equal(info.snapshot.status, "done");
       assert.match(info.snapshot.stdout.text, new RegExp(marker));
+    },
+  );
+
+  it(
+    "captures complete stdout and stderr while spill files apply backpressure",
+    { skip: process.platform === "win32" },
+    async () => {
+      const bytesPerStream = 3 * 1024 * 1024;
+      const script = `process.stdout.write("o".repeat(${bytesPerStream})); process.stderr.write("e".repeat(${bytesPerStream}));`;
+      let info: SettledInfo | undefined;
+      const m = createManager({ onSettled: (settled) => (info = settled) });
+
+      await m.start({
+        command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
+        title: "backpressure",
+        cwd: process.cwd(),
+      });
+      await waitFor(() => info !== undefined, "backpressured terminal did not settle");
+
+      assert.equal(info!.snapshot.status, "done");
+      assert.equal(info!.snapshot.stdout.totalBytes, bytesPerStream);
+      assert.equal(info!.snapshot.stderr.totalBytes, bytesPerStream);
+      assert.ok(info!.snapshot.stdout.truncatedBytes > 0);
+      assert.ok(info!.snapshot.stderr.truncatedBytes > 0);
+      const stdout = await readFile(info!.snapshot.stdout.spillPath!);
+      const stderr = await readFile(info!.snapshot.stderr.spillPath!);
+      assert.equal(stdout.equals(Buffer.alloc(bytesPerStream, "o")), true);
+      assert.equal(stderr.equals(Buffer.alloc(bytesPerStream, "e")), true);
+    },
+  );
+
+  it(
+    "coalesces noisy output notifications and clears pending work on dispose",
+    { skip: process.platform === "win32" },
+    async () => {
+      const chunkCount = 80;
+      const expected = Array.from(
+        { length: chunkCount },
+        (_, i) => `${String(i).padStart(3, "0")}\n`,
+      ).join("");
+      const script = `let i = 0; const timer = setInterval(() => { process.stdout.write(String(i).padStart(3, "0") + "\\n"); if (++i === ${chunkCount}) clearInterval(timer); }, 2); setTimeout(() => {}, 10000);`;
+      let changes = 0;
+      const m = createManager({ onChange: () => changes++ });
+      const snap = await m.start({
+        command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
+        title: "noisy",
+        cwd: process.cwd(),
+      });
+
+      await waitFor(
+        () => m.get(snap.id)?.stdout.text === expected,
+        "noisy terminal output was incomplete",
+      );
+      assert.ok(changes < chunkCount / 4);
+
+      await m.disposeAll();
+      const changesAfterDispose = changes;
+      await sleep(150);
+      assert.equal(changes, changesAfterDispose);
     },
   );
 
