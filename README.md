@@ -146,6 +146,10 @@ npm run verify
 `npm run verify` runs type-checking, tests, and the non-interactive aggregate
 package smoke check. See [PLAN.md](PLAN.md) for release readiness.
 
+## License
+
+This project is licensed under the [MIT License](LICENSE).
+
 ## Reference boundary
 
 The reference repository currently has no declared license. This project will
