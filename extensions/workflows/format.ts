@@ -11,7 +11,7 @@ export function describeWorkflow(snap: WorkflowSnapshot) {
 
 export function buildStartResult(snap: WorkflowSnapshot) {
   return [
-    `Started workflow ${snap.id} "${snap.title}" (template: ${snap.template}).`,
+    `Started workflow ${snap.id} "${snap.title}".`,
     `goal: ${truncateOneLine(snap.goal, 200)}`,
     `cwd: ${snap.cwd}`,
     `artifacts: ${snap.artifactsDir}`,
@@ -25,7 +25,6 @@ export function buildStatusResult(snap: WorkflowSnapshot) {
   const lines = [
     describeWorkflow(snap),
     `goal: ${truncateOneLine(snap.goal, 200)}`,
-    `template: ${snap.template}`,
     `cwd: ${snap.cwd}`,
     `artifacts: ${snap.artifactsDir}`,
   ];

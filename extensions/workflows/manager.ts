@@ -11,13 +11,12 @@ import type {
   StartWorkflowOptions,
   StructuredOutput,
   TaskRunSnapshot,
-  WorkflowDef,
   WorkflowSnapshot,
   WorkflowStatus,
   WorkflowTaskDef,
 } from "./domain.ts";
 import { buildTaskPrompt, extractSummary, validateStructuredOutput } from "./handoff.ts";
-import { REPO_TASK_TEMPLATE } from "./template.ts";
+import { REPO_TASK_PHASES } from "./template.ts";
 
 const DEFAULT_MAX_TRACKED = 16;
 
@@ -31,8 +30,6 @@ type Entry = {
   id: string;
   title: string;
   goal: string;
-  templateName: string;
-  def: WorkflowDef;
   cwd: string;
   model?: string;
   thinking?: string;
@@ -108,8 +105,6 @@ export class WorkflowManager {
       throw new Error(`Working directory does not exist or is not a directory: ${cwd}`);
     }
 
-    const def = REPO_TASK_TEMPLATE;
-
     this.counter += 1;
     const id = `wf-${this.counter}`;
     const title =
@@ -125,7 +120,6 @@ export class WorkflowManager {
         {
           id,
           title,
-          template: def.name,
           goal,
           cwd,
           createdAt: new Date().toISOString(),
@@ -141,7 +135,7 @@ export class WorkflowManager {
       resolveSettle = r;
     });
 
-    const phases: PhaseRuntime[] = def.phases.map((p) => ({
+    const phases: PhaseRuntime[] = REPO_TASK_PHASES.map((p) => ({
       name: p.name,
       status: "pending" as const,
       tasks: new Map(
@@ -166,8 +160,6 @@ export class WorkflowManager {
       id,
       title,
       goal,
-      templateName: def.name,
-      def,
       cwd,
       model: options.model,
       thinking: options.thinking,
@@ -195,13 +187,13 @@ export class WorkflowManager {
 
   private async runWorkflow(entry: Entry) {
     try {
-      for (let i = 0; i < entry.def.phases.length; i++) {
+      for (let i = 0; i < REPO_TASK_PHASES.length; i++) {
         if (entry.cancelRequested || this.disposed) {
           await this.finish(entry, "cancelled", "Workflow cancelled.");
           return;
         }
 
-        const phaseDef = entry.def.phases[i]!;
+        const phaseDef = REPO_TASK_PHASES[i]!;
         const phaseRt = entry.phases[i]!;
         entry.currentPhase = phaseDef.name;
         phaseRt.status = "running";
@@ -492,7 +484,6 @@ export class WorkflowManager {
       id: entry.id,
       title: entry.title,
       goal: entry.goal,
-      template: entry.templateName,
       status: entry.status,
       cwd: entry.cwd,
       artifactsDir: entry.artifactsDir,

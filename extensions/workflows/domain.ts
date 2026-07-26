@@ -22,16 +22,6 @@ export type WorkflowTaskDef = {
   thinking?: string;
 };
 
-export type WorkflowPhaseDef = {
-  name: string;
-  tasks: WorkflowTaskDef[];
-};
-
-export type WorkflowDef = {
-  name: string;
-  phases: WorkflowPhaseDef[];
-};
-
 /** Validated handoff record stored as artifact and fed to later phases. */
 export type StructuredOutput = {
   phase: string;
@@ -67,8 +57,6 @@ export type WorkflowSnapshot = {
   id: string;
   title: string;
   goal: string;
-  /** Fixed pipeline label (always repo-task). */
-  template: string;
   status: WorkflowStatus;
   cwd: string;
   artifactsDir: string;
