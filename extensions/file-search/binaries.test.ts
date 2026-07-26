@@ -57,6 +57,7 @@ describe("arg builders", () => {
         "ts",
         "--max-results",
         "20",
+        "--",
         "*.ts",
         "src",
       ],
@@ -67,8 +68,20 @@ describe("arg builders", () => {
     assert.deepEqual(buildFdArgs({ pattern: ".*\\.ts$", path: "extensions", regex: true }), [
       "--color",
       "never",
+      "--",
       ".*\\.ts$",
       "extensions",
+    ]);
+  });
+
+  it("builds fd args with terminator before option-like patterns", () => {
+    assert.deepEqual(buildFdArgs({ pattern: "--exec", path: "src" }), [
+      "--color",
+      "never",
+      "--glob",
+      "--",
+      "--exec",
+      "src",
     ]);
   });
 

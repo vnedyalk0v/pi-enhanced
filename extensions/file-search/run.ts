@@ -37,7 +37,7 @@ export function buildFdArgs(params: {
   if (params.maxResults && params.maxResults > 0) {
     args.push("--max-results", String(params.maxResults));
   }
-  args.push(params.pattern);
+  args.push("--", params.pattern);
   args.push(params.path || ".");
   return args;
 }
