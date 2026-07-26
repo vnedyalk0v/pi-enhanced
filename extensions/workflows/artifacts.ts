@@ -15,7 +15,7 @@ export async function writeTaskArtifact(options: {
   error?: string;
   subagentId?: string;
 }): Promise<string> {
-  await mkdir(options.dir, { recursive: true });
+  await mkdir(options.dir, { recursive: true, mode: 0o700 });
   const path = join(options.dir, `${slugify(options.taskKey)}.md`);
   const header = [
     `# ${options.title}`,
@@ -30,13 +30,19 @@ export async function writeTaskArtifact(options: {
   ]
     .filter((line) => line !== undefined)
     .join("\n");
-  await writeFile(path, `${header}${options.body.trim() || "(empty)"}\n`, "utf8");
+  await writeFile(path, `${header}${options.body.trim() || "(empty)"}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
   return path;
 }
 
 export async function writeFinalArtifact(artifactsDir: string, body: string) {
   const path = join(artifactsDir, "final.md");
-  await writeFile(path, `${body.trim() || "(empty)"}\n`, "utf8");
+  await writeFile(path, `${body.trim() || "(empty)"}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
   return path;
 }
 

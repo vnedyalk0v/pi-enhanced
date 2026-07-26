@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import type { BackendJob } from "../subagents/backends/pi.ts";
 import { WorkflowManager } from "./manager.ts";
@@ -123,6 +123,54 @@ async function createManager(
 }
 
 describe("WorkflowManager", () => {
+  it("isolates workflow artifacts across managers sharing a root", async () => {
+    const artifactsRoot = await mkdtemp(join(tmpdir(), "wf-shared-test-"));
+    tempDirs.push(artifactsRoot);
+    const starters = {
+      pi: async () => fakeJob({ exitCode: 0, resultText: "ok", delayMs: 10 }),
+      codex: async () => fakeJob({ exitCode: 0, resultText: "ok", delayMs: 10 }),
+    };
+    const firstManager = new WorkflowManager({
+      artifactsRoot,
+      subagentOptions: { starters },
+    });
+    const secondManager = new WorkflowManager({
+      artifactsRoot,
+      subagentOptions: { starters },
+    });
+    managers.push(firstManager, secondManager);
+
+    const [first, second] = await Promise.all([
+      firstManager.start({ goal: "first workflow", cwd: process.cwd() }),
+      secondManager.start({ goal: "second workflow", cwd: process.cwd() }),
+    ]);
+
+    assert.equal(first.id, "wf-1");
+    assert.equal(second.id, "wf-1");
+    assert.notEqual(first.artifactsDir, second.artifactsDir);
+    for (const snapshot of [first, second]) {
+      const child = relative(artifactsRoot, snapshot.artifactsDir);
+      assert.ok(child && !child.startsWith("..") && !isAbsolute(child));
+    }
+    assert.equal(await readFile(join(first.artifactsDir, "goal.txt"), "utf8"), "first workflow\n");
+    assert.equal(
+      await readFile(join(second.artifactsDir, "goal.txt"), "utf8"),
+      "second workflow\n",
+    );
+
+    if (process.platform !== "win32") {
+      for (const snapshot of [first, second]) {
+        for (const path of [
+          snapshot.artifactsDir,
+          join(snapshot.artifactsDir, "goal.txt"),
+          join(snapshot.artifactsDir, "meta.json"),
+        ]) {
+          assert.equal((await stat(path)).mode & 0o077, 0, path);
+        }
+      }
+    }
+  });
+
   it("runs four phases, preserves artifacts, synthesizes after partial failure", async () => {
     const settled: Array<{ status: string; consumed: boolean }> = [];
     const { m, artifactsRoot } = await createManager({

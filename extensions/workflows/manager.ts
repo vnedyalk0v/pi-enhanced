@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { existsSync, statSync } from "node:fs";
@@ -111,9 +111,12 @@ export class WorkflowManager {
       options.title?.trim().slice(0, 80) ||
       `workflow: ${goal.replace(/\s+/g, " ").slice(0, 48)}`;
 
-    const artifactsDir = join(this.artifactsRoot, id);
-    await mkdir(artifactsDir, { recursive: true });
-    await writeFile(join(artifactsDir, "goal.txt"), `${goal.trim()}\n`, "utf8");
+    await mkdir(this.artifactsRoot, { recursive: true, mode: 0o700 });
+    const artifactsDir = await mkdtemp(join(this.artifactsRoot, `${id}-`));
+    await writeFile(join(artifactsDir, "goal.txt"), `${goal.trim()}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
     await writeFile(
       join(artifactsDir, "meta.json"),
       `${JSON.stringify(
@@ -127,7 +130,7 @@ export class WorkflowManager {
         null,
         2,
       )}\n`,
-      "utf8",
+      { encoding: "utf8", mode: 0o600 },
     );
 
     let resolveSettle!: () => void;
@@ -279,7 +282,7 @@ export class WorkflowManager {
   ): Promise<StructuredOutput[]> {
     const phaseRt = entry.phases[phaseIndex]!;
     const dir = phaseDir(entry.artifactsDir, phaseIndex, phaseName);
-    await mkdir(dir, { recursive: true });
+    await mkdir(dir, { recursive: true, mode: 0o700 });
 
     if (entry.cancelRequested) {
       return tasks.map((t) =>
@@ -436,7 +439,10 @@ export class WorkflowManager {
       }
     }
 
-    await writeFile(join(dir, "outputs.json"), `${JSON.stringify(outputs, null, 2)}\n`, "utf8");
+    await writeFile(join(dir, "outputs.json"), `${JSON.stringify(outputs, null, 2)}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+    });
     this.notify();
     return outputs;
   }
@@ -472,7 +478,7 @@ export class WorkflowManager {
       await writeFile(
         join(entry.artifactsDir, "status.json"),
         `${JSON.stringify(this.snapshotOf(entry), null, 2)}\n`,
-        "utf8",
+        { encoding: "utf8", mode: 0o600 },
       );
     } catch {
       // ignore disk errors mid-run
