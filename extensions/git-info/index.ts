@@ -59,44 +59,39 @@ function formatStatus(snap: GitSnapshot, theme: ExtensionContext["ui"]["theme"])
 }
 
 export default function (pi: ExtensionAPI) {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let lastCwd = "";
-
   const refresh = async (ctx: ExtensionContext) => {
-    if (ctx.mode !== "tui" && !ctx.hasUI) return;
-    lastCwd = ctx.cwd;
-    const snap = await readGit(ctx.cwd);
-    if (!snap) {
-      ctx.ui.setStatus("git", undefined);
-      return;
+    // Never capture ctx across awaits that outlive the event; print/rpc teardown
+    // marks ctx stale and throws on property access.
+    try {
+      if (!ctx.hasUI) return;
+      const cwd = ctx.cwd;
+      const theme = ctx.ui.theme;
+      const snap = await readGit(cwd);
+      if (!snap) {
+        ctx.ui.setStatus("git", undefined);
+        return;
+      }
+      ctx.ui.setStatus("git", formatStatus(snap, theme));
+    } catch {
+      // Ignore stale-ctx / shutdown races.
     }
-    ctx.ui.setStatus("git", formatStatus(snap, ctx.ui.theme));
-  };
-
-  const schedule = (ctx: ExtensionContext) => {
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(() => {
-      void refresh(ctx);
-    }, 150);
   };
 
   pi.on("session_start", async (_e, ctx) => {
     await refresh(ctx);
   });
   pi.on("turn_end", async (_e, ctx) => {
-    schedule(ctx);
+    await refresh(ctx);
   });
   pi.on("agent_end", async (_e, ctx) => {
-    schedule(ctx);
+    await refresh(ctx);
   });
 
   pi.registerCommand("git-info", {
     description: "Refresh git branch/dirty status in the footer",
     handler: async (_args, ctx) => {
       await refresh(ctx);
-      if (ctx.hasUI) {
-        ctx.ui.notify(lastCwd ? "Git status refreshed" : "Git status refreshed", "info");
-      }
+      if (ctx.hasUI) ctx.ui.notify("Git status refreshed", "info");
     },
   });
 }
