@@ -119,23 +119,28 @@ describe("firecrawl", () => {
           { status: 200 },
         ),
     ], requests);
-    const result = await firecrawlCrawl({
-      apiKey: "fc-test",
-      url: "https://example.com",
-      limit: 1,
-      maxWaitMs: 10_000,
-      fetchImpl: fetchImpl as typeof fetch,
-    });
-    assert.equal(result.status, "completed");
-    assert.equal(result.pages.length, 1);
-    assert.deepEqual(
-      requests.map(({ method, url }) => [method, url]),
-      [
-        ["POST", "https://api.firecrawl.dev/v2/crawl"],
-        ["GET", "https://api.firecrawl.dev/v2/crawl/job-1"],
-        ["GET", "https://api.firecrawl.dev/v2/crawl/job-1"],
-      ],
-    );
+    const keepAlive = setInterval(() => {}, 1_000);
+    try {
+      const result = await firecrawlCrawl({
+        apiKey: "fc-test",
+        url: "https://example.com",
+        limit: 1,
+        maxWaitMs: 10_000,
+        fetchImpl: fetchImpl as typeof fetch,
+      });
+      assert.equal(result.status, "completed");
+      assert.equal(result.pages.length, 1);
+      assert.deepEqual(
+        requests.map(({ method, url }) => [method, url]),
+        [
+          ["POST", "https://api.firecrawl.dev/v2/crawl"],
+          ["GET", "https://api.firecrawl.dev/v2/crawl/job-1"],
+          ["GET", "https://api.firecrawl.dev/v2/crawl/job-1"],
+        ],
+      );
+    } finally {
+      clearInterval(keepAlive);
+    }
   });
 
   it("cancels a crawl that times out without masking cleanup failure", async () => {

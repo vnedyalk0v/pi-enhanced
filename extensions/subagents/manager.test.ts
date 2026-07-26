@@ -22,12 +22,13 @@ function fakeJob(result: {
     resolveWait = r;
   });
   const delay = result.delayMs ?? 20;
-  setTimeout(() => resolveWait({ exitCode: result.exitCode }), delay).unref?.();
+  const timer = setTimeout(() => resolveWait({ exitCode: result.exitCode }), delay);
 
   return {
     handle: {
       pid: 12345,
       kill: () => {
+        clearTimeout(timer);
         resolveWait({ exitCode: 1 });
       },
       wait,

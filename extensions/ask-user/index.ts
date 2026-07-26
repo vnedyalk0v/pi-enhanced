@@ -57,17 +57,22 @@ export default function (pi: ExtensionAPI) {
         }
 
         const allowOther = question.allowOther !== false;
-        const labels = question.options.map((o) =>
-          o.description ? `${o.label} — ${o.description}` : o.label,
-        );
-        if (allowOther) labels.push(OTHER);
+        const choices: Array<{ display: string; option?: (typeof question.options)[number] }> = question.options.map((option, index) => ({
+          display: `${index + 1}. ${option.description ? `${option.label} — ${option.description}` : option.label}`,
+          option,
+        }));
+        if (allowOther) choices.push({ display: `${choices.length + 1}. ${OTHER}` });
 
         const title =
           params.questions.length > 1
             ? `${question.prompt} [${question.id}]`
             : question.prompt;
 
-        const selected = await ctx.ui.select(title, labels, { signal });
+        const selected = await ctx.ui.select(
+          title,
+          choices.map((choice) => choice.display),
+          { signal },
+        );
         if (selected === undefined) {
           return {
             content: [{ type: "text" as const, text: "User cancelled" }],
@@ -75,7 +80,9 @@ export default function (pi: ExtensionAPI) {
           };
         }
 
-        if (selected === OTHER) {
+        const choice = choices.find((choice) => choice.display === selected)!;
+
+        if (!choice.option) {
           const custom = await ctx.ui.input(question.prompt, "Type your answer", { signal });
           if (custom === undefined || !custom.trim()) {
             return {
@@ -87,11 +94,9 @@ export default function (pi: ExtensionAPI) {
           continue;
         }
 
-        const optionIndex = labels.indexOf(selected);
-        const option = question.options[optionIndex];
         answers.push({
           id: question.id,
-          answer: option?.label ?? selected,
+          answer: choice.option.label,
           wasCustom: false,
         });
       }
