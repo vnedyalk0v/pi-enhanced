@@ -3,7 +3,7 @@ import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "@earendil-work
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { type BinaryName, ensureBinary } from "./binaries.ts";
-import { buildFdArgs, buildRgArgs, runBinary, truncateToolOutput } from "./run.ts";
+import { buildFdArgs, buildRgArgs, runBinary } from "./run.ts";
 
 const FdParams = Type.Object({
   pattern: Type.String({
@@ -107,21 +107,25 @@ export default function (pi: ExtensionAPI) {
           if (ctx.hasUI) ctx.ui.notify(msg, "info");
         });
         const args = buildFdArgs(params);
-        const { stdout, stderr, exitCode } = await runBinary(binary, args, ctx.cwd, signal);
-        if (exitCode !== 0 && !stdout.trim()) {
+        const result = await runBinary(binary, args, ctx.cwd, "pi-fd", signal);
+        if (result.exitCode !== 0 && !result.hasOutput) {
           return {
-            content: [{ type: "text" as const, text: stderr.trim() || `fd exited ${exitCode}` }],
-            details: { exitCode, matchCount: 0 },
+            content: [
+              {
+                type: "text" as const,
+                text: result.stderr.trim() || `fd exited ${result.exitCode}`,
+              },
+            ],
+            details: { exitCode: result.exitCode, matchCount: 0 },
           };
         }
-        const truncated = await truncateToolOutput(stdout, "pi-fd");
         return {
-          content: [{ type: "text" as const, text: truncated.text }],
+          content: [{ type: "text" as const, text: result.text }],
           details: {
-            exitCode,
-            matchCount: truncated.lineCount,
-            truncated: truncated.truncated,
-            fullOutputPath: truncated.fullOutputPath,
+            exitCode: result.exitCode,
+            matchCount: result.lineCount,
+            truncated: result.truncated,
+            fullOutputPath: result.fullOutputPath,
           },
         };
       } catch (error) {
@@ -156,28 +160,32 @@ export default function (pi: ExtensionAPI) {
           if (ctx.hasUI) ctx.ui.notify(msg, "info");
         });
         const args = buildRgArgs(params);
-        const { stdout, stderr, exitCode } = await runBinary(binary, args, ctx.cwd, signal);
+        const result = await runBinary(binary, args, ctx.cwd, "pi-rg", signal);
         // rg exits 1 when no matches
-        if (exitCode === 1 && !stdout.trim()) {
+        if (result.exitCode === 1 && !result.hasOutput) {
           return {
             content: [{ type: "text" as const, text: "No matches found" }],
-            details: { exitCode, matchCount: 0 },
+            details: { exitCode: result.exitCode, matchCount: 0 },
           };
         }
-        if (exitCode > 1 && !stdout.trim()) {
+        if (result.exitCode > 1 && !result.hasOutput) {
           return {
-            content: [{ type: "text" as const, text: stderr.trim() || `rg exited ${exitCode}` }],
-            details: { exitCode, matchCount: 0 },
+            content: [
+              {
+                type: "text" as const,
+                text: result.stderr.trim() || `rg exited ${result.exitCode}`,
+              },
+            ],
+            details: { exitCode: result.exitCode, matchCount: 0 },
           };
         }
-        const truncated = await truncateToolOutput(stdout, "pi-rg");
         return {
-          content: [{ type: "text" as const, text: truncated.text }],
+          content: [{ type: "text" as const, text: result.text }],
           details: {
-            exitCode,
-            matchCount: truncated.lineCount,
-            truncated: truncated.truncated,
-            fullOutputPath: truncated.fullOutputPath,
+            exitCode: result.exitCode,
+            matchCount: result.lineCount,
+            truncated: result.truncated,
+            fullOutputPath: result.fullOutputPath,
           },
         };
       } catch (error) {

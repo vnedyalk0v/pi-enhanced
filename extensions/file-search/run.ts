@@ -1,7 +1,11 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Transform, Writable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { StringDecoder } from "node:string_decoder";
 import {
   DEFAULT_MAX_BYTES,
   DEFAULT_MAX_LINES,
@@ -15,7 +19,24 @@ export type RunResult = {
   truncated: boolean;
   fullOutputPath?: string;
   lineCount: number;
+  stderr: string;
+  hasOutput: boolean;
 };
+
+type HeadState = {
+  text: string;
+  truncation?: ReturnType<typeof truncateHead>;
+};
+
+function appendHead(state: HeadState, text: string) {
+  if (state.truncation) return;
+  const truncation = truncateHead(state.text + text, {
+    maxLines: DEFAULT_MAX_LINES,
+    maxBytes: DEFAULT_MAX_BYTES,
+  });
+  state.text = truncation.content;
+  if (truncation.truncated) state.truncation = truncation;
+}
 
 export function buildFdArgs(params: {
   pattern: string;
@@ -64,58 +85,126 @@ export async function runBinary(
   binaryPath: string,
   args: string[],
   cwd: string,
+  prefix: string,
   signal?: AbortSignal,
-): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  return await new Promise((resolve, reject) => {
+): Promise<RunResult> {
+  const tempDir = await mkdtemp(join(tmpdir(), `${prefix}-`));
+  const tempFile = join(tempDir, "output.txt");
+  let stopChild: (() => void) | undefined;
+
+  try {
     const child = spawn(binaryPath, args, {
       cwd,
       stdio: ["ignore", "pipe", "pipe"],
       signal,
     });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (c: Buffer) => {
-      stdout += c.toString("utf8");
-    });
-    child.stderr.on("data", (c: Buffer) => {
-      stderr += c.toString("utf8");
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      resolve({ stdout, stderr, exitCode: code ?? 1 });
-    });
-  });
-}
+    stopChild = () => child.kill();
 
-export async function truncateToolOutput(output: string, prefix: string): Promise<RunResult> {
-  const truncation = truncateHead(output, {
-    maxLines: DEFAULT_MAX_LINES,
-    maxBytes: DEFAULT_MAX_BYTES,
-  });
-  const lineCount = output.length === 0 ? 0 : output.split("\n").filter(Boolean).length;
-  if (!truncation.truncated) {
-    return {
-      text: truncation.content || "(no output)",
-      exitCode: 0,
-      truncated: false,
-      lineCount,
+    const stdoutHead: HeadState = { text: "" };
+    const stderrHead: HeadState = { text: "" };
+    const stdoutDecoder = new StringDecoder("utf8");
+    const stderrDecoder = new StringDecoder("utf8");
+    let totalBytes = 0;
+    let newlineCount = 0;
+    let sawOutput = false;
+    let endedWithNewline = false;
+    let lineHasContent = false;
+    let lineCount = 0;
+    let hasOutput = false;
+
+    const consumeStdout = (text: string) => {
+      if (!text) return;
+      appendHead(stdoutHead, text);
+      totalBytes += Buffer.byteLength(text);
+      sawOutput = true;
+      endedWithNewline = text.endsWith("\n");
+      hasOutput ||= /\S/u.test(text);
+
+      let start = 0;
+      for (let index = text.indexOf("\n"); index !== -1; index = text.indexOf("\n", start)) {
+        newlineCount++;
+        if (lineHasContent || index > start) lineCount++;
+        lineHasContent = false;
+        start = index + 1;
+      }
+      if (start < text.length) lineHasContent = true;
     };
+
+    const stdoutTask = pipeline(
+      child.stdout,
+      new Transform({
+        transform(chunk: Buffer, _encoding, callback) {
+          consumeStdout(stdoutDecoder.write(chunk));
+          callback(null, chunk);
+        },
+        flush(callback) {
+          consumeStdout(stdoutDecoder.end());
+          callback();
+        },
+      }),
+      createWriteStream(tempFile, { flags: "wx" }),
+    );
+
+    const stderrTask = pipeline(
+      child.stderr,
+      new Writable({
+        write(chunk: Buffer, _encoding, callback) {
+          appendHead(stderrHead, stderrDecoder.write(chunk));
+          callback();
+        },
+        final(callback) {
+          appendHead(stderrHead, stderrDecoder.end());
+          callback();
+        },
+      }),
+    );
+
+    const exitTask = new Promise<number>((resolve, reject) => {
+      child.once("error", reject);
+      child.once("close", (code) => resolve(code ?? 1));
+    });
+
+    let exitCode: number;
+    try {
+      [exitCode] = await Promise.all([exitTask, stdoutTask, stderrTask]);
+    } catch (error) {
+      stopChild();
+      await Promise.allSettled([exitTask, stdoutTask, stderrTask]);
+      throw error;
+    }
+
+    if (lineHasContent) lineCount++;
+    const totalLines = newlineCount + (sawOutput && !endedWithNewline ? 1 : 0);
+    const truncation = stdoutHead.truncation;
+    if (!truncation) {
+      await rm(tempDir, { recursive: true });
+      return {
+        text: stdoutHead.text || "(no output)",
+        stderr: stderrHead.text,
+        exitCode,
+        truncated: false,
+        lineCount,
+        hasOutput,
+      };
+    }
+
+    const notice =
+      `\n\n[Output truncated: showing ${truncation.outputLines} of ${totalLines} lines` +
+      ` (${formatSize(truncation.outputBytes)} of ${formatSize(totalBytes)}).` +
+      ` Full output: ${tempFile}]`;
+
+    return {
+      text: stdoutHead.text + notice,
+      stderr: stderrHead.text,
+      exitCode,
+      truncated: true,
+      fullOutputPath: tempFile,
+      lineCount,
+      hasOutput,
+    };
+  } catch (error) {
+    stopChild?.();
+    await rm(tempDir, { recursive: true, force: true });
+    throw error;
   }
-
-  const tempDir = await mkdtemp(join(tmpdir(), `${prefix}-`));
-  const tempFile = join(tempDir, "output.txt");
-  await writeFile(tempFile, output, "utf8");
-
-  const notice =
-    `\n\n[Output truncated: showing ${truncation.outputLines} of ${truncation.totalLines} lines` +
-    ` (${formatSize(truncation.outputBytes)} of ${formatSize(truncation.totalBytes)}).` +
-    ` Full output: ${tempFile}]`;
-
-  return {
-    text: truncation.content + notice,
-    exitCode: 0,
-    truncated: true,
-    fullOutputPath: tempFile,
-    lineCount,
-  };
 }
