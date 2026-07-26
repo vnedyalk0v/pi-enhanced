@@ -120,21 +120,33 @@ export function appendBounded(current: string, chunk: string, maxChars = 80_000)
 export function extractPiLastAssistantText(stdout: string) {
   let last = "";
   for (const line of stdout.split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      const event = JSON.parse(line) as {
-        type?: string;
-        message?: { role?: string; content?: unknown; stopReason?: string; errorMessage?: string };
-      };
-      if (event.type === "message_end" && event.message?.role === "assistant") {
-        const text = contentToText(event.message.content);
-        if (text) last = text;
-      }
-    } catch {
-      // non-json line
-    }
+    const text = parsePiAssistantText(line);
+    if (text) last = text;
   }
   return last;
+}
+
+export function createPiAssistantTextCollector() {
+  let remainder = "";
+  let last = "";
+  const processLine = (line: string) => {
+    const text = parsePiAssistantText(line);
+    if (text) last = text;
+  };
+
+  return {
+    push(chunk: string) {
+      const lines = (remainder + chunk).split("\n");
+      remainder = lines.pop() ?? "";
+      for (const line of lines) processLine(line);
+      return last;
+    },
+    finish() {
+      processLine(remainder);
+      remainder = "";
+      return last;
+    },
+  };
 }
 
 export function extractCodexLastMessage(stdout: string, fileContents?: string) {
@@ -173,4 +185,19 @@ export function extractCodexLastMessage(stdout: string, fileContents?: string) {
 function stringField(obj: Record<string, unknown>, key: string) {
   const v = obj[key];
   return typeof v === "string" ? v : "";
+}
+
+function parsePiAssistantText(line: string) {
+  if (!line.trim()) return "";
+  try {
+    const event = JSON.parse(line) as {
+      type?: string;
+      message?: { role?: string; content?: unknown };
+    };
+    return event.type === "message_end" && event.message?.role === "assistant"
+      ? contentToText(event.message.content)
+      : "";
+  } catch {
+    return "";
+  }
 }

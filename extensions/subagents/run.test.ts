@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { normalizeCodexModelId } from "./backends/codex.ts";
 import {
   appendBounded,
+  createPiAssistantTextCollector,
   extractCodexLastMessage,
   extractPiLastAssistantText,
   runProcess,
@@ -113,6 +114,49 @@ describe("extractPiLastAssistantText", () => {
       }),
     ].join("\n");
     assert.equal(extractPiLastAssistantText(stdout), "final answer");
+  });
+});
+
+describe("createPiAssistantTextCollector", () => {
+  const assistantEvent = (text: string) =>
+    JSON.stringify({
+      type: "message_end",
+      message: { role: "assistant", content: [{ type: "text", text }] },
+    });
+
+  it("returns the last assistant text across arbitrary chunks", () => {
+    const collector = createPiAssistantTextCollector();
+    const output = `${assistantEvent("first")}\n${assistantEvent("last")}\n`;
+
+    collector.push(output.slice(0, 17));
+    collector.push(output.slice(17, 63));
+    collector.push(output.slice(63));
+
+    assert.equal(collector.finish(), "last");
+  });
+
+  it("preserves assistant text larger than the diagnostic tail", () => {
+    const collector = createPiAssistantTextCollector();
+    const text = "x".repeat(100_001);
+
+    collector.push(`${assistantEvent(text)}\n`);
+
+    assert.equal(collector.finish(), text);
+  });
+
+  it("ignores malformed lines", () => {
+    const collector = createPiAssistantTextCollector();
+
+    collector.push(`not-json\n${assistantEvent("valid")}\n{broken}\n`);
+
+    assert.equal(collector.finish(), "valid");
+  });
+
+  it("processes an unterminated final record only on finish", () => {
+    const collector = createPiAssistantTextCollector();
+
+    assert.equal(collector.push(assistantEvent("final")), "");
+    assert.equal(collector.finish(), "final");
   });
 });
 

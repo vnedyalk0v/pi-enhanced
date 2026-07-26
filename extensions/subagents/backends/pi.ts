@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   appendBounded,
-  extractPiLastAssistantText,
+  createPiAssistantTextCollector,
   runProcess,
   type RunHandle,
 } from "../run.ts";
@@ -59,12 +59,14 @@ export async function startPiBackend(options: PiBackendOptions): Promise<Backend
   args.push(options.prompt);
 
   let output = "";
+  const resultCollector = createPiAssistantTextCollector();
   const handle = runProcess({
     command: "pi",
     args,
     cwd: options.cwd,
     signal: options.signal,
     onStdout: (c) => {
+      resultCollector.push(c);
       output = appendBounded(output, c);
       options.onOutput?.(c);
     },
@@ -79,7 +81,7 @@ export async function startPiBackend(options: PiBackendOptions): Promise<Backend
     collect: async () => {
       const { exitCode, signal } = await handle.wait;
       if (tmpDir) await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-      const resultText = extractPiLastAssistantText(output);
+      const resultText = resultCollector.finish();
       return {
         exitCode,
         signal,
