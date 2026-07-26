@@ -27,8 +27,10 @@ extension optional and independently testable.
 - Document installation into `~/.pi/agent` without overwriting existing user
   configuration.
 
-**Completed:** Pi `0.82.1` loads the foundation extension, `/pi-enhanced`
-confirms it in the real TUI, and `npm run check` runs the repository gate.
+**Completed:** Pi `0.82.1` loads the aggregate package, and `npm run verify`
+runs type-checking, tests, and the non-interactive package smoke check. A clean
+temporary Pi configuration also installs the local aggregate package and
+returns its commands and skills through offline RPC `get_commands`.
 
 ## Phase 2 — Small first-class tools ✅
 
@@ -127,11 +129,25 @@ deferred. Manager + handoff tests cover the partial-failure path;
 
 ## Phase 7 — Release and adoption
 
-- Add setup, configuration, environment-variable, and troubleshooting docs.
-- Test installation in a clean Pi configuration.
-- Document how to enable extensions individually.
-- Record supported platforms and known ceilings.
-- Tag `v0.1.0` only after the real-session checks for every starter feature pass.
+- [x] Add setup, configuration, environment-variable, operational-boundary,
+  and troubleshooting docs.
+- [x] Document package filters, `pi config`, supported auto-install targets,
+  manual fallback, and known ceilings.
+- [x] Run `npm run verify`, including the non-interactive aggregate package
+  smoke check.
+- [x] Install the local aggregate package in a clean temporary Pi
+  configuration on macOS arm64 and load it through offline, no-model RPC
+  `get_commands` with fake `fd`/`rg` binaries. All nine expected package
+  commands and skills loaded without extension errors.
+- [ ] Run model-backed real-session smoke checks for every starter feature.
+- [ ] Exercise real `fd`/`rg` downloads on macOS and Linux x64/arm64. Windows
+  and other unsupported auto-install targets require the documented manual
+  fallback.
+- [ ] Resolve and add the project license (plan 017).
+- [ ] Publish and tag `v0.1.0`.
+
+`v0.1.0` remains blocked on the model-backed feature checks, supported-platform
+download checks, and plan 017's license decision.
 
 ## Initial delivery order
 
