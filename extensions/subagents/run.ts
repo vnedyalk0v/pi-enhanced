@@ -32,11 +32,17 @@ export function runProcess(options: RunOptions): RunHandle {
   });
 
   let settled = false;
+  let exitResult: { exitCode: number; signal?: string } | undefined;
   const sentSignals = new Set<NodeJS.Signals>();
   let resolveWait!: (v: { exitCode: number; signal?: string }) => void;
   const wait = new Promise<{ exitCode: number; signal?: string }>((resolve) => {
     resolveWait = resolve;
   });
+  const settle = (result: { exitCode: number; signal?: string }) => {
+    if (settled) return;
+    settled = true;
+    resolveWait(result);
+  };
 
   child.stdout?.on("data", (buf: Buffer) => {
     options.onStdout?.(buf.toString("utf8"));
@@ -46,17 +52,24 @@ export function runProcess(options: RunOptions): RunHandle {
   });
 
   child.once("error", (err) => {
-    settled = true;
     options.onStderr?.(err.message);
-    resolveWait({ exitCode: 1 });
+    settle({ exitCode: 1 });
   });
 
   child.once("exit", (code, signal) => {
-    settled = true;
-    resolveWait({
+    exitResult = {
       exitCode: code ?? (signal ? 1 : 0),
       signal: signal ?? undefined,
-    });
+    };
+  });
+
+  child.once("close", (code, signal) => {
+    settle(
+      exitResult ?? {
+        exitCode: code ?? (signal ? 1 : 0),
+        signal: signal ?? undefined,
+      },
+    );
   });
 
   const kill = (signal: NodeJS.Signals = "SIGTERM") => {
@@ -161,4 +174,3 @@ function stringField(obj: Record<string, unknown>, key: string) {
   const v = obj[key];
   return typeof v === "string" ? v : "";
 }
-

@@ -56,6 +56,36 @@ describe("TerminalManager", () => {
     assert.equal(settled[0]!.snapshot.status, "done");
   });
 
+  it(
+    "captures inherited stdout before settling after the shell exits",
+    { skip: process.platform === "win32" },
+    async () => {
+      const marker = "tail-after-parent-exit";
+      const grandchildScript = `setTimeout(() => process.stdout.write("${marker}"), 200);`;
+      const parentScript = `require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(grandchildScript)}], { stdio: ["ignore", 1, 2] }).unref();`;
+      let markSettled!: (info: SettledInfo) => void;
+      const settled = new Promise<SettledInfo>((resolve) => {
+        markSettled = resolve;
+      });
+      const m = createManager({ onSettled: markSettled });
+
+      await m.start({
+        command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(parentScript)}`,
+        title: "trailing-output",
+        cwd: process.cwd(),
+      });
+      const info = await Promise.race([
+        settled,
+        sleep(2_000).then(() => {
+          throw new Error("terminal streams did not close");
+        }),
+      ]);
+
+      assert.equal(info.snapshot.status, "done");
+      assert.match(info.snapshot.stdout.text, new RegExp(marker));
+    },
+  );
+
   it("records failed status for non-zero exit", async () => {
     const m = createManager();
     const snap = await m.start({

@@ -231,10 +231,6 @@ export class TerminalManager {
     child.once("error", (error) => {
       spawnFailed = true;
       entry.errorText = boundedError(error);
-      void this.settle(entry, {
-        status: "failed",
-        errorText: entry.errorText,
-      });
     });
 
     child.stdout?.on("data", (buf: Buffer) => {
@@ -246,8 +242,14 @@ export class TerminalManager {
       this.notify();
     });
 
-    child.once("exit", (code, signal) => {
-      if (spawnFailed && entry.status !== "running") return;
+    child.once("close", (code, signal) => {
+      if (spawnFailed) {
+        void this.settle(entry, {
+          status: "failed",
+          errorText: entry.errorText,
+        });
+        return;
+      }
       const killSignaled = entry.killSignaled;
       if (killSignaled) {
         void this.settle(entry, {

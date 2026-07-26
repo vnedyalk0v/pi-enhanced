@@ -8,6 +8,12 @@ import {
   runProcess,
 } from "./run.ts";
 
+function timeout(message: string) {
+  return new Promise<never>((_, reject) => {
+    setTimeout(() => reject(new Error(message)), 2_000).unref();
+  });
+}
+
 it(
   "escalates SIGTERM to SIGKILL",
   { skip: process.platform === "win32" },
@@ -16,10 +22,6 @@ it(
     const ready = new Promise<void>((resolve) => {
       markReady = resolve;
     });
-    const timeout = (message: string) =>
-      new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error(message)), 1_000).unref();
-      });
     const handle = runProcess({
       command: process.execPath,
       args: [
@@ -48,6 +50,38 @@ it(
         }
       }
       await handle.wait;
+    }
+  },
+);
+
+it(
+  "waits for inherited stdout to close after the child exits",
+  { skip: process.platform === "win32" },
+  async () => {
+    const marker = "tail-after-parent-exit";
+    const grandchildScript = `setTimeout(() => process.stdout.write("${marker}"), 200);`;
+    const parentScript = `require("node:child_process").spawn(process.execPath, ["-e", ${JSON.stringify(grandchildScript)}], { stdio: ["ignore", 1, 2] }).unref();`;
+    let stdout = "";
+    const handle = runProcess({
+      command: process.execPath,
+      args: ["-e", parentScript],
+      cwd: process.cwd(),
+      onStdout: (chunk) => {
+        stdout += chunk;
+      },
+    });
+
+    try {
+      await Promise.race([handle.wait, timeout("child streams did not close")]);
+      assert.match(stdout, new RegExp(marker));
+    } finally {
+      if (handle.pid !== undefined) {
+        try {
+          process.kill(-handle.pid, "SIGKILL");
+        } catch {
+          // already gone
+        }
+      }
     }
   },
 );
