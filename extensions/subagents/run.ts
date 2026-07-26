@@ -31,7 +31,8 @@ export function runProcess(options: RunOptions): RunHandle {
     windowsHide: true,
   });
 
-  let killed = false;
+  let settled = false;
+  const sentSignals = new Set<NodeJS.Signals>();
   let resolveWait!: (v: { exitCode: number; signal?: string }) => void;
   const wait = new Promise<{ exitCode: number; signal?: string }>((resolve) => {
     resolveWait = resolve;
@@ -45,11 +46,13 @@ export function runProcess(options: RunOptions): RunHandle {
   });
 
   child.once("error", (err) => {
+    settled = true;
     options.onStderr?.(err.message);
     resolveWait({ exitCode: 1 });
   });
 
   child.once("exit", (code, signal) => {
+    settled = true;
     resolveWait({
       exitCode: code ?? (signal ? 1 : 0),
       signal: signal ?? undefined,
@@ -57,8 +60,8 @@ export function runProcess(options: RunOptions): RunHandle {
   });
 
   const kill = (signal: NodeJS.Signals = "SIGTERM") => {
-    if (killed) return;
-    killed = true;
+    if (settled || sentSignals.has(signal)) return;
+    sentSignals.add(signal);
     const pid = child.pid;
     if (pid === undefined) return;
     try {
@@ -158,5 +161,4 @@ function stringField(obj: Record<string, unknown>, key: string) {
   const v = obj[key];
   return typeof v === "string" ? v : "";
 }
-
 

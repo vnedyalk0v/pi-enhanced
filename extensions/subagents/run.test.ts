@@ -5,7 +5,52 @@ import {
   appendBounded,
   extractCodexLastMessage,
   extractPiLastAssistantText,
+  runProcess,
 } from "./run.ts";
+
+it(
+  "escalates SIGTERM to SIGKILL",
+  { skip: process.platform === "win32" },
+  async () => {
+    let markReady!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      markReady = resolve;
+    });
+    const timeout = (message: string) =>
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error(message)), 1_000).unref();
+      });
+    const handle = runProcess({
+      command: process.execPath,
+      args: [
+        "-e",
+        'process.on("SIGTERM", () => {}); console.log("ready"); setInterval(() => {}, 1_000);',
+      ],
+      cwd: process.cwd(),
+      onStdout: (chunk) => {
+        if (chunk.includes("ready")) markReady();
+      },
+    });
+
+    try {
+      await Promise.race([ready, timeout("child did not become ready")]);
+      handle.kill("SIGTERM");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      handle.kill("SIGKILL");
+      const result = await Promise.race([handle.wait, timeout("child did not exit")]);
+      assert.equal(result.signal, "SIGKILL");
+    } finally {
+      if (handle.pid !== undefined) {
+        try {
+          process.kill(-handle.pid, "SIGKILL");
+        } catch {
+          // already gone
+        }
+      }
+      await handle.wait;
+    }
+  },
+);
 
 describe("appendBounded", () => {
   it("keeps a tail when over max", () => {
