@@ -18,11 +18,11 @@ when a listed STOP condition applies.
 | [005 Reserve concurrency slots](005-reserve-concurrency-slots.md) | P1 | M | MED | — | DONE (`2d61914`) |
 | [006 Untrusted workflow handoffs](006-untrusted-workflow-handoffs.md) | P1 | M | MED | — | DONE (`0e04fd5`) |
 | [007 Stream file-search output](007-stream-file-search-output.md) | P1 | M | MED | 003 | DONE (`bbfc7a4`, includes `256317c`) |
-| [008 Cap concurrent workflows](008-cap-concurrent-workflows.md) | P1 | M | MED | 005 | TODO |
-| [009 Wait for subprocess streams](009-wait-for-subprocess-streams.md) | P1 | M | MED | 001 | TODO |
-| [010 Preserve large Pi results](010-preserve-large-pi-results.md) | P1 | M | MED | 009 | TODO |
-| [011 Bound background output](011-bound-background-output.md) | P1 | M | MED | 005, 009 | TODO |
-| [012 Cancel Firecrawl jobs](012-cancel-firecrawl-jobs.md) | P2 | S | MED | — | TODO |
+| [008 Cap concurrent workflows](008-cap-concurrent-workflows.md) | P1 | M | MED | 005 | DONE (`b427155`) |
+| [009 Wait for subprocess streams](009-wait-for-subprocess-streams.md) | P1 | M | MED | 001 | DONE (`8be9260`) |
+| [010 Preserve large Pi results](010-preserve-large-pi-results.md) | P1 | M | MED | 009 | DONE (`b666a57`, includes `8be9260`) |
+| [011 Bound background output](011-bound-background-output.md) | P1 | M | MED | 005, 009 | DONE (`12d0f08`, includes `8be9260`) |
+| [012 Cancel Firecrawl jobs](012-cancel-firecrawl-jobs.md) | P2 | S | MED | — | DONE (`6b12f58`) |
 | [013 Add release verification gate](013-add-release-verification-gate.md) | P1 | M | MED | — | TODO |
 | [014 Collapse git footer queries](014-collapse-git-footer-queries.md) | P2 | S | LOW | 013 | TODO |
 | [015 Disambiguate ask_user choices](015-disambiguate-ask-user-choices.md) | P2 | S | LOW | 013 | TODO |

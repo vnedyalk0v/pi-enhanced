@@ -5,7 +5,7 @@
 > complete.
 >
 > **Drift check (run first)**:
-> `git diff --stat 9035686..HEAD -- extensions/subagents/run.ts extensions/subagents/run.test.ts extensions/background-terminals/manager.ts extensions/background-terminals/manager.test.ts`
+> `git diff --stat c617b27..HEAD -- extensions/subagents/run.ts extensions/subagents/run.test.ts extensions/background-terminals/manager.ts extensions/background-terminals/manager.test.ts`
 
 ## Status
 
@@ -14,7 +14,7 @@
 - **Risk**: LOW
 - **Depends on**: plans/001-effective-subagent-kill-escalation.md
 - **Category**: bug
-- **Planned at**: commit `9035686`, 2026-07-26
+- **Planned at**: commit `c617b27`, 2026-07-26 (reconciled after plans 001 and 005)
 
 ## Why this matters
 
@@ -25,12 +25,13 @@ therefore disappear even though the process itself succeeded.
 
 ## Current state
 
-`extensions/subagents/run.ts:47-57` resolves `wait` from `error` or `exit` while
-data listeners remain attached at lines 40-45.
+`extensions/subagents/run.ts:48-60` resolves `wait` from `error` or `exit` while
+data listeners remain attached at lines 41-46. Plan 001's `settled` flag and
+per-signal kill tracking are present at lines 34-35 and 62-86.
 
-`extensions/background-terminals/manager.ts:231-267` pushes stream data but
+`extensions/background-terminals/manager.ts:240-276` pushes stream data but
 starts `settle()` from `child.once("exit")`. `settle()` closes both buffers at
-lines 292-293, and `OutputBuffer.push()` ignores later chunks once closed.
+lines 302-303, and `OutputBuffer.push()` ignores later chunks once closed.
 
 Plan 001 will have adjusted signal/settlement bookkeeping in `run.ts`. Preserve
 that behavior and build on it rather than recreating a second settled flag.

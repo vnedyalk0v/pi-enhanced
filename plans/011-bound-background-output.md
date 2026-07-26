@@ -5,7 +5,7 @@
 > not add configuration or dependencies. Update the index when done.
 >
 > **Drift check (run first)**:
-> `git diff --stat 9035686..HEAD -- extensions/background-terminals/output.ts extensions/background-terminals/output.test.ts extensions/background-terminals/manager.ts extensions/background-terminals/manager.test.ts extensions/background-terminals/index.ts`
+> `git diff --stat 8be9260..HEAD -- extensions/background-terminals/output.ts extensions/background-terminals/output.test.ts extensions/background-terminals/manager.ts extensions/background-terminals/manager.test.ts extensions/background-terminals/index.ts`
 
 ## Status
 
@@ -14,7 +14,7 @@
 - **Risk**: MED
 - **Depends on**: plans/005-reserve-concurrency-slots.md, plans/009-wait-for-subprocess-streams.md
 - **Category**: perf
-- **Planned at**: commit `9035686`, 2026-07-26
+- **Planned at**: commit `8be9260`, 2026-07-26 (reconciled after plans 005 and 009)
 
 ## Why this matters
 
@@ -33,8 +33,9 @@ if (this.spillStream && !this.spillError) {
 }
 ```
 
-`extensions/background-terminals/manager.ts:231-238` calls `notify()` for every
-stdout/stderr chunk. `extensions/background-terminals/index.ts:58-60` turns
+`extensions/background-terminals/manager.ts:236-243` calls `notify()` for every
+stdout/stderr chunk. Plan 009 now settles from `close` at lines 245-278.
+`extensions/background-terminals/index.ts:58-60` turns
 every notification into `updateWidget()`, whose current implementation calls
 `manager.list()` and materializes full snapshots.
 

@@ -5,7 +5,7 @@
 > the index after all gates pass.
 >
 > **Drift check (run first)**:
-> `git diff --stat 9035686..HEAD -- extensions/subagents/run.ts extensions/subagents/run.test.ts extensions/subagents/backends/pi.ts`
+> `git diff --stat 8be9260..HEAD -- extensions/subagents/run.ts extensions/subagents/run.test.ts extensions/subagents/backends/pi.ts`
 
 ## Status
 
@@ -14,7 +14,7 @@
 - **Risk**: LOW
 - **Depends on**: plans/009-wait-for-subprocess-streams.md
 - **Category**: bug
-- **Planned at**: commit `9035686`, 2026-07-26
+- **Planned at**: commit `8be9260`, 2026-07-26 (reconciled after plans 001 and 009)
 
 ## Why this matters
 
@@ -29,9 +29,9 @@ latest assistant text separately from the bounded diagnostic tail.
 `extensions/subagents/backends/pi.ts:61-82` appends stdout and stderr into the
 same bounded `output`, then calls `extractPiLastAssistantText(output)`.
 
-`extensions/subagents/run.ts:98-121` truncates arbitrary characters and later
-parses newline-separated JSON. Existing parser tests are in
-`extensions/subagents/run.test.ts:18-38`.
+`extensions/subagents/run.ts:114-137` truncates arbitrary characters and later
+parses newline-separated JSON. Plan 009's close-based process wait is now in
+place above it. Existing parser tests are in `extensions/subagents/run.test.ts`.
 
 Pi event shape currently used:
 

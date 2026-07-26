@@ -4,7 +4,7 @@
 > build a queue or shared scheduler. Run every gate and update the index.
 >
 > **Drift check (run first)**:
-> `git diff --stat 9035686..HEAD -- extensions/workflows/manager.ts extensions/workflows/manager.test.ts`
+> `git diff --stat c617b27..HEAD -- extensions/workflows/manager.ts extensions/workflows/manager.test.ts`
 
 ## Status
 
@@ -13,7 +13,7 @@
 - **Risk**: LOW
 - **Depends on**: plans/005-reserve-concurrency-slots.md
 - **Category**: perf
-- **Planned at**: commit `9035686`, 2026-07-26
+- **Planned at**: commit `c617b27`, 2026-07-26 (reconciled after plans 002 and 005)
 
 ## Why this matters
 
@@ -27,8 +27,9 @@ the lazy safe limit.
 
 `extensions/workflows/manager.ts:21` defines only `DEFAULT_MAX_TRACKED`.
 `WorkflowManagerOptions` at lines 59-67 has no running limit. `start()` at
-lines 97-105 validates goal/cwd but not capacity. A fresh subagent manager is
-created at lines 154-157.
+lines 97-106 validates goal/cwd but not capacity. Plan 002's artifact directory
+creation now starts at line 114, and a fresh subagent manager is created at
+lines 157-160.
 
 Existing manager tests and fake jobs are in
 `extensions/workflows/manager.test.ts:22-123`.
