@@ -26,8 +26,27 @@ intentional differences:
 
 ## Status
 
-Planning. See [PLAN.md](PLAN.md) for the implementation sequence and acceptance
+Foundation complete on Pi `0.82.1`. Run `/pi-enhanced` in Pi to verify that the
+starter extension loaded.
+
+See [PLAN.md](PLAN.md) for the remaining implementation sequence and acceptance
 criteria.
+
+## Development
+
+Requires Node.js `22.19.0` or newer.
+
+```sh
+npm install
+npm run check
+pi --extension ./extensions/foundation/index.ts
+```
+
+For a normal installation from GitHub:
+
+```sh
+pi install git:github.com/vnedyalk0v/pi-enhanced
+```
 
 ## Reference boundary
 
@@ -35,4 +54,3 @@ The reference repository currently has no declared license. This project will
 use it as a product and behavior reference, but implementations will be written
 independently unless compatible licensing is added or explicit permission is
 obtained.
-

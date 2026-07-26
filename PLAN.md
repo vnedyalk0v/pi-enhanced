@@ -16,7 +16,7 @@ extension optional and independently testable.
 - Treat `davis7dotsh/my-pi-setup` as a behavioral reference, not a source-code
   dependency.
 
-## Phase 1 — Foundation
+## Phase 1 — Foundation ✅
 
 - Confirm the supported Pi version and extension API against current
   documentation.
@@ -27,8 +27,8 @@ extension optional and independently testable.
 - Document installation into `~/.pi/agent` without overwriting existing user
   configuration.
 
-**Done when:** a no-op extension loads in Pi and the repository has one command
-that runs all checks.
+**Completed:** Pi `0.82.1` loads the foundation extension, `/pi-enhanced`
+confirms it in the real TUI, and `npm run check` runs the repository gate.
 
 ## Phase 2 — Small first-class tools
 
