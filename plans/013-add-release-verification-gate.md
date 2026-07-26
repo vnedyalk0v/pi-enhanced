@@ -13,7 +13,7 @@
 - **Priority**: P1
 - **Effort**: M
 - **Risk**: MED
-- **Depends on**: none
+- **Depends on**: plan 018
 - **Category**: test / release
 - **Planned at**: commit `9035686`, 2026-07-26
 
@@ -23,6 +23,11 @@
 Node 26 while the package promises Node 22.19+, and there is no CI or package
 load probe. The existing 63 tests pass locally, but the release claim is not
 continuously checked on the documented runtime or through Pi's package loader.
+
+Execution on 2026-07-26 exposed a prerequisite: Node 22.22.2 cancelled 18
+async tests because test-owned completion timers did not keep the event loop
+alive. Plan 018 owns that focused compatibility fix; resume this plan only
+after it lands.
 
 ## Current state
 

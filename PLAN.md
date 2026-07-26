@@ -139,15 +139,18 @@ deferred. Manager + handoff tests cover the partial-failure path;
   configuration on macOS arm64 and load it through offline, no-model RPC
   `get_commands` with fake `fd`/`rg` binaries. All nine expected package
   commands and skills loaded without extension errors.
-- [ ] Run model-backed real-session smoke checks for every starter feature.
-- [ ] Exercise real `fd`/`rg` downloads on macOS and Linux x64/arm64. Windows
-  and other unsupported auto-install targets require the documented manual
-  fallback.
+- [x] Run model-backed real-session smoke checks for every starter feature.
+  Pi `0.82.1` with `openai-codex/gpt-5.6-terra` exercised small tools,
+  background terminals, web fallback, Pi/Codex subagents, workflows, commands,
+  summary generation, clipboard copy, git status, and the packaged TUI theme.
+- [x] Exercise real `fd`/`rg` downloads on macOS and Linux x64/arm64. All four
+  targets downloaded, verified, extracted, and executed the pinned versions.
+  Windows and other unsupported auto-install targets require the documented
+  manual fallback.
 - [x] Resolve and add the project license (plan 017).
-- [ ] Publish and tag `v0.1.0`.
+- [x] Publish and tag `v0.1.0`.
 
-`v0.1.0` remains blocked on the model-backed feature checks, supported-platform
-download checks.
+Phase 7 is complete for `v0.1.0`.
 
 ## Initial delivery order
 

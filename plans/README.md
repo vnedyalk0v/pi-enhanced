@@ -23,17 +23,18 @@ when a listed STOP condition applies.
 | [010 Preserve large Pi results](010-preserve-large-pi-results.md) | P1 | M | MED | 009 | DONE (`b666a57`, includes `8be9260`) |
 | [011 Bound background output](011-bound-background-output.md) | P1 | M | MED | 005, 009 | DONE (`12d0f08`, includes `8be9260`) |
 | [012 Cancel Firecrawl jobs](012-cancel-firecrawl-jobs.md) | P2 | S | MED | — | DONE (`6b12f58`) |
-| [013 Add release verification gate](013-add-release-verification-gate.md) | P1 | M | MED | — | TODO |
-| [014 Collapse git footer queries](014-collapse-git-footer-queries.md) | P2 | S | LOW | 013 | TODO |
-| [015 Disambiguate ask_user choices](015-disambiguate-ask-user-choices.md) | P2 | S | LOW | 013 | TODO |
-| [016 Document runtime and operational boundaries](016-document-runtime-and-operational-boundaries.md) | P2 | M | LOW | 002, 004, 006–008, 011–013 | TODO |
-| [017 Declare project license](017-declare-project-license.md) | P2 | S | MED | 016 | TODO |
+| [018 Keep async test drivers alive on Node 22](018-node-22-async-test-drivers.md) | P1 | S | LOW | — | DONE (`265649e`) |
+| [013 Add release verification gate](013-add-release-verification-gate.md) | P1 | M | MED | 018 | DONE (`b716297`, includes `265649e`) |
+| [014 Collapse git footer queries](014-collapse-git-footer-queries.md) | P2 | S | LOW | 013 | DONE (`b508adb`) |
+| [015 Disambiguate ask_user choices](015-disambiguate-ask-user-choices.md) | P2 | S | LOW | 013 | DONE (`d7e02ce`) |
+| [016 Document runtime and operational boundaries](016-document-runtime-and-operational-boundaries.md) | P2 | M | LOW | 002, 004, 006–008, 011–013 | DONE (`1632127`) |
+| [017 Declare project license](017-declare-project-license.md) | P2 | S | MED | 016 | DONE (`e74dd4f`) |
 
-The numbering is the default serial execution order. Plan 013 has no technical
-dependency and may land earlier to strengthen all subsequent gates. Plans 014
-and 015 deliberately wait for its test type-checking. Plan 016 must describe
-landed behavior rather than planned behavior; plan 017 remains blocked until the
-maintainer explicitly chooses a license.
+Plan 018 is a prerequisite discovered while executing plan 013: Node 22.22.2
+cancels async tests whose test-only completion timers do not keep the event loop
+alive. Plans 014 and 015 deliberately wait for 013's test type-checking. Plan
+016 describes landed behavior rather than planned behavior. Plan 017 records
+the maintainer-selected MIT license.
 
 ## Audit coverage
 

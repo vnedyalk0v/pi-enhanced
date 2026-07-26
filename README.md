@@ -47,7 +47,7 @@ executable must be on `PATH`; `codex` is required only for Codex subagents and
 the workflow implementation phase.
 
 ```sh
-pi install git:github.com/vnedyalk0v/pi-enhanced
+pi install git:github.com/vnedyalk0v/pi-enhanced@v0.1.0
 ```
 
 To load a checkout for one run without changing Pi settings:
@@ -69,7 +69,7 @@ load in full:
 {
   "packages": [
     {
-      "source": "git:github.com/vnedyalk0v/pi-enhanced",
+      "source": "git:github.com/vnedyalk0v/pi-enhanced@v0.1.0",
       "extensions": ["!extensions/file-search/**"]
     }
   ]

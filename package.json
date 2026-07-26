@@ -1,6 +1,6 @@
 {
   "name": "pi-enhanced",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "license": "MIT",
   "description": "Opinionated Pi package: multi-agent harness extensions, skills, and themes",
