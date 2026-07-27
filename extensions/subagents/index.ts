@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { ResultDelivery } from "../shared/delivery.ts";
@@ -52,6 +52,12 @@ const IdParams = Type.Object({
 const IdsParams = Type.Object({
   ids: Type.Array(Type.String(), { description: 'Subagent ids, e.g. ["sa-1"]' }),
 });
+
+/** True when `child` is `parent` or nested inside it. */
+export function isWithin(parent: string, child: string) {
+  const rel = relative(parent, child);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
 
 function describeAgent(a: AgentDefinition) {
   const tools = a.tools ? ` [tools: ${a.tools.join(",")}]` : "";
@@ -167,7 +173,11 @@ export default function (pi: ExtensionAPI) {
       let agentDef: AgentDefinition | undefined;
       const agentName = params.agent?.trim();
       if (agentName) {
-        const { agents } = discoverAgents(ctx.cwd, ctx.isProjectTrusted());
+        // Discover from the directory the child actually runs in, not the parent
+        // session's cwd. A working_dir outside the session's own trusted tree
+        // never inherits that trust — its "project" agents stay untrusted.
+        const projectTrusted = isWithin(ctx.cwd, cwd) && ctx.isProjectTrusted();
+        const { agents } = discoverAgents(cwd, projectTrusted);
         agentDef = agents.find((a) => a.name === agentName);
         if (!agentDef) {
           const available = agents.map((a) => a.name).join(", ") || "none";
