@@ -66,6 +66,19 @@ export function sharesGitRoot(a: string, b: string) {
 }
 
 /**
+ * True when `workerCwd` is entitled to the same project trust as `sessionCwd`:
+ * either it's the very directory pi already resolved trust for (the common
+ * no-`working_dir`-override case — including trusted projects that aren't
+ * git repos at all, where `sharesGitRoot` can never be true), or both resolve
+ * into the same git repository (a monorepo package, "../.." back to the
+ * root). A different repo, no repo at all with a different directory, or a
+ * symlink resolving outside the repo, never qualifies.
+ */
+export function isSameTrustedProject(sessionCwd: string, workerCwd: string) {
+  return canonicalize(sessionCwd) === canonicalize(workerCwd) || sharesGitRoot(sessionCwd, workerCwd);
+}
+
+/**
  * Nearest `.pi/agents` at or above cwd. Bounded at the git repo root (or the
  * filesystem root when cwd isn't in a repo) so a directory outside the
  * trusted project can never be picked up as "project" agents.
@@ -95,18 +108,30 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentDefinition[] 
   const agents: AgentDefinition[] = [];
   for (const entry of entries) {
     if (!entry.name.endsWith(".md")) continue;
-    if (!entry.isFile() && !entry.isSymbolicLink()) continue;
+    // Project definitions are repo-controlled; a symlink there could resolve
+    // anywhere on disk (e.g. a private user-level prompt) and have its target
+    // silently read as a system prompt, under a confirm dialog that only ever
+    // shows the innocuous in-repo path. User definitions are already fully
+    // trusted, so symlinks there (e.g. a shared agents repo) stay supported.
+    const symlinkAllowed = source === "user" && entry.isSymbolicLink();
+    if (!entry.isFile() && !symlinkAllowed) continue;
 
     const filePath = join(dir, entry.name);
     try {
       const content = readFileSync(filePath, "utf8");
       const { frontmatter, body } = parseFrontmatter<Record<string, unknown>>(content);
 
-      const name = frontmatter.name;
+      const rawName = frontmatter.name;
       const description = frontmatter.description;
-      if (typeof name !== "string" || !name.trim() || typeof description !== "string" || !description.trim()) {
+      if (
+        typeof rawName !== "string" ||
+        !rawName.trim() ||
+        typeof description !== "string" ||
+        !description.trim()
+      ) {
         continue;
       }
+      const name = rawName.trim();
 
       const rawTools = frontmatter.tools;
       const tools =

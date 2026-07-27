@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
-import { discoverAgents, findGitRoot, sharesGitRoot } from "./agents.ts";
+import { discoverAgents, findGitRoot, isSameTrustedProject, sharesGitRoot } from "./agents.ts";
 
 // realpathSync matters here: mkdtemp roots can themselves sit behind a symlink
 // (e.g. macOS's /var/folders -> /private/var/folders), and discoverAgents/
@@ -110,6 +110,43 @@ describe("discoverAgents", () => {
     const { agents } = discoverAgents(cwd, false, agentDir);
     assert.equal(agents.length, 1);
     assert.equal(agents[0].name, "good");
+  });
+
+  it("trims a quoted name so it matches a trimmed sa_spawn lookup", () => {
+    writeAgent(
+      join(agentDir, "agents"),
+      "scout.md",
+      '---\nname: " scout "\ndescription: Fast codebase recon\n---\nBody.',
+    );
+
+    const { agents } = discoverAgents(cwd, false, agentDir);
+    assert.equal(agents.length, 1);
+    assert.equal(agents[0].name, "scout");
+  });
+
+  it("rejects a project-agent symlink pointing outside the project", () => {
+    const outsideFile = join(agentDir, "private.md");
+    writeFileSync(outsideFile, "---\nname: private\ndescription: not part of this project\n---\nBody.", "utf8");
+
+    const projectAgentsDir = join(cwd, CONFIG_DIR_NAME, "agents");
+    mkdirSync(projectAgentsDir, { recursive: true });
+    symlinkSync(outsideFile, join(projectAgentsDir, "leaked.md"));
+
+    const { agents } = discoverAgents(cwd, true, agentDir);
+    assert.equal(agents.length, 0);
+  });
+
+  it("still allows a symlinked user agent", () => {
+    const realFile = join(cwd, "shared-scout.md");
+    writeFileSync(realFile, "---\nname: scout\ndescription: shared via symlink\n---\nBody.", "utf8");
+
+    const userAgentsDir = join(agentDir, "agents");
+    mkdirSync(userAgentsDir, { recursive: true });
+    symlinkSync(realFile, join(userAgentsDir, "scout.md"));
+
+    const { agents } = discoverAgents(cwd, false, agentDir);
+    assert.equal(agents.length, 1);
+    assert.equal(agents[0].name, "scout");
   });
 
   it("ignores a non-string tools field instead of throwing", () => {
@@ -254,6 +291,64 @@ describe("sharesGitRoot", () => {
       symlinkSync(outside, link);
 
       assert.equal(sharesGitRoot(repoRoot, link), false);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("isSameTrustedProject", () => {
+  it("is true for the exact same directory even outside any git repo", () => {
+    const sandbox = mkTempDir("pi-sametrust-sandbox-");
+    try {
+      // No .git anywhere — sharesGitRoot alone would be false here.
+      assert.equal(isSameTrustedProject(sandbox, sandbox), true);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("is true for another directory in the same git repo", () => {
+    const sandbox = mkTempDir("pi-sametrust-sandbox-");
+    try {
+      const repoRoot = join(sandbox, "repo");
+      const nested = join(repoRoot, "packages", "app");
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      mkdirSync(nested, { recursive: true });
+
+      assert.equal(isSameTrustedProject(repoRoot, nested), true);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("is false for a different directory with no git repo at all", () => {
+    const sandbox = mkTempDir("pi-sametrust-sandbox-");
+    try {
+      const a = join(sandbox, "a");
+      const b = join(sandbox, "b");
+      mkdirSync(a, { recursive: true });
+      mkdirSync(b, { recursive: true });
+
+      assert.equal(isSameTrustedProject(a, b), false);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("is false for a working_dir symlink that escapes the repo", () => {
+    const sandbox = mkTempDir("pi-sametrust-symlink-sandbox-");
+    try {
+      const repoRoot = join(sandbox, "repo");
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+
+      const outside = join(sandbox, "outside");
+      mkdirSync(outside, { recursive: true });
+
+      const link = join(repoRoot, "escape-hatch");
+      symlinkSync(outside, link);
+
+      assert.equal(isSameTrustedProject(repoRoot, link), false);
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }

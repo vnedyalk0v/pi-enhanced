@@ -3,7 +3,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import { ResultDelivery } from "../shared/delivery.ts";
 import { TOOL_LIMITS_NOTE, truncateForModel, truncateOneLine } from "../shared/text.ts";
-import { discoverAgents, sharesGitRoot, type AgentDefinition } from "./agents.ts";
+import { discoverAgents, isSameTrustedProject, type AgentDefinition } from "./agents.ts";
 import type { SubagentSnapshot } from "./domain.ts";
 import {
   buildCancelResult,
@@ -168,10 +168,11 @@ export default function (pi: ExtensionAPI) {
       const agentName = params.agent?.trim();
       if (agentName) {
         // Discover from the directory the child actually runs in, not the parent
-        // session's cwd. Trust travels with the repository, not the exact path
-        // (see sharesGitRoot) — a different repo, no repo, or a symlink escaping
-        // the repo never inherits the session's trust decision.
-        const projectTrusted = sharesGitRoot(ctx.cwd, cwd) && ctx.isProjectTrusted();
+        // session's cwd (see isSameTrustedProject) — the default no-working_dir
+        // case always keeps the session's trust, even for a trusted project
+        // that isn't a git repo at all; a different repo, no repo, or a symlink
+        // escaping the repo never inherits it.
+        const projectTrusted = isSameTrustedProject(ctx.cwd, cwd) && ctx.isProjectTrusted();
         const { agents } = discoverAgents(cwd, projectTrusted);
         agentDef = agents.find((a) => a.name === agentName);
         if (!agentDef) {
