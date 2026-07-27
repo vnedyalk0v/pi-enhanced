@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync, type Dirent } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync, type Dirent } from "node:fs";
 import { dirname, join } from "node:path";
 import { CONFIG_DIR_NAME, getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 
@@ -28,9 +28,23 @@ function isDirectory(path: string) {
   }
 }
 
+/**
+ * Resolve symlinks so the git-root/climb logic operates on the real directory
+ * tree. A `working_dir` symlink inside a trusted repo can point outside it;
+ * without this, lexical `dirname()` climbing never notices the jump and can
+ * treat an external directory's `.git`/`.pi/agents` as part of the trusted repo.
+ */
+function canonicalize(path: string) {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
 /** Nearest ancestor (including itself) containing `.git`, bounding how far project-local discovery may climb. */
 export function findGitRoot(cwd: string) {
-  let dir = cwd;
+  let dir = canonicalize(cwd);
   while (true) {
     if (existsSync(join(dir, ".git"))) return dir;
     const parent = dirname(dir);
@@ -40,13 +54,25 @@ export function findGitRoot(cwd: string) {
 }
 
 /**
+ * True when both directories resolve into the same git repository. Trust
+ * travels with the repository, not the exact path — a `working_dir` elsewhere
+ * in the same repo (a monorepo package, "../.." back to the root, or a
+ * symlink resolving inside it) shares the session's trust decision; a
+ * different repo, no repo, or a symlink resolving outside the repo never does.
+ */
+export function sharesGitRoot(a: string, b: string) {
+  const rootA = findGitRoot(a);
+  return rootA !== null && rootA === findGitRoot(b);
+}
+
+/**
  * Nearest `.pi/agents` at or above cwd. Bounded at the git repo root (or the
  * filesystem root when cwd isn't in a repo) so a directory outside the
  * trusted project can never be picked up as "project" agents.
  */
 function findNearestProjectAgentsDir(cwd: string) {
-  const gitRoot = findGitRoot(cwd);
-  let dir = cwd;
+  let dir = canonicalize(cwd);
+  const gitRoot = findGitRoot(dir);
   while (true) {
     const candidate = join(dir, CONFIG_DIR_NAME, "agents");
     if (isDirectory(candidate)) return candidate;

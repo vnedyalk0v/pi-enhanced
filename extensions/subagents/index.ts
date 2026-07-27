@@ -3,7 +3,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import { ResultDelivery } from "../shared/delivery.ts";
 import { TOOL_LIMITS_NOTE, truncateForModel, truncateOneLine } from "../shared/text.ts";
-import { discoverAgents, findGitRoot, type AgentDefinition } from "./agents.ts";
+import { discoverAgents, sharesGitRoot, type AgentDefinition } from "./agents.ts";
 import type { SubagentSnapshot } from "./domain.ts";
 import {
   buildCancelResult,
@@ -168,14 +168,10 @@ export default function (pi: ExtensionAPI) {
       const agentName = params.agent?.trim();
       if (agentName) {
         // Discover from the directory the child actually runs in, not the parent
-        // session's cwd. Trust travels with the repository, not the exact path:
-        // a working_dir elsewhere in the *same* git repo (e.g. a monorepo package,
-        // or "../.." back to the root) still shares the session's trust decision;
-        // a working_dir in a different repo (or no repo) never inherits it.
-        const sessionRoot = findGitRoot(ctx.cwd);
-        const workerRoot = findGitRoot(cwd);
-        const projectTrusted =
-          sessionRoot !== null && sessionRoot === workerRoot && ctx.isProjectTrusted();
+        // session's cwd. Trust travels with the repository, not the exact path
+        // (see sharesGitRoot) — a different repo, no repo, or a symlink escaping
+        // the repo never inherits the session's trust decision.
+        const projectTrusted = sharesGitRoot(ctx.cwd, cwd) && ctx.isProjectTrusted();
         const { agents } = discoverAgents(cwd, projectTrusted);
         agentDef = agents.find((a) => a.name === agentName);
         if (!agentDef) {

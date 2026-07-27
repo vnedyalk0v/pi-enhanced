@@ -1,17 +1,25 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
-import { discoverAgents, findGitRoot } from "./agents.ts";
+import { discoverAgents, findGitRoot, sharesGitRoot } from "./agents.ts";
+
+// realpathSync matters here: mkdtemp roots can themselves sit behind a symlink
+// (e.g. macOS's /var/folders -> /private/var/folders), and discoverAgents/
+// findGitRoot canonicalize internally, so tests must compare against the same
+// canonical form or they'd fail purely on path spelling, not behavior.
+function mkTempDir(prefix: string) {
+  return realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+}
 
 let agentDir: string;
 let cwd: string;
 
 beforeEach(() => {
-  agentDir = mkdtempSync(join(tmpdir(), "pi-subagent-agentdir-"));
-  cwd = mkdtempSync(join(tmpdir(), "pi-subagent-cwd-"));
+  agentDir = mkTempDir("pi-subagent-agentdir-");
+  cwd = mkTempDir("pi-subagent-cwd-");
 });
 
 afterEach(() => {
@@ -119,7 +127,7 @@ describe("discoverAgents", () => {
   });
 
   it("does not climb past the git repo root for project agents", () => {
-    const sandbox = mkdtempSync(join(tmpdir(), "pi-subagent-sandbox-"));
+    const sandbox = mkTempDir("pi-subagent-sandbox-");
     try {
       const repoRoot = join(sandbox, "repo");
       const nestedCwd = join(repoRoot, "src", "nested");
@@ -152,11 +160,12 @@ describe("discoverAgents", () => {
       rmSync(sandbox, { recursive: true, force: true });
     }
   });
+
 });
 
 describe("findGitRoot", () => {
   it("finds the repo root from a nested subdirectory", () => {
-    const sandbox = mkdtempSync(join(tmpdir(), "pi-gitroot-sandbox-"));
+    const sandbox = mkTempDir("pi-gitroot-sandbox-");
     try {
       const repoRoot = join(sandbox, "repo");
       const nested = join(repoRoot, "packages", "app");
@@ -171,9 +180,80 @@ describe("findGitRoot", () => {
   });
 
   it("returns null outside any git repo", () => {
-    const sandbox = mkdtempSync(join(tmpdir(), "pi-gitroot-sandbox-"));
+    const sandbox = mkTempDir("pi-gitroot-sandbox-");
     try {
       assert.equal(findGitRoot(sandbox), null);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves a symlink before climbing, so it reports the real repo root", () => {
+    const sandbox = mkTempDir("pi-gitroot-symlink-sandbox-");
+    try {
+      const repoRoot = join(sandbox, "repo");
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+
+      const outside = join(sandbox, "outside");
+      mkdirSync(outside, { recursive: true });
+
+      const link = join(repoRoot, "escape-hatch");
+      symlinkSync(outside, link);
+
+      // The symlink lexically lives under repoRoot, but resolves outside it —
+      // its git root must not be reported as repoRoot.
+      assert.notEqual(findGitRoot(link), repoRoot);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("sharesGitRoot", () => {
+  it("is true for two directories in the same repo", () => {
+    const sandbox = mkTempDir("pi-sharesroot-sandbox-");
+    try {
+      const repoRoot = join(sandbox, "repo");
+      const nested = join(repoRoot, "packages", "app");
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      mkdirSync(nested, { recursive: true });
+
+      assert.equal(sharesGitRoot(repoRoot, nested), true);
+      assert.equal(sharesGitRoot(nested, repoRoot), true);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("is false across two different repos, and when neither is a repo", () => {
+    const sandbox = mkTempDir("pi-sharesroot-sandbox-");
+    try {
+      const repoA = join(sandbox, "repo-a");
+      const repoB = join(sandbox, "repo-b");
+      mkdirSync(join(repoA, ".git"), { recursive: true });
+      mkdirSync(join(repoB, ".git"), { recursive: true });
+
+      assert.equal(sharesGitRoot(repoA, repoB), false);
+      assert.equal(sharesGitRoot(sandbox, sandbox), false);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("is false for a working_dir symlink that escapes the repo, even though it's lexically inside it", () => {
+    const sandbox = mkTempDir("pi-sharesroot-symlink-sandbox-");
+    try {
+      const repoRoot = join(sandbox, "repo");
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+
+      const outside = join(sandbox, "outside");
+      mkdirSync(outside, { recursive: true });
+
+      // A working_dir symlink inside the trusted repo that resolves outside it.
+      const link = join(repoRoot, "escape-hatch");
+      symlinkSync(outside, link);
+
+      assert.equal(sharesGitRoot(repoRoot, link), false);
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }
