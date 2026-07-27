@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync, type Dirent } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import { CONFIG_DIR_NAME, getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 
 export type AgentSource = "user" | "project";
@@ -78,18 +78,32 @@ export function isSameTrustedProject(sessionCwd: string, workerCwd: string) {
   return canonicalize(sessionCwd) === canonicalize(workerCwd) || sharesGitRoot(sessionCwd, workerCwd);
 }
 
+/** True when `target` is `root` or nested inside it. */
+function isWithinDir(root: string, target: string) {
+  const rel = relative(root, target);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
 /**
- * Nearest `.pi/agents` at or above cwd. Bounded at the git repo root (or the
- * filesystem root when cwd isn't in a repo) so a directory outside the
- * trusted project can never be picked up as "project" agents.
+ * Nearest `.pi/agents` at or above cwd. Bounded at the git repo root — or,
+ * when cwd isn't in a git repo at all, at cwd itself (there's no other
+ * principled boundary for "the trusted project" without a git marker, so an
+ * unrelated ancestor's `.pi/agents` — a parent workspace, the home directory —
+ * must never be picked up as this directory's project agents). Also rejects
+ * a candidate whose real (symlink-resolved) location escapes the directory
+ * being scanned — `.pi` or `.pi/agents` itself can be a symlink pointing
+ * anywhere on disk, which `statSync`/`readdirSync` would otherwise follow
+ * transparently.
  */
 function findNearestProjectAgentsDir(cwd: string) {
-  let dir = canonicalize(cwd);
-  const gitRoot = findGitRoot(dir);
+  const start = canonicalize(cwd);
+  const gitRoot = findGitRoot(start);
+  const stopAt = gitRoot ?? start;
+  let dir = start;
   while (true) {
-    const candidate = join(dir, CONFIG_DIR_NAME, "agents");
-    if (isDirectory(candidate)) return candidate;
-    if (gitRoot && dir === gitRoot) return null;
+    const candidate = canonicalize(join(dir, CONFIG_DIR_NAME, "agents"));
+    if (isWithinDir(dir, candidate) && isDirectory(candidate)) return candidate;
+    if (dir === stopAt) return null;
     const parent = dirname(dir);
     if (parent === dir) return null;
     dir = parent;
@@ -134,13 +148,22 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentDefinition[] 
       const name = rawName.trim();
 
       const rawTools = frontmatter.tools;
-      const tools =
-        typeof rawTools === "string"
-          ? rawTools
-              .split(",")
-              .map((t) => t.trim())
-              .filter(Boolean)
-          : undefined;
+      let tools: string[] | undefined;
+      if (rawTools === undefined) {
+        tools = undefined;
+      } else if (typeof rawTools === "string") {
+        tools = rawTools
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean);
+      } else if (Array.isArray(rawTools) && rawTools.every((t) => typeof t === "string")) {
+        tools = rawTools.map((t) => t.trim()).filter(Boolean);
+      } else {
+        // Some other shape (number, object, mixed array, ...) — skip the whole
+        // definition rather than silently dropping the restriction and
+        // granting the full default tool set instead of the intended one.
+        continue;
+      }
 
       agents.push({
         name,

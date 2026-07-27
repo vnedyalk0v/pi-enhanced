@@ -149,7 +149,7 @@ describe("discoverAgents", () => {
     assert.equal(agents[0].name, "scout");
   });
 
-  it("ignores a non-string tools field instead of throwing", () => {
+  it("accepts a YAML list tools field the same as a comma string", () => {
     writeAgent(
       join(agentDir, "agents"),
       "list-tools.md",
@@ -160,7 +160,20 @@ describe("discoverAgents", () => {
 
     const { agents } = discoverAgents(cwd, false, agentDir);
     assert.equal(agents.length, 1);
-    assert.equal(agents[0].tools, undefined);
+    assert.deepEqual(agents[0].tools, ["read", "grep"]);
+  });
+
+  it("skips the whole definition for a tools field that is neither a string nor a string array", () => {
+    writeAgent(
+      join(agentDir, "agents"),
+      "bad-tools.md",
+      "---\nname: badtools\ndescription: tools is a number\ntools: 42\n---\nBody.",
+    );
+
+    // A read-only-intended agent must never fail open to the full default
+    // tool set just because its tools field couldn't be parsed.
+    const { agents } = discoverAgents(cwd, false, agentDir);
+    assert.equal(agents.length, 0);
   });
 
   it("does not climb past the git repo root for project agents", () => {
@@ -198,6 +211,53 @@ describe("discoverAgents", () => {
     }
   });
 
+  it("does not climb past the starting directory when there is no git repo at all", () => {
+    const sandbox = mkTempDir("pi-subagent-nogit-sandbox-");
+    try {
+      const projectDir = join(sandbox, "project");
+      mkdirSync(projectDir, { recursive: true });
+
+      // An unrelated ancestor's .pi/agents (e.g. a parent workspace or home
+      // directory) must never be picked up just because there's no git repo
+      // to otherwise bound the climb.
+      writeAgent(
+        join(sandbox, CONFIG_DIR_NAME, "agents"),
+        "leaked.md",
+        "---\nname: leaked\ndescription: unrelated ancestor, no git repo anywhere\n---\nBody.",
+      );
+
+      const result = discoverAgents(projectDir, true, agentDir);
+      assert.equal(result.agents.length, 0);
+      assert.equal(result.projectAgentsDir, null);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a .pi/agents directory that is itself a symlink escaping the project", () => {
+    const sandbox = mkTempDir("pi-subagent-dirlink-sandbox-");
+    try {
+      const repoRoot = join(sandbox, "repo");
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+
+      const outsideAgentsDir = join(sandbox, "outside-agents");
+      writeAgent(
+        outsideAgentsDir,
+        "leaked.md",
+        "---\nname: leaked\ndescription: reached via a symlinked .pi/agents directory\n---\nBody.",
+      );
+
+      // .pi/agents (the whole directory, not just a file inside it) is a
+      // symlink pointing outside the repo.
+      mkdirSync(join(repoRoot, CONFIG_DIR_NAME), { recursive: true });
+      symlinkSync(outsideAgentsDir, join(repoRoot, CONFIG_DIR_NAME, "agents"));
+
+      const result = discoverAgents(repoRoot, true, agentDir);
+      assert.equal(result.agents.length, 0);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("findGitRoot", () => {

@@ -59,6 +59,15 @@ function describeAgent(a: AgentDefinition) {
   return `${a.name} (${a.source}): ${a.description}${tools}${model}`;
 }
 
+/** Resolve the directory sa_spawn/sa_agents actually inspect, and whether it inherits the session's project trust. */
+function resolveDiscoveryContext(ctx: ExtensionContext, workingDir: string | undefined) {
+  const cwd = resolve(ctx.cwd, workingDir ?? ".");
+  const projectTrusted = isSameTrustedProject(ctx.cwd, cwd) && ctx.isProjectTrusted();
+  return { cwd, projectTrusted };
+}
+
+const PROJECT_AGENT_CONFIRM_TIMEOUT_MS = 30_000;
+
 export default function (pi: ExtensionAPI) {
   let manager: SubagentManager | undefined;
   let uiCtx: ExtensionContext | undefined;
@@ -162,17 +171,13 @@ export default function (pi: ExtensionAPI) {
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       captureParentDefaults(ctx);
       const m = getManager();
-      const cwd = resolve(ctx.cwd, params.working_dir ?? ".");
+      // Discover from (and confirm against) the directory the child actually
+      // runs in, not the parent session's cwd — see resolveDiscoveryContext.
+      const { cwd, projectTrusted } = resolveDiscoveryContext(ctx, params.working_dir);
 
       let agentDef: AgentDefinition | undefined;
       const agentName = params.agent?.trim();
       if (agentName) {
-        // Discover from the directory the child actually runs in, not the parent
-        // session's cwd (see isSameTrustedProject) — the default no-working_dir
-        // case always keeps the session's trust, even for a trusted project
-        // that isn't a git repo at all; a different repo, no repo, or a symlink
-        // escaping the repo never inherits it.
-        const projectTrusted = isSameTrustedProject(ctx.cwd, cwd) && ctx.isProjectTrusted();
         const { agents } = discoverAgents(cwd, projectTrusted);
         agentDef = agents.find((a) => a.name === agentName);
         if (!agentDef) {
@@ -180,9 +185,14 @@ export default function (pi: ExtensionAPI) {
           throw new Error(`Unknown agent: "${agentName}". Available: ${truncateOneLine(available, 300)}.`);
         }
         if (agentDef.source === "project" && ctx.hasUI) {
+          // hasUI covers both tui and rpc modes — rpc dialog methods work over
+          // the extension UI sub-protocol, but a non-interactive rpc client may
+          // never answer, so bound the wait and fail closed (declined) rather
+          // than blocking sa_spawn forever.
           const ok = await ctx.ui.confirm(
             "Run project-local subagent?",
             `Agent: ${agentDef.name}\nSource: ${agentDef.filePath}\n\nProject agents are repo-controlled. Only continue for trusted repositories.`,
+            { timeout: PROJECT_AGENT_CONFIRM_TIMEOUT_MS },
           );
           if (!ok) {
             return {
@@ -221,9 +231,17 @@ export default function (pi: ExtensionAPI) {
     label: "Subagent agents",
     description: `List named agent definitions available to sa_spawn's \`agent\` param (user: ~/.pi/agent/agents/*.md, project: .pi/agents/*.md when trusted). ${TOOL_LIMITS_NOTE}`,
     promptSnippet: "List available named sa_* agent definitions",
-    parameters: Type.Object({}),
-    async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
-      const { agents } = discoverAgents(ctx.cwd, ctx.isProjectTrusted());
+    parameters: Type.Object({
+      working_dir: Type.Optional(
+        Type.String({
+          description:
+            "Working directory to inspect, matching a planned sa_spawn call (default: current session cwd).",
+        }),
+      ),
+    }),
+    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+      const { cwd, projectTrusted } = resolveDiscoveryContext(ctx, params.working_dir);
+      const { agents } = discoverAgents(cwd, projectTrusted);
       const text =
         agents.length === 0
           ? "No named agent definitions found. sa_spawn without `agent` runs an ad-hoc worker with full default tools."

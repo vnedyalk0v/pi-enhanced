@@ -56,6 +56,11 @@ export async function startPiBackend(options: PiBackendOptions): Promise<Backend
     await writeFile(promptFile, systemExtra, { encoding: "utf8", mode: 0o600 });
     args.push("--append-system-prompt", promptFile);
   } catch (error) {
+    // mkdtemp may have already created the directory before writeFile failed;
+    // clean it up here since neither the throw below nor the ad-hoc fallback
+    // ever reaches collect()'s own cleanup for this path.
+    if (tmpDir) await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    tmpDir = undefined;
     if (options.systemPromptAppend) {
       // A named agent's defining prompt must not be silently dropped — the
       // child would still spawn and be reported as that agent, but behave as
@@ -64,7 +69,6 @@ export async function startPiBackend(options: PiBackendOptions): Promise<Backend
       throw new Error(`Failed to write agent prompt file: ${message}`);
     }
     // Ad-hoc worker: the generic guidance above is a nice-to-have, not load-bearing.
-    tmpDir = undefined;
   }
 
   args.push(options.prompt);
