@@ -55,8 +55,15 @@ export async function startPiBackend(options: PiBackendOptions): Promise<Backend
     const promptFile = join(tmpDir, "system.md");
     await writeFile(promptFile, systemExtra, { encoding: "utf8", mode: 0o600 });
     args.push("--append-system-prompt", promptFile);
-  } catch {
-    // Fall through without append if tmp fails
+  } catch (error) {
+    if (options.systemPromptAppend) {
+      // A named agent's defining prompt must not be silently dropped — the
+      // child would still spawn and be reported as that agent, but behave as
+      // a generic worker instead. Fail loudly rather than run the wrong thing.
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to write agent prompt file: ${message}`);
+    }
+    // Ad-hoc worker: the generic guidance above is a nice-to-have, not load-bearing.
     tmpDir = undefined;
   }
 

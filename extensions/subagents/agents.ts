@@ -29,7 +29,7 @@ function isDirectory(path: string) {
 }
 
 /** Nearest ancestor (including itself) containing `.git`, bounding how far project-local discovery may climb. */
-function findGitRoot(cwd: string) {
+export function findGitRoot(cwd: string) {
   let dir = cwd;
   while (true) {
     if (existsSync(join(dir, ".git"))) return dir;

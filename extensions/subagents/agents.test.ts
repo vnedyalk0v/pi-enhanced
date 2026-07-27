@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
-import { discoverAgents } from "./agents.ts";
+import { discoverAgents, findGitRoot } from "./agents.ts";
 
 let agentDir: string;
 let cwd: string;
@@ -148,6 +148,32 @@ describe("discoverAgents", () => {
       assert.equal(inside.agents.length, 1);
       assert.equal(inside.agents[0].name, "inside");
       assert.equal(inside.projectAgentsDir, join(repoRoot, CONFIG_DIR_NAME, "agents"));
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("findGitRoot", () => {
+  it("finds the repo root from a nested subdirectory", () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "pi-gitroot-sandbox-"));
+    try {
+      const repoRoot = join(sandbox, "repo");
+      const nested = join(repoRoot, "packages", "app");
+      mkdirSync(join(repoRoot, ".git"), { recursive: true });
+      mkdirSync(nested, { recursive: true });
+
+      assert.equal(findGitRoot(nested), repoRoot);
+      assert.equal(findGitRoot(repoRoot), repoRoot);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("returns null outside any git repo", () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "pi-gitroot-sandbox-"));
+    try {
+      assert.equal(findGitRoot(sandbox), null);
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }

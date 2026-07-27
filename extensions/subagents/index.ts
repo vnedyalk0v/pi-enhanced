@@ -1,9 +1,9 @@
-import { isAbsolute, relative, resolve } from "node:path";
+import { resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { ResultDelivery } from "../shared/delivery.ts";
-import { TOOL_LIMITS_NOTE, truncateForModel } from "../shared/text.ts";
-import { discoverAgents, type AgentDefinition } from "./agents.ts";
+import { TOOL_LIMITS_NOTE, truncateForModel, truncateOneLine } from "../shared/text.ts";
+import { discoverAgents, findGitRoot, type AgentDefinition } from "./agents.ts";
 import type { SubagentSnapshot } from "./domain.ts";
 import {
   buildCancelResult,
@@ -52,12 +52,6 @@ const IdParams = Type.Object({
 const IdsParams = Type.Object({
   ids: Type.Array(Type.String(), { description: 'Subagent ids, e.g. ["sa-1"]' }),
 });
-
-/** True when `child` is `parent` or nested inside it. */
-export function isWithin(parent: string, child: string) {
-  const rel = relative(parent, child);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-}
 
 function describeAgent(a: AgentDefinition) {
   const tools = a.tools ? ` [tools: ${a.tools.join(",")}]` : "";
@@ -174,14 +168,19 @@ export default function (pi: ExtensionAPI) {
       const agentName = params.agent?.trim();
       if (agentName) {
         // Discover from the directory the child actually runs in, not the parent
-        // session's cwd. A working_dir outside the session's own trusted tree
-        // never inherits that trust — its "project" agents stay untrusted.
-        const projectTrusted = isWithin(ctx.cwd, cwd) && ctx.isProjectTrusted();
+        // session's cwd. Trust travels with the repository, not the exact path:
+        // a working_dir elsewhere in the *same* git repo (e.g. a monorepo package,
+        // or "../.." back to the root) still shares the session's trust decision;
+        // a working_dir in a different repo (or no repo) never inherits it.
+        const sessionRoot = findGitRoot(ctx.cwd);
+        const workerRoot = findGitRoot(cwd);
+        const projectTrusted =
+          sessionRoot !== null && sessionRoot === workerRoot && ctx.isProjectTrusted();
         const { agents } = discoverAgents(cwd, projectTrusted);
         agentDef = agents.find((a) => a.name === agentName);
         if (!agentDef) {
           const available = agents.map((a) => a.name).join(", ") || "none";
-          throw new Error(`Unknown agent: "${agentName}". Available: ${available}.`);
+          throw new Error(`Unknown agent: "${agentName}". Available: ${truncateOneLine(available, 300)}.`);
         }
         if (agentDef.source === "project" && ctx.hasUI) {
           const ok = await ctx.ui.confirm(
