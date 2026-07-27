@@ -1,10 +1,10 @@
 import { resolve } from "node:path";
-import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { ResultDelivery } from "../shared/delivery.ts";
 import { TOOL_LIMITS_NOTE } from "../shared/text.ts";
-import type { BackendName, SubagentSnapshot } from "./domain.ts";
+import { discoverAgents, type AgentDefinition } from "./agents.ts";
+import type { SubagentSnapshot } from "./domain.ts";
 import {
   buildCancelResult,
   buildCompletionMessage,
@@ -18,9 +18,12 @@ import { SubagentManager } from "./manager.ts";
 const WIDGET_ID = "subagents";
 
 const SpawnParams = Type.Object({
-  backend: StringEnum(["pi", "codex"] as const, {
-    description: "Worker harness: pi (same stack as parent) or codex (OpenAI Codex CLI)",
-  }),
+  agent: Type.Optional(
+    Type.String({
+      description:
+        "Named agent definition (see sa_agents). Omit for an ad-hoc worker with full default tools.",
+    }),
+  ),
   prompt: Type.String({
     description: "Self-contained task prompt for the child (include all needed context)",
   }),
@@ -28,13 +31,13 @@ const SpawnParams = Type.Object({
   model: Type.Optional(
     Type.String({
       description:
-        "Model override. Pi: provider/id pattern. Codex: model id. Defaults: parent model (pi) or Codex config/high-effort coding model (codex).",
+        "Model override, provider/id pattern. Default: the agent definition's model, else the parent's current model.",
     }),
   ),
   thinking: Type.Optional(
     Type.String({
       description:
-        "Pi: thinking level (off|minimal|low|medium|high|...). Codex: model_reasoning_effort (default high).",
+        "Thinking level override (off|minimal|low|medium|high|...). Default: the agent definition's thinking, else the parent's current level.",
     }),
   ),
   working_dir: Type.Optional(
@@ -49,6 +52,12 @@ const IdParams = Type.Object({
 const IdsParams = Type.Object({
   ids: Type.Array(Type.String(), { description: 'Subagent ids, e.g. ["sa-1"]' }),
 });
+
+function describeAgent(a: AgentDefinition) {
+  const tools = a.tools ? ` [tools: ${a.tools.join(",")}]` : "";
+  const model = a.model ? ` [model: ${a.model}]` : "";
+  return `${a.name} (${a.source}): ${a.description}${tools}${model}`;
+}
 
 export default function (pi: ExtensionAPI) {
   let manager: SubagentManager | undefined;
@@ -80,10 +89,7 @@ export default function (pi: ExtensionAPI) {
       uiCtx.ui.setWidget(WIDGET_ID, undefined);
       return;
     }
-    const label =
-      running === 1
-        ? "1 subagent running"
-        : `${running} subagents running`;
+    const label = running === 1 ? "1 subagent running" : `${running} subagents running`;
     uiCtx.ui.setWidget(WIDGET_ID, [label]);
   };
 
@@ -100,7 +106,7 @@ export default function (pi: ExtensionAPI) {
           display: true,
           details: {
             id: value.id,
-            backend: value.backend,
+            agent: value.agent,
             status: value.status,
             exitCode: value.exitCode,
           },
@@ -145,44 +151,81 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "sa_spawn",
     label: "Subagent spawn",
-    description: `Start a background subagent (backend: pi or codex only). Child gets an isolated context and self-contained prompt. Named sa_* to avoid clashing with packages that register subagent/subagent_wait. ${TOOL_LIMITS_NOTE}`,
-    promptSnippet: "Spawn a Pi or Codex subagent in the background (sa_*)",
+    description: `Start a background subagent: pi's own native worker (a separate pi process), never a third-party CLI. Optionally named via \`agent\` (see sa_agents); omit for an ad-hoc general worker. Child gets an isolated context and self-contained prompt. Named sa_* to avoid clashing with packages that register subagent/subagent_wait. ${TOOL_LIMITS_NOTE}`,
+    promptSnippet: "Spawn a native pi subagent in the background (sa_*)",
     promptGuidelines: [
       "Use sa_spawn for parallelizable or long agent work; keep the prompt self-contained.",
-      "Prefer backend pi when you want the same model stack as the parent; prefer codex for heavy coding with high reasoning.",
+      "Use sa_agents to see named agent definitions (specialized tools/model per role) before picking an `agent`.",
       "After sa_spawn, keep working; a completion message arrives when the child finishes.",
     ],
     parameters: SpawnParams,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       captureParentDefaults(ctx);
       const m = getManager();
-      const backend = params.backend as BackendName;
       const cwd = resolve(ctx.cwd, params.working_dir ?? ".");
 
-      let model = params.model?.trim() || undefined;
-      let thinking = params.thinking?.trim() || undefined;
-
-      if (backend === "pi") {
-        model ??= parentModelLabel;
-        thinking ??= parentThinking;
-      } else {
-        // Codex: high reasoning by default (manager/backend maps thinking → effort)
-        thinking ??= "high";
-        model ??= process.env.CODEX_DEFAULT_MODEL?.trim() || undefined;
+      let agentDef: AgentDefinition | undefined;
+      const agentName = params.agent?.trim();
+      if (agentName) {
+        const { agents } = discoverAgents(ctx.cwd, ctx.isProjectTrusted());
+        agentDef = agents.find((a) => a.name === agentName);
+        if (!agentDef) {
+          const available = agents.map((a) => a.name).join(", ") || "none";
+          throw new Error(`Unknown agent: "${agentName}". Available: ${available}.`);
+        }
+        if (agentDef.source === "project" && ctx.hasUI) {
+          const ok = await ctx.ui.confirm(
+            "Run project-local subagent?",
+            `Agent: ${agentDef.name}\nSource: ${agentDef.filePath}\n\nProject agents are repo-controlled. Only continue for trusted repositories.`,
+          );
+          if (!ok) {
+            return {
+              content: [
+                { type: "text" as const, text: `Canceled: project agent "${agentDef.name}" not approved.` },
+              ],
+              details: { cancelled: true },
+            };
+          }
+        }
       }
 
+      const model = params.model?.trim() || agentDef?.model || parentModelLabel;
+      const thinking = params.thinking?.trim() || agentDef?.thinking || parentThinking;
+
       const snap = await m.spawn({
-        backend,
+        agent: agentDef?.name,
         prompt: params.prompt,
-        title: params.title,
+        title: params.title ?? agentDef?.description,
         cwd,
         model,
         thinking,
+        tools: agentDef?.tools,
+        systemPromptAppend: agentDef?.systemPrompt,
       });
       updateWidget();
       return {
         content: [{ type: "text" as const, text: buildSpawnResult(snap) }],
-        details: { id: snap.id, backend: snap.backend, status: snap.status, pid: snap.pid },
+        details: { id: snap.id, agent: snap.agent, status: snap.status, pid: snap.pid },
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "sa_agents",
+    label: "Subagent agents",
+    description:
+      "List named agent definitions available to sa_spawn's `agent` param (user: ~/.pi/agent/agents/*.md, project: .pi/agents/*.md when trusted).",
+    promptSnippet: "List available named sa_* agent definitions",
+    parameters: Type.Object({}),
+    async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
+      const { agents } = discoverAgents(ctx.cwd, ctx.isProjectTrusted());
+      const text =
+        agents.length === 0
+          ? "No named agent definitions found. sa_spawn without `agent` runs an ad-hoc worker with full default tools."
+          : agents.map(describeAgent).join("\n");
+      return {
+        content: [{ type: "text" as const, text }],
+        details: { count: agents.length, agents: agents.map((a) => a.name) },
       };
     },
   });
@@ -200,7 +243,7 @@ export default function (pi: ExtensionAPI) {
       if (snap.status !== "running") delivery.consume([snap.id]);
       return {
         content: [{ type: "text" as const, text: buildStatusResult(snap) }],
-        details: { id: snap.id, status: snap.status, backend: snap.backend },
+        details: { id: snap.id, status: snap.status, agent: snap.agent },
       };
     },
   });
@@ -236,7 +279,7 @@ export default function (pi: ExtensionAPI) {
       return {
         content: [{ type: "text" as const, text: buildWaitResult(snaps) }],
         details: {
-          results: snaps.map((s) => ({ id: s.id, status: s.status, backend: s.backend })),
+          results: snaps.map((s) => ({ id: s.id, status: s.status, agent: s.agent })),
         },
       };
     },
@@ -285,7 +328,6 @@ export default function (pi: ExtensionAPI) {
       const m = getManager();
       try {
         const snap = await m.spawn({
-          backend: "pi",
           prompt: [
             "Answer this side question for the parent agent.",
             "Be concise. Do not modify files unless the question explicitly requires it.",
@@ -299,7 +341,7 @@ export default function (pi: ExtensionAPI) {
         });
         updateWidget();
         if (ctx.hasUI) {
-          ctx.ui.notify(`Side task ${snap.id} started (pi)`, "info");
+          ctx.ui.notify(`Side task ${snap.id} started`, "info");
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

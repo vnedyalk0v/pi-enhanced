@@ -67,7 +67,6 @@ describe("handoff prompt", () => {
       task: {
         key: "implement",
         title: "Implement",
-        backend: "codex",
         role: "Implement the goal.",
       },
       artifactsDir: "/tmp/wf-1",
@@ -137,7 +136,6 @@ describe("handoff prompt", () => {
       task: {
         key: "implement",
         title: "Implement",
-        backend: "codex",
         role: "Implement the goal.",
       },
       artifactsDir: "/tmp/wf-1",
@@ -161,7 +159,6 @@ describe("handoff prompt", () => {
       task: {
         key: "structure",
         title: "Map",
-        backend: "pi",
         role: "Map the repository.",
       },
       artifactsDir: "/tmp/wf-1",
@@ -174,19 +171,19 @@ describe("handoff prompt", () => {
 });
 
 describe("workflow roles", () => {
-  it("keeps fixed phases and backends with role-specific trust rules", () => {
+  it("keeps fixed phases with role-specific trust rules", () => {
     assert.deepEqual(
-      REPO_TASK_PHASES.map((phase) => [
-        phase.name,
-        phase.tasks.map((task) => task.backend),
-      ]),
+      REPO_TASK_PHASES.map((phase) => [phase.name, phase.tasks.map((task) => task.key)]),
       [
-        ["reconnaissance", ["pi", "pi"]],
-        ["implementation", ["codex"]],
-        ["review", ["pi"]],
-        ["synthesis", ["pi"]],
+        ["reconnaissance", ["structure", "relevant"]],
+        ["implementation", ["implement"]],
+        ["review", ["review"]],
+        ["synthesis", ["synthesize"]],
       ],
     );
+    // Implementation runs with high reasoning (the old codex-only path); others inherit the parent default.
+    const implementTask = REPO_TASK_PHASES[1]!.tasks[0]!;
+    assert.equal(implementTask.thinking, "high");
 
     const [structure, relevant, implement, review, synthesize] = REPO_TASK_PHASES.flatMap(
       (phase) => phase.tasks,

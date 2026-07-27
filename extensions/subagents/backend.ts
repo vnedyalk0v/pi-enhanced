@@ -1,19 +1,18 @@
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  appendBounded,
-  createPiAssistantTextCollector,
-  runProcess,
-  type RunHandle,
-} from "../run.ts";
-import { tailText } from "../../shared/text.ts";
+import { appendBounded, createPiAssistantTextCollector, runProcess, type RunHandle } from "./run.ts";
+import { tailText } from "../shared/text.ts";
 
 export type PiBackendOptions = {
   prompt: string;
   cwd: string;
   model?: string;
   thinking?: string;
+  /** Tool allowlist from an agent definition; omitted = pi's full default set. */
+  tools?: string[];
+  /** Agent definition's system prompt body, appended after the base worker guidance. */
+  systemPromptAppend?: string;
   signal?: AbortSignal;
   onOutput?: (chunk: string) => void;
 };
@@ -32,18 +31,23 @@ export type BackendJob = {
 
 /**
  * Run a self-contained Pi child with isolated session (json + print + no-session).
+ * This is pi's own native worker path — no third-party CLI dependency.
  */
 export async function startPiBackend(options: PiBackendOptions): Promise<BackendJob> {
   const args = ["--mode", "json", "-p", "--no-session"];
   if (options.model) args.push("--model", options.model);
   if (options.thinking) args.push("--thinking", options.thinking);
+  if (options.tools && options.tools.length > 0) args.push("--tools", options.tools.join(","));
 
   // System guidance: child is a worker; return a clear final answer.
   const systemExtra = [
     "You are a subagent worker in an isolated Pi session.",
     "Complete the task thoroughly. Prefer concise final answers.",
     "Do not wait for the parent agent; you will not receive follow-ups in this process.",
-  ].join(" ");
+    options.systemPromptAppend?.trim(),
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 
   let tmpDir: string | undefined;
   try {

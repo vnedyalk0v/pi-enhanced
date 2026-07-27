@@ -140,44 +140,6 @@ export function createPiAssistantTextCollector() {
   };
 }
 
-export function extractCodexLastMessage(stdout: string, fileContents?: string) {
-  if (fileContents?.trim()) return fileContents.trim();
-
-  let last = "";
-  for (const line of stdout.split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      const event = JSON.parse(line) as Record<string, unknown>;
-      const type = String(event.type ?? event.msg ?? "");
-      // Common codex JSONL shapes
-      if (
-        type === "item.completed" ||
-        type === "agent_message" ||
-        type === "message" ||
-        type.includes("agent_message")
-      ) {
-        const text =
-          stringField(event, "text") ||
-          stringField(event, "message") ||
-          contentToText(event.content) ||
-          contentToText((event.item as Record<string, unknown> | undefined)?.text);
-        if (text) last = text;
-      }
-      if (event.last_agent_message && typeof event.last_agent_message === "string") {
-        last = event.last_agent_message;
-      }
-    } catch {
-      // ignore
-    }
-  }
-  return last;
-}
-
-function stringField(obj: Record<string, unknown>, key: string) {
-  const v = obj[key];
-  return typeof v === "string" ? v : "";
-}
-
 function parsePiAssistantText(line: string) {
   if (!line.trim()) return "";
   try {

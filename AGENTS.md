@@ -4,7 +4,7 @@ Rules for humans and agents working on this repository.
 
 ## What this is
 
-A Pi package (`keywords: ["pi-package"]`) of optional extensions, skills, and themes that turn minimal Pi into a multi-agent harness. Behavioral reference: `davis7dotsh/my-pi-setup`. Implementations are original. Subagent backends: **Pi and Codex only**. Web search: Firecrawl primary, no-key fallback on quota exhaustion.
+A Pi package (`keywords: ["pi-package"]`) of optional extensions, skills, and themes that turn minimal Pi into a multi-agent harness. Behavioral reference: `davis7dotsh/my-pi-setup`. Implementations are original. Subagents are **native pi only** (a separate `pi` process per worker) — no third-party agent CLI. Web search: Firecrawl primary, no-key fallback on quota exhaustion.
 
 Supported Pi version: pin exact `@earendil-works/pi-*` in `devDependencies`. Target documented in README.
 
