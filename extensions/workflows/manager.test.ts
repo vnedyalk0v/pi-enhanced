@@ -281,9 +281,11 @@ describe("WorkflowManager", () => {
       cwd: process.cwd(),
     });
 
-    for (let i = 0; i < 100; i++) {
+    // finish() sets entry.status synchronously but awaits subagent disposal and
+    // artifact persistence before invoking onSettled, so poll for the callback
+    // itself rather than inferring it from status (which can flip first).
+    for (let i = 0; i < 100 && settled.length === 0; i++) {
       await new Promise((r) => setTimeout(r, 30));
-      if (m.get(snap.id)?.status !== "running") break;
     }
     const after = m.get(snap.id)!;
     assert.ok(after.status === "done" || after.status === "partial");
