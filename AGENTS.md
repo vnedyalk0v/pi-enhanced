@@ -71,6 +71,15 @@ npm test               # run when tests exist for the touched area
 - Never use `--no-verify`, `--no-gpg-sign`, or otherwise skip hooks/signing unless explicitly told to.
 - Create new commits; do not `--amend` unless explicitly told to (an amend after a hook rejection rewrites the wrong commit).
 
+### Branching
+
+`main` is release-only. `dev` is the integration branch.
+
+- Never commit directly on `main`, and never open a PR targeting `main`.
+- Before starting new work, make sure `dev` is current (`git fetch origin && git checkout dev && git pull`), then branch from it: `git checkout -b <branch> dev`. Never branch from a stale local `dev` or from `main`.
+- Every PR targets `dev` (`gh pr create --base dev ...`). Only a human maintainer cuts `dev` → `main` releases.
+- If you're already on `dev` or `main` with work to commit, stop and create a feature branch first instead of committing in place.
+
 ### Commit messages
 
 Follow [Conventional Commits](https://www.conventionalcommits.org/): `type(scope): subject`, scope optional.
