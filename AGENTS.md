@@ -57,6 +57,7 @@ npm test               # run when tests exist for the touched area
 
 - If check/test commands don't exist for the project, suggest adding them.
 - Add a focused `node:test` (or package-local test) for every non-trivial lifecycle, parser, or fallback path.
+- When a test polls for an async settle/callback, poll the actual signal (the callback firing, the promise resolving) — never a different field that happens to update earlier or later. A real await gap between them passes reliably on a quiet local machine and flakes under CI's slower/contended I/O.
 - Do not run full interactive Pi sessions or install packages globally unless the user asks.
 - Local smoke load: `pi --extension ./extensions/<name>/index.ts` or install this package path.
 
