@@ -117,15 +117,6 @@ export function appendBounded(current: string, chunk: string, maxChars = 80_000)
   return next.slice(next.length - maxChars);
 }
 
-export function extractPiLastAssistantText(stdout: string) {
-  let last = "";
-  for (const line of stdout.split("\n")) {
-    const text = parsePiAssistantText(line);
-    if (text) last = text;
-  }
-  return last;
-}
-
 export function createPiAssistantTextCollector() {
   let remainder = "";
   let last = "";

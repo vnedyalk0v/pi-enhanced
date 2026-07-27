@@ -14,11 +14,14 @@ export type ClassifiedError = {
   fallbackEligible: boolean;
 };
 
+// Bare status-code digits deliberately excluded: matched as unanchored substrings
+// against arbitrary provider body text, "40284" or "ref id 4029384" would false-hit.
+// The real HTTP status is already checked directly in classifyHttpError.
 const QUOTA_RE =
-  /insufficient credits|credit.?limit|quota|payment required|out of credits|no credits|plan limit|upgrade your plan|402/i;
+  /insufficient credits|credit.?limit|quota|payment required|out of credits|no credits|plan limit|upgrade your plan/i;
 const AUTH_RE = /unauthorized|invalid.?api.?key|api key|authentication|forbidden/i;
-const RATE_RE = /rate limit|too many requests|429/i;
-const BAD_RE = /bad request|invalid|validation|malformed|400/i;
+const RATE_RE = /rate limit|too many requests/i;
+const BAD_RE = /bad request|invalid|validation|malformed/i;
 
 /**
  * Classify Firecrawl (or similar) HTTP failures.
@@ -35,16 +38,23 @@ export function classifyHttpError(status: number, bodyText: string): ClassifiedE
       fallbackEligible: true,
     };
   }
-  if (status === 401 || status === 403) {
-    // Some gateways misuse 403 for quota; still check body first (above).
-    if (AUTH_RE.test(bodyText) || AUTH_RE.test(message) || status === 401) {
-      return {
-        kind: "auth",
-        status,
-        message: message || "Authentication failed",
-        fallbackEligible: false,
-      };
-    }
+  if (status === 401) {
+    return {
+      kind: "auth",
+      status,
+      message: message || "Authentication failed",
+      fallbackEligible: false,
+    };
+  }
+  // 403 is ambiguous across gateways (auth vs. other denial) — only claim "auth"
+  // when the body confirms it; otherwise fall through to the checks below.
+  if (status === 403 && (AUTH_RE.test(bodyText) || AUTH_RE.test(message))) {
+    return {
+      kind: "auth",
+      status,
+      message: message || "Authentication failed",
+      fallbackEligible: false,
+    };
   }
   if (status === 429 || RATE_RE.test(bodyText)) {
     return {

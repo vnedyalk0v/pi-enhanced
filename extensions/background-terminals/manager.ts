@@ -1,7 +1,10 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Readable } from "node:stream";
+import { StringDecoder } from "node:string_decoder";
+import { InterestTracker, pruneSettled } from "../shared/lifecycle.ts";
 import { abortPromise, sleep } from "../shared/time.ts";
 import { OutputBuffer, openSpillStreams, removeSpillDir, type OutputView } from "./output.ts";
 
@@ -80,7 +83,7 @@ export class TerminalManager {
   private counter = 0;
   private startingCount = 0;
   private disposed = false;
-  private killInterest = new Map<string, number>();
+  private killInterest = new InterestTracker();
   private listeners = new Set<() => void>();
   private outputNotifyTimer?: ReturnType<typeof setTimeout>;
   private readonly sessionKey: string;
@@ -194,6 +197,13 @@ export class TerminalManager {
       this.startingCount -= 1;
       throw error;
     });
+    if (this.disposed) {
+      this.startingCount -= 1;
+      spill.stdout.stream.end();
+      spill.stderr.stream.end();
+      await removeSpillFiles(spill);
+      throw new Error("Background terminal manager is disposed.");
+    }
     const stdout = new OutputBuffer(undefined, spill.stdout);
     const stderr = new OutputBuffer(undefined, spill.stderr);
 
@@ -233,6 +243,7 @@ export class TerminalManager {
       try {
         await stdout.close();
         await stderr.close();
+        await removeSpillFiles(spill);
       } finally {
         this.startingCount -= 1;
       }
@@ -250,9 +261,12 @@ export class TerminalManager {
     });
 
     const captureOutput = (stream: Readable | null, output: OutputBuffer) => {
+      if (!stream) return;
+      const decoder = new StringDecoder("utf8");
       let waitingForDrain = false;
-      stream?.on("data", (buf: Buffer) => {
-        if (!output.push(buf.toString("utf8"))) {
+      const push = (text: string) => {
+        if (!text) return;
+        if (!output.push(text)) {
           stream.pause();
           if (!waitingForDrain) {
             waitingForDrain = true;
@@ -263,7 +277,11 @@ export class TerminalManager {
           }
         }
         this.notifyOutput();
-      });
+      };
+      // A multi-byte UTF-8 char can straddle two chunks; StringDecoder carries
+      // partial bytes across writes instead of emitting U+FFFD per split char.
+      stream.on("data", (buf: Buffer) => push(decoder.write(buf)));
+      stream.on("end", () => push(decoder.end()));
     };
     captureOutput(child.stdout, entry.stdout);
     captureOutput(child.stderr, entry.stderr);
@@ -330,36 +348,14 @@ export class TerminalManager {
     await entry.stdout.close();
     await entry.stderr.close();
 
-    const consumed = (this.killInterest.get(entry.id) ?? 0) > 0;
+    const consumed = this.killInterest.has(entry.id);
     entry.resolveSettle();
-    this.pruneSettled();
+    pruneSettled(this.entries, this.maxTracked, (e) => e.status === "running");
     this.notify();
 
     if (!this.disposed) {
       this.onSettled?.({ snapshot: this.snapshotOf(entry), consumed });
     }
-  }
-
-  private pruneSettled() {
-    const settled = [...this.entries.values()]
-      .filter((e) => e.status !== "running")
-      .sort((a, b) => (a.settledAt ?? 0) - (b.settledAt ?? 0));
-
-    while (settled.length > this.maxTracked) {
-      const oldest = settled.shift();
-      if (!oldest) break;
-      this.entries.delete(oldest.id);
-    }
-  }
-
-  private addKillInterest(id: string) {
-    this.killInterest.set(id, (this.killInterest.get(id) ?? 0) + 1);
-  }
-
-  private releaseKillInterest(id: string) {
-    const n = (this.killInterest.get(id) ?? 0) - 1;
-    if (n <= 0) this.killInterest.delete(id);
-    else this.killInterest.set(id, n);
   }
 
   /**
@@ -391,13 +387,13 @@ export class TerminalManager {
         continue;
       }
 
-      this.addKillInterest(id);
+      this.killInterest.add(id);
       entry.killSignaled = true;
       void this.terminateChild(entry);
 
       waiting.push(
         entry.settlePromise.finally(() => {
-          this.releaseKillInterest(id);
+          this.killInterest.release(id);
         }),
       );
       results.push({
@@ -481,7 +477,7 @@ export class TerminalManager {
 
     const running = [...this.entries.values()].filter((e) => e.status === "running");
     for (const entry of running) {
-      this.addKillInterest(entry.id);
+      this.killInterest.add(entry.id);
       entry.killSignaled = true;
       void this.terminateChild(entry);
     }
@@ -502,6 +498,16 @@ export class TerminalManager {
     await removeSpillDir(this.sessionKey);
     this.notify();
   }
+}
+
+async function removeSpillFiles(spill: {
+  stdout: { path: string };
+  stderr: { path: string };
+}) {
+  await Promise.all([
+    rm(spill.stdout.path, { force: true }).catch(() => {}),
+    rm(spill.stderr.path, { force: true }).catch(() => {}),
+  ]);
 }
 
 function boundedError(error: unknown, max = 500) {

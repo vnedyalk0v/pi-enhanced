@@ -23,10 +23,16 @@ export type CodexBackendOptions = {
  * Run Codex non-interactively via `codex exec`.
  * Defaults: ephemeral session, high reasoning, workspace-write sandbox.
  */
+const REASONING_EFFORTS = new Set(["minimal", "low", "medium", "high"]);
+
 export async function startCodexBackend(options: CodexBackendOptions): Promise<BackendJob> {
   const tmpDir = await mkdtemp(join(tmpdir(), "pi-subagent-codex-"));
   const lastMessagePath = join(tmpDir, "last-message.txt");
-  const effort = options.reasoningEffort ?? "high";
+  // Codex's -c flag parses this as a bare TOML assignment; only pass known
+  // words through so an unexpected value (e.g. containing a quote) can't
+  // break out of the quoted config value.
+  const requestedEffort = options.reasoningEffort ?? "high";
+  const effort = REASONING_EFFORTS.has(requestedEffort) ? requestedEffort : "high";
 
   const args = [
     "exec",

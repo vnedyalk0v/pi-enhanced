@@ -1,7 +1,8 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { existsSync, statSync } from "node:fs";
+import { InterestTracker, pruneSettled } from "../shared/lifecycle.ts";
 import { abortPromise, sleep } from "../shared/time.ts";
 import type { ManagerOptions as SubagentManagerOptions } from "../subagents/manager.ts";
 import { SubagentManager } from "../subagents/manager.ts";
@@ -73,7 +74,7 @@ export class WorkflowManager {
   private counter = 0;
   private startingCount = 0;
   private disposed = false;
-  private waitInterest = new Map<string, number>();
+  private waitInterest = new InterestTracker();
   private readonly maxRunning: number;
   private readonly maxTracked: number;
   private readonly artifactsRoot: string;
@@ -389,11 +390,13 @@ export class WorkflowManager {
 
     const outputs: StructuredOutput[] = [];
 
-    // Collect spawn failures that never got a subagent
+    // Collect spawn failures that never got a subagent — includes tasks skipped
+    // by the cancellation break above, which are still "pending" at this point.
     for (const task of tasks) {
       const already = spawned.find((s) => s.task.key === task.key);
       if (already) continue;
       const tr = phaseRt.tasks.get(task.key)!;
+      const errorText = tr.error ?? (entry.cancelRequested ? "cancelled before start" : "failed to start");
       const artifactPath =
         tr.artifactPath ??
         (await writeTaskArtifact({
@@ -402,16 +405,19 @@ export class WorkflowManager {
           title: task.title,
           status: "failed",
           body: "",
-          error: tr.error ?? "failed to start",
+          error: errorText,
         }));
       const out = validateStructuredOutput({
         phase: phaseName,
         taskKey: task.key,
         title: task.title,
         subagentStatus: "failed",
-        errorText: tr.error ?? "failed to start",
+        errorText,
         artifactPath,
       });
+      tr.status = entry.cancelRequested ? "killed" : "failed";
+      tr.error = errorText;
+      tr.artifactPath = artifactPath;
       outputs.push(out);
     }
 
@@ -481,7 +487,7 @@ export class WorkflowManager {
     if (errorText) entry.errorText = errorText;
 
     // Capture before resolveSettle — waiters release interest in finally after settle.
-    const consumed = (this.waitInterest.get(entry.id) ?? 0) > 0;
+    const consumed = this.waitInterest.has(entry.id);
 
     try {
       await entry.subagents.disposeAll();
@@ -491,7 +497,11 @@ export class WorkflowManager {
 
     await this.persist(entry);
     entry.resolveSettle();
-    this.pruneSettled();
+    pruneSettled(this.entries, this.maxTracked, (e) => e.status === "running", (evicted) => {
+      // Once evicted, wf_status can never surface this path again — nothing
+      // else will ever remove these files (unlike per-session spill dirs).
+      void rm(evicted.artifactsDir, { recursive: true, force: true }).catch(() => {});
+    });
     this.notify();
 
     if (!this.disposed) {
@@ -534,29 +544,8 @@ export class WorkflowManager {
     };
   }
 
-  private pruneSettled() {
-    const settled = [...this.entries.values()]
-      .filter((e) => e.status !== "running")
-      .sort((a, b) => (a.settledAt ?? 0) - (b.settledAt ?? 0));
-    while (settled.length > this.maxTracked) {
-      const oldest = settled.shift();
-      if (!oldest) break;
-      this.entries.delete(oldest.id);
-    }
-  }
-
   private notify() {
     this.onChange?.();
-  }
-
-  private addInterest(id: string) {
-    this.waitInterest.set(id, (this.waitInterest.get(id) ?? 0) + 1);
-  }
-
-  private releaseInterest(id: string) {
-    const n = (this.waitInterest.get(id) ?? 0) - 1;
-    if (n <= 0) this.waitInterest.delete(id);
-    else this.waitInterest.set(id, n);
   }
 
   async wait(ids: readonly string[], signal?: AbortSignal): Promise<WorkflowSnapshot[]> {
@@ -564,7 +553,7 @@ export class WorkflowManager {
     const unknown = ids.filter((id) => !this.entries.has(id));
     if (unknown.length > 0) throw new Error(`Unknown workflow id(s): ${unknown.join(", ")}`);
 
-    for (const id of ids) this.addInterest(id);
+    for (const id of ids) this.waitInterest.add(id);
     try {
       const waits = ids.map((id) => this.entries.get(id)!.settlePromise);
       await Promise.race([
@@ -572,7 +561,7 @@ export class WorkflowManager {
         abortPromise(signal, "Wait aborted; workflows continue in the background."),
       ]);
     } finally {
-      for (const id of ids) this.releaseInterest(id);
+      for (const id of ids) this.waitInterest.release(id);
     }
     return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
   }
@@ -586,7 +575,7 @@ export class WorkflowManager {
     for (const id of ids) {
       const entry = this.entries.get(id)!;
       if (entry.status !== "running") continue;
-      this.addInterest(id);
+      this.waitInterest.add(id);
       entry.cancelRequested = true;
       const runningIds = entry.subagents
         .list()
@@ -597,7 +586,7 @@ export class WorkflowManager {
       }
       waiting.push(
         entry.settlePromise.finally(() => {
-          this.releaseInterest(id);
+          this.waitInterest.release(id);
         }),
       );
     }

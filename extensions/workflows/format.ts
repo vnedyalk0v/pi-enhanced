@@ -115,8 +115,6 @@ function statusIcon(status: string) {
       return "✗";
     case "running":
       return "…";
-    case "partial":
-      return "~";
     default:
       return "·";
   }

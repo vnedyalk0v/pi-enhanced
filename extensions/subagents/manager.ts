@@ -1,5 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+import { InterestTracker, pruneSettled } from "../shared/lifecycle.ts";
 import { abortPromise, sleep } from "../shared/time.ts";
 import { startCodexBackend } from "./backends/codex.ts";
 import { startPiBackend, type BackendJob } from "./backends/pi.ts";
@@ -15,6 +16,9 @@ import { appendBounded } from "./run.ts";
 const DEFAULT_MAX_RUNNING = 4;
 const DEFAULT_MAX_TRACKED = 32;
 const DEFAULT_KILL_GRACE_MS = 3000;
+// ponytail: fixed ceiling, not per-task tuning; raise via ManagerOptions.maxRuntimeMs
+// if a legitimate task needs longer than 30 minutes.
+const DEFAULT_MAX_RUNTIME_MS = 30 * 60_000;
 const OUTPUT_TAIL_CHARS = 24_000;
 
 type Entry = {
@@ -44,6 +48,8 @@ export type ManagerOptions = {
   maxRunning?: number;
   maxTracked?: number;
   killGraceMs?: number;
+  /** Force-kill a subagent that runs longer than this (default 30 minutes). */
+  maxRuntimeMs?: number;
   onSettled?: (info: SettledInfo) => void;
   onChange?: () => void;
   /** Inject backends for tests. */
@@ -58,10 +64,11 @@ export class SubagentManager {
   private counter = 0;
   private startingCount = 0;
   private disposed = false;
-  private waitInterest = new Map<string, number>();
+  private waitInterest = new InterestTracker();
   private readonly maxRunning: number;
   private readonly maxTracked: number;
   private readonly killGraceMs: number;
+  private readonly maxRuntimeMs: number;
   private onSettled?: (info: SettledInfo) => void;
   private onChange?: () => void;
   private starters: {
@@ -73,6 +80,7 @@ export class SubagentManager {
     this.maxRunning = options.maxRunning ?? DEFAULT_MAX_RUNNING;
     this.maxTracked = options.maxTracked ?? DEFAULT_MAX_TRACKED;
     this.killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
+    this.maxRuntimeMs = options.maxRuntimeMs ?? DEFAULT_MAX_RUNTIME_MS;
     this.onSettled = options.onSettled;
     this.onChange = options.onChange;
     this.starters = {
@@ -199,6 +207,12 @@ export class SubagentManager {
       throw new Error(`Failed to start ${options.backend} subagent: ${message}`);
     }
 
+    if (this.disposed) {
+      this.startingCount -= 1;
+      job.handle.kill("SIGKILL");
+      throw new Error("Subagent manager is disposed.");
+    }
+
     entry.job = job;
     entry.pid = job.handle.pid;
     this.entries.set(id, entry);
@@ -212,8 +226,18 @@ export class SubagentManager {
   }
 
   private async collectEntry(entry: Entry, job: BackendJob) {
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      entry.killSignaled = true;
+      job.handle.kill("SIGTERM");
+      setTimeout(() => job.handle.kill("SIGKILL"), this.killGraceMs).unref?.();
+    }, this.maxRuntimeMs);
+    timer.unref?.();
+
     try {
       const result = await job.collect();
+      clearTimeout(timer);
       if (entry.status !== "running") return;
 
       if (entry.killSignaled) {
@@ -222,7 +246,9 @@ export class SubagentManager {
           exitCode: result.exitCode,
           signal: result.signal,
           resultText: result.resultText || undefined,
-          errorText: result.errorText,
+          errorText: timedOut
+            ? `Killed: exceeded max runtime of ${Math.round(this.maxRuntimeMs / 60_000)}m`
+            : result.errorText,
           output: result.output,
         });
         return;
@@ -246,6 +272,7 @@ export class SubagentManager {
         });
       }
     } catch (error) {
+      clearTimeout(timer);
       if (entry.status !== "running") return;
       const message = error instanceof Error ? error.message : String(error);
       await this.settle(entry, {
@@ -279,9 +306,9 @@ export class SubagentManager {
     }
     entry.job = undefined;
 
-    const consumed = (this.waitInterest.get(entry.id) ?? 0) > 0;
+    const consumed = this.waitInterest.has(entry.id);
     entry.resolveSettle();
-    this.pruneSettled();
+    pruneSettled(this.entries, this.maxTracked, (e) => e.status === "running");
     this.notify();
 
     if (!this.disposed) {
@@ -289,33 +316,12 @@ export class SubagentManager {
     }
   }
 
-  private pruneSettled() {
-    const settled = [...this.entries.values()]
-      .filter((e) => e.status !== "running")
-      .sort((a, b) => (a.settledAt ?? 0) - (b.settledAt ?? 0));
-    while (settled.length > this.maxTracked) {
-      const oldest = settled.shift();
-      if (!oldest) break;
-      this.entries.delete(oldest.id);
-    }
-  }
-
-  private addInterest(id: string) {
-    this.waitInterest.set(id, (this.waitInterest.get(id) ?? 0) + 1);
-  }
-
-  private releaseInterest(id: string) {
-    const n = (this.waitInterest.get(id) ?? 0) - 1;
-    if (n <= 0) this.waitInterest.delete(id);
-    else this.waitInterest.set(id, n);
-  }
-
   async wait(ids: readonly string[], signal?: AbortSignal): Promise<SubagentSnapshot[]> {
     if (this.disposed) throw new Error("Subagent manager is disposed.");
     const unknown = ids.filter((id) => !this.entries.has(id));
     if (unknown.length > 0) throw new Error(`Unknown subagent id(s): ${unknown.join(", ")}`);
 
-    for (const id of ids) this.addInterest(id);
+    for (const id of ids) this.waitInterest.add(id);
     try {
       const waits = ids.map((id) => this.entries.get(id)!.settlePromise);
       await Promise.race([
@@ -323,7 +329,7 @@ export class SubagentManager {
         abortPromise(signal, "Wait aborted; subagents continue in the background."),
       ]);
     } finally {
-      for (const id of ids) this.releaseInterest(id);
+      for (const id of ids) this.waitInterest.release(id);
     }
     return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
   }
@@ -337,7 +343,7 @@ export class SubagentManager {
     for (const id of ids) {
       const entry = this.entries.get(id)!;
       if (entry.status !== "running") continue;
-      this.addInterest(id);
+      this.waitInterest.add(id);
       entry.killSignaled = true;
       entry.job?.handle.kill("SIGTERM");
       setTimeout(() => {
@@ -345,7 +351,7 @@ export class SubagentManager {
       }, this.killGraceMs).unref?.();
       waiting.push(
         entry.settlePromise.finally(() => {
-          this.releaseInterest(id);
+          this.waitInterest.release(id);
         }),
       );
     }
@@ -365,7 +371,7 @@ export class SubagentManager {
     this.disposed = true;
     const running = [...this.entries.values()].filter((e) => e.status === "running");
     for (const entry of running) {
-      this.addInterest(entry.id);
+      this.waitInterest.add(entry.id);
       entry.killSignaled = true;
       entry.job?.handle.kill("SIGTERM");
     }

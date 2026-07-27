@@ -5,7 +5,6 @@ import {
   appendBounded,
   createPiAssistantTextCollector,
   extractCodexLastMessage,
-  extractPiLastAssistantText,
   runProcess,
 } from "./run.ts";
 
@@ -92,28 +91,6 @@ describe("appendBounded", () => {
     const out = appendBounded("abcdef", "ghij", 8);
     assert.equal(out.length, 8);
     assert.equal(out, "cdefghij");
-  });
-});
-
-describe("extractPiLastAssistantText", () => {
-  it("reads last assistant text from jsonl", () => {
-    const stdout = [
-      JSON.stringify({
-        type: "message_end",
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: "first" }],
-        },
-      }),
-      JSON.stringify({
-        type: "message_end",
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: "final answer" }],
-        },
-      }),
-    ].join("\n");
-    assert.equal(extractPiLastAssistantText(stdout), "final answer");
   });
 });
 

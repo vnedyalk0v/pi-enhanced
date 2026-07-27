@@ -45,6 +45,7 @@ export default function (pi: ExtensionAPI) {
   const delivery = new ResultDelivery<TerminalSnapshot>();
 
   const getManager = (ctx: ExtensionContext) => {
+    if (disposed) throw new Error("Background terminal manager is shutting down.");
     if (manager) return manager;
     const sessionKey = ctx.sessionManager.getSessionId();
 

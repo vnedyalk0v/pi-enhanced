@@ -34,6 +34,108 @@ const CrawlParams = Type.Object({
   ),
 });
 
+export type FcSearchDeps = {
+  resolveApiKey: () => string | undefined;
+  firecrawlSearch: typeof firecrawlSearch;
+  duckDuckGoSearch: typeof duckDuckGoSearch;
+};
+
+const defaultFcSearchDeps: FcSearchDeps = {
+  resolveApiKey,
+  firecrawlSearch,
+  duckDuckGoSearch,
+};
+
+/**
+ * Orchestrates fc_search: Firecrawl primary, DuckDuckGo fallback only when the
+ * failure is classified as quota-exhaustion (or there's no API key at all).
+ * Exported with injectable deps so the fallback-trigger contract is testable
+ * without hitting real network providers.
+ */
+export async function runFcSearch(
+  params: { query: string; limit?: number },
+  signal: AbortSignal | undefined,
+  deps: FcSearchDeps = defaultFcSearchDeps,
+) {
+  const limit = params.limit;
+  const key = deps.resolveApiKey();
+
+  type SearchDetails = {
+    provider: string;
+    count: number;
+    creditsUsed?: number;
+    fallbackFrom?: string;
+    firecrawlError?: string;
+    noFirecrawlKey?: boolean;
+  };
+
+  if (key) {
+    try {
+      const result = await deps.firecrawlSearch({
+        apiKey: key,
+        query: params.query,
+        limit,
+        signal,
+      });
+      const details: SearchDetails = {
+        provider: result.provider,
+        count: result.results.length,
+        creditsUsed: result.creditsUsed,
+      };
+      return {
+        content: [{ type: "text" as const, text: formatSearchResult(result) }],
+        details,
+      };
+    } catch (error) {
+      const classified = classifyThrown(error);
+      if (classified.fallbackEligible) {
+        try {
+          const fallback = await deps.duckDuckGoSearch(params.query, { limit, signal });
+          const details: SearchDetails = {
+            provider: fallback.provider,
+            count: fallback.results.length,
+            fallbackFrom: "firecrawl",
+            firecrawlError: classified.kind,
+          };
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: formatSearchResult(fallback),
+              },
+            ],
+            details,
+          };
+        } catch (fallbackError) {
+          const fbMsg =
+            fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+          throw new Error(
+            formatProviderError(classified, "fc_search") + `\nFallback also failed: ${fbMsg}`,
+          );
+        }
+      }
+      throw new Error(formatProviderError(classified, "fc_search"));
+    }
+  }
+
+  // No Firecrawl key: go straight to no-key search.
+  try {
+    const fallback = await deps.duckDuckGoSearch(params.query, { limit, signal });
+    const details: SearchDetails = {
+      provider: fallback.provider,
+      count: fallback.results.length,
+      noFirecrawlKey: true,
+    };
+    return {
+      content: [{ type: "text" as const, text: formatSearchResult(fallback) }],
+      details,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`fc_search failed (no FIRECRAWL_API_KEY and fallback failed): ${message}`);
+  }
+}
+
 export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "fc_search",
@@ -46,86 +148,7 @@ export default function (pi: ExtensionAPI) {
     ],
     parameters: SearchParams,
     async execute(_toolCallId, params, signal) {
-      const limit = params.limit;
-      const key = resolveApiKey();
-
-      type SearchDetails = {
-        provider: string;
-        count: number;
-        creditsUsed?: number;
-        fallbackFrom?: string;
-        firecrawlError?: string;
-        noFirecrawlKey?: boolean;
-      };
-
-      if (key) {
-        try {
-          const result = await firecrawlSearch({
-            apiKey: key,
-            query: params.query,
-            limit,
-            signal,
-          });
-          const details: SearchDetails = {
-            provider: result.provider,
-            count: result.results.length,
-            creditsUsed: result.creditsUsed,
-          };
-          return {
-            content: [{ type: "text" as const, text: formatSearchResult(result) }],
-            details,
-          };
-        } catch (error) {
-          const classified = classifyThrown(error);
-          if (classified.fallbackEligible || classified.kind === "quota") {
-            try {
-              const fallback = await duckDuckGoSearch(params.query, { limit, signal });
-              const details: SearchDetails = {
-                provider: fallback.provider,
-                count: fallback.results.length,
-                fallbackFrom: "firecrawl",
-                firecrawlError: classified.kind,
-              };
-              return {
-                content: [
-                  {
-                    type: "text" as const,
-                    text: formatSearchResult(fallback),
-                  },
-                ],
-                details,
-              };
-            } catch (fallbackError) {
-              const fbMsg =
-                fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
-              throw new Error(
-                formatProviderError(classified, "fc_search") +
-                  `\nFallback also failed: ${fbMsg}`,
-              );
-            }
-          }
-          throw new Error(formatProviderError(classified, "fc_search"));
-        }
-      }
-
-      // No Firecrawl key: go straight to no-key search.
-      try {
-        const fallback = await duckDuckGoSearch(params.query, { limit, signal });
-        const details: SearchDetails = {
-          provider: fallback.provider,
-          count: fallback.results.length,
-          noFirecrawlKey: true,
-        };
-        return {
-          content: [{ type: "text" as const, text: formatSearchResult(fallback) }],
-          details,
-        };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        throw new Error(
-          `fc_search failed (no FIRECRAWL_API_KEY and fallback failed): ${message}`,
-        );
-      }
+      return runFcSearch(params, signal);
     },
   });
 
