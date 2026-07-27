@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { ResultDelivery } from "../shared/delivery.ts";
-import { TOOL_LIMITS_NOTE } from "../shared/text.ts";
+import { TOOL_LIMITS_NOTE, truncateForModel } from "../shared/text.ts";
 import { discoverAgents, type AgentDefinition } from "./agents.ts";
 import type { SubagentSnapshot } from "./domain.ts";
 import {
@@ -213,8 +213,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "sa_agents",
     label: "Subagent agents",
-    description:
-      "List named agent definitions available to sa_spawn's `agent` param (user: ~/.pi/agent/agents/*.md, project: .pi/agents/*.md when trusted).",
+    description: `List named agent definitions available to sa_spawn's \`agent\` param (user: ~/.pi/agent/agents/*.md, project: .pi/agents/*.md when trusted). ${TOOL_LIMITS_NOTE}`,
     promptSnippet: "List available named sa_* agent definitions",
     parameters: Type.Object({}),
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
@@ -222,7 +221,7 @@ export default function (pi: ExtensionAPI) {
       const text =
         agents.length === 0
           ? "No named agent definitions found. sa_spawn without `agent` runs an ad-hoc worker with full default tools."
-          : agents.map(describeAgent).join("\n");
+          : truncateForModel(agents.map(describeAgent).join("\n"));
       return {
         content: [{ type: "text" as const, text }],
         details: { count: agents.length, agents: agents.map((a) => a.name) },
