@@ -68,7 +68,24 @@ npm test               # run when tests exist for the touched area
 
 - Commit only when asked.
 - Stage explicit paths; never `git add -A`.
-- Message: short imperative subject. Body only if the why is non-obvious.
+- Never use `--no-verify`, `--no-gpg-sign`, or otherwise skip hooks/signing unless explicitly told to.
+- Create new commits; do not `--amend` unless explicitly told to (an amend after a hook rejection rewrites the wrong commit).
+
+### Commit messages
+
+Follow [Conventional Commits](https://www.conventionalcommits.org/): `type(scope): subject`, scope optional.
+
+- Types actually used in this repo's history: `feat`, `fix`, `docs`, `chore`, `ci`, `build`, `perf`, `refactor`, `test`. Add a scope (e.g. `fix(workflows): ...`) only when the change is confined to one extension/module; omit it for cross-cutting changes.
+- Subject: imperative mood ("add", not "added"/"adds"), lowercase after the colon, no trailing period, ideally ≤72 chars.
+- Body: blank line after the subject, wrapped ~78 cols. Explain *why*, not a narration of the diff — but when a change touches multiple files/areas, a `path: what changed and why` bullet per area (as in this repo's history) is preferred over prose.
+- Trailer: `Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>` on any commit you author.
+- Trivial commits (a single obvious change) need no body — subject line only.
+
+### Pull requests
+
+- PR title follows the **same Conventional Commits format** as commit subjects — this repo has squash-merge enabled, so the title becomes the final commit message.
+- PR body: a `## Summary` bullet list (what changed and why) and a `## Test plan` checklist (commands run, manual checks). Call out breaking changes and migration steps in their own bullet or section when a change removes or renames anything public (tool params, exported types, config keys).
+- Never push or open a PR without the user explicitly asking first.
 
 ## Conflicts
 
