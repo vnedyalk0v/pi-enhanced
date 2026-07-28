@@ -127,7 +127,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerTool({
     name: "wf_start",
     label: "Workflow start",
-    description: `Start a multi-phase workflow (recon → implement → review → synthesis) using Pi/Codex subagents. Parallel tasks within a phase; structured outputs hand off via on-disk artifacts. Named wf_* to avoid clashes. ${TOOL_LIMITS_NOTE}`,
+    description: `Start a multi-phase workflow (recon → implement → review → synthesis) using pi's native subagents. Parallel tasks within a phase; structured outputs hand off via on-disk artifacts. Named wf_* to avoid clashes. ${TOOL_LIMITS_NOTE}`,
     promptSnippet: "Start a multi-phase workflow (wf_*)",
     promptGuidelines: [
       "Use wf_start for multi-step work that benefits from separate recon, implement, review, and synthesis agents.",

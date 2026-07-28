@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import { afterEach, describe, it } from "node:test";
-import type { BackendJob } from "../subagents/backends/pi.ts";
+import type { BackendJob } from "../subagents/backend.ts";
 import { WorkflowManager } from "./manager.ts";
 
 const managers: WorkflowManager[] = [];
@@ -53,7 +53,7 @@ function fakeJob(result: {
   };
 }
 
-/** Scripted backends: fail recon "relevant", succeed everything else. */
+/** Scripted backend: fail recon "relevant", succeed everything else. */
 function partialFailureStarters() {
   let piCalls = 0;
   return {
@@ -74,6 +74,13 @@ function partialFailureStarters() {
           exitCode: 0,
           resultText: "Structure: src/, tests/, package.json entry at src/index.ts.",
           delayMs: 20,
+        });
+      }
+      if (prompt.includes("task key: implement")) {
+        return fakeJob({
+          exitCode: 0,
+          resultText: "Implemented: added cache layer in src/cache.ts.",
+          delayMs: 25,
         });
       }
       if (prompt.includes("task key: review")) {
@@ -97,16 +104,6 @@ function partialFailureStarters() {
         delayMs: 10,
       });
     },
-    codex: async (opts: { prompt: string }) => {
-      if (opts.prompt.includes("task key: implement")) {
-        return fakeJob({
-          exitCode: 0,
-          resultText: "Implemented: added cache layer in src/cache.ts.",
-          delayMs: 25,
-        });
-      }
-      return fakeJob({ exitCode: 0, resultText: "codex ok", delayMs: 10 });
-    },
   };
 }
 
@@ -129,7 +126,6 @@ describe("WorkflowManager", () => {
     tempDirs.push(artifactsRoot);
     const starters = {
       pi: async () => fakeJob({ exitCode: 0, resultText: "ok", delayMs: 10 }),
-      codex: async () => fakeJob({ exitCode: 0, resultText: "ok", delayMs: 10 }),
     };
     const firstManager = new WorkflowManager({
       artifactsRoot,
@@ -180,8 +176,6 @@ describe("WorkflowManager", () => {
         starters: {
           pi: async () =>
             fakeJob({ exitCode: 0, resultText: "ok scout/review/synth", delayMs: 30 }),
-          codex: async () =>
-            fakeJob({ exitCode: 0, resultText: "ok implement", delayMs: 30 }),
         },
       },
     });
@@ -277,8 +271,6 @@ describe("WorkflowManager", () => {
         starters: {
           pi: async () =>
             fakeJob({ exitCode: 0, resultText: "ok scout/review/synth", delayMs: 10 }),
-          codex: async () =>
-            fakeJob({ exitCode: 0, resultText: "ok implement", delayMs: 10 }),
         },
       },
       onSettled: ({ consumed }) => settled.push(consumed),
@@ -289,9 +281,11 @@ describe("WorkflowManager", () => {
       cwd: process.cwd(),
     });
 
-    for (let i = 0; i < 100; i++) {
+    // finish() sets entry.status synchronously but awaits subagent disposal and
+    // artifact persistence before invoking onSettled, so poll for the callback
+    // itself rather than inferring it from status (which can flip first).
+    for (let i = 0; i < 100 && settled.length === 0; i++) {
       await new Promise((r) => setTimeout(r, 30));
-      if (m.get(snap.id)?.status !== "running") break;
     }
     const after = m.get(snap.id)!;
     assert.ok(after.status === "done" || after.status === "partial");
@@ -303,7 +297,6 @@ describe("WorkflowManager", () => {
       subagentOptions: {
         starters: {
           pi: async () => fakeJob({ exitCode: 0, resultText: "slow", delayMs: 30_000 }),
-          codex: async () => fakeJob({ exitCode: 0, resultText: "slow", delayMs: 30_000 }),
         },
       },
     });
@@ -346,8 +339,6 @@ describe("WorkflowManager", () => {
               delayMs: 10,
             });
           },
-          codex: async () =>
-            fakeJob({ exitCode: 0, resultText: "implemented something", delayMs: 10 }),
         },
       },
     });

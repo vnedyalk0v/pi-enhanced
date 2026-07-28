@@ -28,7 +28,7 @@ Command: `/workflow <goal>` starts the same pipeline.
 ## Behavior
 
 - Each phase may run **parallel** agent tasks; phases run **in order**.
-- Child workers are **Pi or Codex subagents** (same lifecycle as `sa_*`); no second runner.
+- Child workers are pi's own native subagents (same lifecycle as `sa_*`); no second runner.
 - Validated task outputs are stored under the workflow **artifacts directory** (outside the model prompt). Later phases receive compact structured handoffs plus artifact paths.
 - If some agents fail, later phases (including **synthesis**) still run when possible. Status is `partial` when synthesis succeeds after earlier failures; a fallback synthesis is written if the synthesis agent itself fails.
 
