@@ -176,6 +176,28 @@ describe("discoverAgents", () => {
     assert.equal(agents.length, 0);
   });
 
+  it("preserves an explicit empty tools list distinct from an absent one", () => {
+    writeAgent(
+      join(agentDir, "agents"),
+      "no-tools-list.md",
+      "---\nname: notools1\ndescription: explicit empty YAML list\ntools: []\n---\nBody.",
+    );
+    writeAgent(
+      join(agentDir, "agents"),
+      "no-tools-string.md",
+      '---\nname: notools2\ndescription: explicit empty string\ntools: ""\n---\nBody.',
+    );
+
+    // An agent with no tools at all must stay distinguishable from one with
+    // no tools field — the latter means "unrestricted", not the former.
+    const { agents } = discoverAgents(cwd, false, agentDir);
+    assert.equal(agents.length, 2);
+    const byName = new Map(agents.map((a) => [a.name, a]));
+    assert.deepEqual(byName.get("notools1")?.tools, []);
+    assert.deepEqual(byName.get("notools2")?.tools, []);
+    assert.notEqual(byName.get("notools1")?.tools, undefined);
+  });
+
   it("does not climb past the git repo root for project agents", () => {
     const sandbox = mkTempDir("pi-subagent-sandbox-");
     try {
@@ -229,6 +251,40 @@ describe("discoverAgents", () => {
       const result = discoverAgents(projectDir, true, agentDir);
       assert.equal(result.agents.length, 0);
       assert.equal(result.projectAgentsDir, null);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("climbs up to an explicit boundary for a nested working_dir with no git repo", () => {
+    const sandbox = mkTempDir("pi-subagent-nogit-boundary-sandbox-");
+    try {
+      const sessionRoot = join(sandbox, "project");
+      const nestedWorkingDir = join(sessionRoot, "src", "nested");
+      mkdirSync(nestedWorkingDir, { recursive: true });
+
+      writeAgent(
+        join(sessionRoot, CONFIG_DIR_NAME, "agents"),
+        "scout.md",
+        "---\nname: scout\ndescription: at the session root\n---\nBody.",
+      );
+
+      // Without an explicit boundary, discovery never climbs past the
+      // starting (nested) directory — matches sa_spawn's default working_dir.
+      const noBoundary = discoverAgents(nestedWorkingDir, true, agentDir);
+      assert.equal(noBoundary.agents.length, 0);
+
+      // With the session root passed as the boundary (what index.ts does via
+      // isSameTrustedProject + resolveDiscoveryContext), the session root's
+      // agents are found even though cwd is nested deeper.
+      const withBoundary = discoverAgents(nestedWorkingDir, true, agentDir, sessionRoot);
+      assert.equal(withBoundary.agents.length, 1);
+      assert.equal(withBoundary.agents[0].name, "scout");
+
+      // An unrelated boundary (not an ancestor of cwd) must not silently
+      // widen the climb either.
+      const unrelatedBoundary = discoverAgents(nestedWorkingDir, true, agentDir, join(sandbox, "unrelated"));
+      assert.equal(unrelatedBoundary.agents.length, 0);
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }
@@ -391,6 +447,34 @@ describe("isSameTrustedProject", () => {
       mkdirSync(b, { recursive: true });
 
       assert.equal(isSameTrustedProject(a, b), false);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("is true for a nested working_dir inside a trusted project with no git repo at all", () => {
+    const sandbox = mkTempDir("pi-sametrust-nogit-nested-sandbox-");
+    try {
+      const projectRoot = join(sandbox, "project");
+      const nested = join(projectRoot, "src", "nested");
+      mkdirSync(nested, { recursive: true });
+
+      assert.equal(isSameTrustedProject(projectRoot, nested), true);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
+  it("is false for a nested working_dir that has its own distinct git repo", () => {
+    const sandbox = mkTempDir("pi-sametrust-submodule-sandbox-");
+    try {
+      const projectRoot = join(sandbox, "project");
+      const submodule = join(projectRoot, "vendor", "lib");
+      // projectRoot itself has no .git, but the nested directory does — a
+      // distinct repo must not silently inherit the outer directory's trust.
+      mkdirSync(join(submodule, ".git"), { recursive: true });
+
+      assert.equal(isSameTrustedProject(projectRoot, submodule), false);
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }

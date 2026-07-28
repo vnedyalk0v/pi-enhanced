@@ -30,14 +30,25 @@ export type BackendJob = {
 };
 
 /**
+ * Base pi CLI args for model/thinking/tools. Exported (pure, no I/O) so the
+ * tools handling — an explicit empty allowlist (`[]`) must still pass
+ * `--tools ""` (zero tools), not be treated the same as "omitted" (pi's full
+ * default set) — is directly unit-testable.
+ */
+export function buildBaseArgs(options: Pick<PiBackendOptions, "model" | "thinking" | "tools">) {
+  const args = ["--mode", "json", "-p", "--no-session"];
+  if (options.model) args.push("--model", options.model);
+  if (options.thinking) args.push("--thinking", options.thinking);
+  if (options.tools !== undefined) args.push("--tools", options.tools.join(","));
+  return args;
+}
+
+/**
  * Run a self-contained Pi child with isolated session (json + print + no-session).
  * This is pi's own native worker path — no third-party CLI dependency.
  */
 export async function startPiBackend(options: PiBackendOptions): Promise<BackendJob> {
-  const args = ["--mode", "json", "-p", "--no-session"];
-  if (options.model) args.push("--model", options.model);
-  if (options.thinking) args.push("--thinking", options.thinking);
-  if (options.tools && options.tools.length > 0) args.push("--tools", options.tools.join(","));
+  const args = buildBaseArgs(options);
 
   // System guidance: child is a worker; return a clear final answer.
   const systemExtra = [

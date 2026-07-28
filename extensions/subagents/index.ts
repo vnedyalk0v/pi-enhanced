@@ -178,7 +178,7 @@ export default function (pi: ExtensionAPI) {
       let agentDef: AgentDefinition | undefined;
       const agentName = params.agent?.trim();
       if (agentName) {
-        const { agents } = discoverAgents(cwd, projectTrusted);
+        const { agents } = discoverAgents(cwd, projectTrusted, undefined, ctx.cwd);
         agentDef = agents.find((a) => a.name === agentName);
         if (!agentDef) {
           const available = agents.map((a) => a.name).join(", ") || "none";
@@ -241,7 +241,7 @@ export default function (pi: ExtensionAPI) {
     }),
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
       const { cwd, projectTrusted } = resolveDiscoveryContext(ctx, params.working_dir);
-      const { agents } = discoverAgents(cwd, projectTrusted);
+      const { agents } = discoverAgents(cwd, projectTrusted, undefined, ctx.cwd);
       const text =
         agents.length === 0
           ? "No named agent definitions found. sa_spawn without `agent` runs an ad-hoc worker with full default tools."

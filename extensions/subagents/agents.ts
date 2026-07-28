@@ -65,19 +65,6 @@ export function sharesGitRoot(a: string, b: string) {
   return rootA !== null && rootA === findGitRoot(b);
 }
 
-/**
- * True when `workerCwd` is entitled to the same project trust as `sessionCwd`:
- * either it's the very directory pi already resolved trust for (the common
- * no-`working_dir`-override case — including trusted projects that aren't
- * git repos at all, where `sharesGitRoot` can never be true), or both resolve
- * into the same git repository (a monorepo package, "../.." back to the
- * root). A different repo, no repo at all with a different directory, or a
- * symlink resolving outside the repo, never qualifies.
- */
-export function isSameTrustedProject(sessionCwd: string, workerCwd: string) {
-  return canonicalize(sessionCwd) === canonicalize(workerCwd) || sharesGitRoot(sessionCwd, workerCwd);
-}
-
 /** True when `target` is `root` or nested inside it. */
 function isWithinDir(root: string, target: string) {
   const rel = relative(root, target);
@@ -85,20 +72,49 @@ function isWithinDir(root: string, target: string) {
 }
 
 /**
- * Nearest `.pi/agents` at or above cwd. Bounded at the git repo root — or,
- * when cwd isn't in a git repo at all, at cwd itself (there's no other
- * principled boundary for "the trusted project" without a git marker, so an
- * unrelated ancestor's `.pi/agents` — a parent workspace, the home directory —
- * must never be picked up as this directory's project agents). Also rejects
- * a candidate whose real (symlink-resolved) location escapes the directory
- * being scanned — `.pi` or `.pi/agents` itself can be a symlink pointing
- * anywhere on disk, which `statSync`/`readdirSync` would otherwise follow
- * transparently.
+ * True when `workerCwd` is entitled to the same project trust as `sessionCwd`:
+ * either it's the very directory pi already resolved trust for (the common
+ * no-`working_dir`-override case), both resolve into the same git repository
+ * (a monorepo package, "../.." back to the root), or — when the worker
+ * directory isn't governed by any git repo at all — it's nested inside
+ * `sessionCwd` (a subdirectory of an otherwise-ungoverned trusted project).
+ * That last branch can only ever apply when `workerCwd` truly has no git
+ * identity of its own: if `sessionCwd` has a git root, any directory nested
+ * inside it necessarily shares that same root (or a closer one of its own,
+ * e.g. a submodule — a genuinely distinct repo, correctly excluded). A
+ * different repo, an unrelated non-git directory, or a symlink resolving
+ * outside the repo, never qualifies.
  */
-function findNearestProjectAgentsDir(cwd: string) {
+export function isSameTrustedProject(sessionCwd: string, workerCwd: string) {
+  const session = canonicalize(sessionCwd);
+  const worker = canonicalize(workerCwd);
+  if (session === worker) return true;
+  if (sharesGitRoot(sessionCwd, workerCwd)) return true;
+  return findGitRoot(worker) === null && isWithinDir(session, worker);
+}
+
+/**
+ * Nearest `.pi/agents` at or above cwd. Bounded at the git repo root — or,
+ * when cwd isn't in a git repo at all, at `boundary` (defaults to cwd itself:
+ * there's no other principled edge for "the trusted project" without a git
+ * marker, so an unrelated ancestor's `.pi/agents` — a parent workspace, the
+ * home directory — must never be picked up). Callers that already know the
+ * trusted session directory (and have verified, via `isSameTrustedProject`,
+ * that cwd is nested inside it) pass it explicitly so a nested working_dir in
+ * a git-less trusted project can still see the session root's agents. Also
+ * rejects a candidate whose real (symlink-resolved) location escapes the
+ * directory being scanned — `.pi` or `.pi/agents` itself can be a symlink
+ * pointing anywhere on disk, which `statSync`/`readdirSync` would otherwise
+ * follow transparently.
+ */
+function findNearestProjectAgentsDir(cwd: string, boundary: string) {
   const start = canonicalize(cwd);
   const gitRoot = findGitRoot(start);
-  const stopAt = gitRoot ?? start;
+  const canonicalBoundary = canonicalize(boundary);
+  // Guard against a boundary that isn't actually an ancestor of start (e.g.
+  // trust wasn't established, or a caller passes something unrelated) — fall
+  // back to the safe default of never climbing past the starting directory.
+  const stopAt = gitRoot ?? (isWithinDir(canonicalBoundary, start) ? canonicalBoundary : start);
   let dir = start;
   while (true) {
     const candidate = canonicalize(join(dir, CONFIG_DIR_NAME, "agents"));
@@ -168,7 +184,11 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentDefinition[] 
       agents.push({
         name,
         description,
-        tools: tools && tools.length > 0 ? tools : undefined,
+        // Keep an explicit empty list (`tools: []` / `tools: ""`) distinct
+        // from an absent field — the former means "no tools at all" and must
+        // not collapse into "unrestricted" (backend.ts passes `--tools ""`
+        // for an empty array vs. omitting the flag entirely for `undefined`).
+        tools,
         model: typeof frontmatter.model === "string" ? frontmatter.model : undefined,
         thinking: typeof frontmatter.thinking === "string" ? frontmatter.thinking : undefined,
         systemPrompt: body,
@@ -188,14 +208,21 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentDefinition[] 
  * Discover named subagent definitions: user-level (~/.pi/agent/agents, always) and
  * project-level (.pi/agents, only for trusted projects — these are repo-controlled
  * prompts). Project agents override user agents with the same name.
+ *
+ * `discoveryBoundary` (default: cwd) bounds project-agent discovery when cwd
+ * isn't in a git repo. Pass the trusted session directory when cwd is a
+ * `working_dir`-resolved descendant of it (per `isSameTrustedProject`) so a
+ * nested working_dir in a git-less trusted project still finds the session
+ * root's agents.
  */
 export function discoverAgents(
   cwd: string,
   projectTrusted: boolean,
   agentDir: string = getAgentDir(),
+  discoveryBoundary: string = cwd,
 ): AgentDiscovery {
   const userAgents = loadAgentsFromDir(join(agentDir, "agents"), "user");
-  const projectAgentsDir = findNearestProjectAgentsDir(cwd);
+  const projectAgentsDir = findNearestProjectAgentsDir(cwd, discoveryBoundary);
   const projectAgents =
     projectTrusted && projectAgentsDir ? loadAgentsFromDir(projectAgentsDir, "project") : [];
 
