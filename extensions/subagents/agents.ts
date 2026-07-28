@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync, type Dirent } from "node:fs";
-import { dirname, isAbsolute, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { CONFIG_DIR_NAME, getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 
 export type AgentSource = "user" | "project";
@@ -65,10 +65,16 @@ export function sharesGitRoot(a: string, b: string) {
   return rootA !== null && rootA === findGitRoot(b);
 }
 
-/** True when `target` is `root` or nested inside it. */
+/**
+ * True when `target` is `root` or nested inside it. Checks for the actual
+ * parent-traversal token (`rel === ".."` or `rel` starting with `..` + the
+ * path separator), not merely a string starting with two dots — a legitimate
+ * entry name like `..cache` also starts with "..", and `path.relative()`
+ * returns it bare (no leading `./`) for a direct child.
+ */
 function isWithinDir(root: string, target: string) {
   const rel = relative(root, target);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 
 /**

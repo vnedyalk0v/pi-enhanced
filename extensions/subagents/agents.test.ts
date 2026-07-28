@@ -465,6 +465,22 @@ describe("isSameTrustedProject", () => {
     }
   });
 
+  it("is true for a nested directory whose name merely starts with two dots", () => {
+    const sandbox = mkTempDir("pi-sametrust-dotdot-name-sandbox-");
+    try {
+      const projectRoot = join(sandbox, "project");
+      // A real, legitimate directory name — not the ".." parent-traversal
+      // token — but path.relative() returns it bare ("..cache"), which a
+      // naive `startsWith("..")` check would wrongly treat as an escape.
+      const dotDotNamed = join(projectRoot, "..cache");
+      mkdirSync(dotDotNamed, { recursive: true });
+
+      assert.equal(isSameTrustedProject(projectRoot, dotDotNamed), true);
+    } finally {
+      rmSync(sandbox, { recursive: true, force: true });
+    }
+  });
+
   it("is false for a nested working_dir that has its own distinct git repo", () => {
     const sandbox = mkTempDir("pi-sametrust-submodule-sandbox-");
     try {
