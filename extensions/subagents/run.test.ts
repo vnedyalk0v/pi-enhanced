@@ -1,12 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { normalizeCodexModelId } from "./backends/codex.ts";
-import {
-  appendBounded,
-  createPiAssistantTextCollector,
-  extractCodexLastMessage,
-  runProcess,
-} from "./run.ts";
+import { appendBounded, createPiAssistantTextCollector, runProcess } from "./run.ts";
 
 function timeout(message: string) {
   return new Promise<never>((_, reject) => {
@@ -134,31 +128,5 @@ describe("createPiAssistantTextCollector", () => {
 
     assert.equal(collector.push(assistantEvent("final")), "");
     assert.equal(collector.finish(), "final");
-  });
-});
-
-describe("extractCodexLastMessage", () => {
-  it("prefers last-message file contents", () => {
-    assert.equal(extractCodexLastMessage("", "from file"), "from file");
-  });
-
-  it("parses last_agent_message from jsonl", () => {
-    const stdout = JSON.stringify({ type: "turn.completed", last_agent_message: "done" });
-    assert.equal(extractCodexLastMessage(stdout), "done");
-  });
-});
-
-describe("normalizeCodexModelId", () => {
-  it("strips openai-codex provider prefix", () => {
-    assert.equal(normalizeCodexModelId("openai-codex/gpt-5.6-sol"), "gpt-5.6-sol");
-  });
-
-  it("leaves bare model ids unchanged", () => {
-    assert.equal(normalizeCodexModelId("gpt-5.6-sol"), "gpt-5.6-sol");
-  });
-
-  it("returns undefined for empty", () => {
-    assert.equal(normalizeCodexModelId(undefined), undefined);
-    assert.equal(normalizeCodexModelId("  "), undefined);
   });
 });

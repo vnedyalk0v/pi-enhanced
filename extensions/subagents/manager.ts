@@ -2,15 +2,8 @@ import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { InterestTracker, pruneSettled } from "../shared/lifecycle.ts";
 import { abortPromise, sleep } from "../shared/time.ts";
-import { startCodexBackend } from "./backends/codex.ts";
-import { startPiBackend, type BackendJob } from "./backends/pi.ts";
-import type {
-  BackendName,
-  SettledInfo,
-  SpawnOptions,
-  SubagentSnapshot,
-  SubagentStatus,
-} from "./domain.ts";
+import { startPiBackend, type BackendJob } from "./backend.ts";
+import type { SettledInfo, SpawnOptions, SubagentSnapshot, SubagentStatus } from "./domain.ts";
 import { appendBounded } from "./run.ts";
 
 const DEFAULT_MAX_RUNNING = 4;
@@ -23,7 +16,7 @@ const OUTPUT_TAIL_CHARS = 24_000;
 
 type Entry = {
   id: string;
-  backend: BackendName;
+  agent?: string;
   title: string;
   prompt: string;
   cwd: string;
@@ -52,10 +45,9 @@ export type ManagerOptions = {
   maxRuntimeMs?: number;
   onSettled?: (info: SettledInfo) => void;
   onChange?: () => void;
-  /** Inject backends for tests. */
+  /** Inject the backend starter for tests. */
   starters?: {
     pi?: typeof startPiBackend;
-    codex?: typeof startCodexBackend;
   };
 };
 
@@ -71,10 +63,7 @@ export class SubagentManager {
   private readonly maxRuntimeMs: number;
   private onSettled?: (info: SettledInfo) => void;
   private onChange?: () => void;
-  private starters: {
-    pi: typeof startPiBackend;
-    codex: typeof startCodexBackend;
-  };
+  private readonly starter: typeof startPiBackend;
 
   constructor(options: ManagerOptions = {}) {
     this.maxRunning = options.maxRunning ?? DEFAULT_MAX_RUNNING;
@@ -83,10 +72,7 @@ export class SubagentManager {
     this.maxRuntimeMs = options.maxRuntimeMs ?? DEFAULT_MAX_RUNTIME_MS;
     this.onSettled = options.onSettled;
     this.onChange = options.onChange;
-    this.starters = {
-      pi: options.starters?.pi ?? startPiBackend,
-      codex: options.starters?.codex ?? startCodexBackend,
-    };
+    this.starter = options.starters?.pi ?? startPiBackend;
   }
 
   private notify() {
@@ -104,7 +90,7 @@ export class SubagentManager {
   private snapshotOf(entry: Entry): SubagentSnapshot {
     return {
       id: entry.id,
-      backend: entry.backend,
+      agent: entry.agent,
       title: entry.title,
       prompt: entry.prompt,
       cwd: entry.cwd,
@@ -138,9 +124,6 @@ export class SubagentManager {
         `Concurrency limit: at most ${this.maxRunning} subagents may run at once.`,
       );
     }
-    if (options.backend !== "pi" && options.backend !== "codex") {
-      throw new Error(`Unsupported backend: ${options.backend}. Only pi and codex are allowed.`);
-    }
 
     const prompt = options.prompt.trim();
     if (!prompt) throw new Error("prompt must not be empty");
@@ -153,8 +136,7 @@ export class SubagentManager {
     this.startingCount += 1;
     this.counter += 1;
     const id = `sa-${this.counter}`;
-    const title =
-      (options.title?.trim().slice(0, 80) || `${options.backend} subagent ${id}`);
+    const title = options.title?.trim().slice(0, 80) || `subagent ${id}`;
 
     let resolveSettle!: () => void;
     const settlePromise = new Promise<void>((r) => {
@@ -163,7 +145,7 @@ export class SubagentManager {
 
     const entry: Entry = {
       id,
-      backend: options.backend,
+      agent: options.agent,
       title,
       prompt,
       cwd,
@@ -184,27 +166,19 @@ export class SubagentManager {
 
     let job: BackendJob;
     try {
-      if (options.backend === "pi") {
-        job = await this.starters.pi({
-          prompt,
-          cwd,
-          model: options.model,
-          thinking: options.thinking,
-          onOutput,
-        });
-      } else {
-        job = await this.starters.codex({
-          prompt,
-          cwd,
-          model: options.model,
-          reasoningEffort: options.thinking ?? "high",
-          onOutput,
-        });
-      }
+      job = await this.starter({
+        prompt,
+        cwd,
+        model: options.model,
+        thinking: options.thinking,
+        tools: options.tools,
+        systemPromptAppend: options.systemPromptAppend,
+        onOutput,
+      });
     } catch (error) {
       this.startingCount -= 1;
       const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`Failed to start ${options.backend} subagent: ${message}`);
+      throw new Error(`Failed to start subagent: ${message}`);
     }
 
     if (this.disposed) {

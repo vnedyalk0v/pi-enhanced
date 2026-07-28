@@ -1,10 +1,9 @@
-export type BackendName = "pi" | "codex";
-
 export type SubagentStatus = "running" | "done" | "failed" | "killed";
 
 export type SubagentSnapshot = {
   id: string;
-  backend: BackendName;
+  /** Named agent definition used, if any (ad-hoc worker when omitted). */
+  agent?: string;
   title: string;
   prompt: string;
   cwd: string;
@@ -24,12 +23,17 @@ export type SubagentSnapshot = {
 };
 
 export type SpawnOptions = {
-  backend: BackendName;
+  /** Named agent definition to apply (tools/model/system prompt), if any. */
+  agent?: string;
   prompt: string;
   title?: string;
   cwd: string;
   model?: string;
   thinking?: string;
+  /** Tool allowlist from the agent definition, if restricted. */
+  tools?: string[];
+  /** Agent definition's system prompt body, appended to the worker guidance. */
+  systemPromptAppend?: string;
 };
 
 export type SettledInfo = {

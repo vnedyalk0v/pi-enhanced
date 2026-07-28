@@ -1,5 +1,3 @@
-import type { BackendName } from "../subagents/domain.ts";
-
 export type WorkflowStatus =
   | "running"
   | "done"
@@ -15,7 +13,6 @@ export type PhaseRunStatus = "pending" | "running" | "done" | "failed";
 export type WorkflowTaskDef = {
   key: string;
   title: string;
-  backend: BackendName;
   /** Role instructions embedded in the child prompt. */
   role: string;
   model?: string;
@@ -39,7 +36,6 @@ export type StructuredOutput = {
 export type TaskRunSnapshot = {
   key: string;
   title: string;
-  backend: BackendName;
   status: TaskRunStatus;
   subagentId?: string;
   summary?: string;

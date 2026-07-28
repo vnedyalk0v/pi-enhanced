@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
-import type { BackendJob } from "./backends/pi.ts";
+import type { BackendJob } from "./backend.ts";
 import { SubagentManager, type ManagerOptions } from "./manager.ts";
 
 const managers: SubagentManager[] = [];
@@ -64,7 +64,6 @@ describe("SubagentManager", () => {
     });
 
     const snap = await m.spawn({
-      backend: "pi",
       prompt: "say hi",
       title: "hi",
       cwd: process.cwd(),
@@ -89,7 +88,6 @@ describe("SubagentManager", () => {
       onSettled: ({ consumed }) => settled.push(consumed),
     });
     const snap = await m.spawn({
-      backend: "pi",
       prompt: "x",
       cwd: process.cwd(),
     });
@@ -102,14 +100,13 @@ describe("SubagentManager", () => {
     assert.equal(settled.at(-1), false);
   });
 
-  it("rejects non-pi/codex is compile-time; cancel kills running", async () => {
+  it("cancel kills a running subagent", async () => {
     const m = createManager({
       starters: {
         pi: async () => fakeJob({ exitCode: 0, resultText: "late", delayMs: 5000 }),
       },
     });
     const snap = await m.spawn({
-      backend: "pi",
       prompt: "long",
       cwd: process.cwd(),
     });
@@ -124,9 +121,9 @@ describe("SubagentManager", () => {
         pi: async () => fakeJob({ exitCode: 0, resultText: "a", delayMs: 2000 }),
       },
     });
-    await m.spawn({ backend: "pi", prompt: "one", cwd: process.cwd() });
+    await m.spawn({ prompt: "one", cwd: process.cwd() });
     await assert.rejects(
-      () => m.spawn({ backend: "pi", prompt: "two", cwd: process.cwd() }),
+      () => m.spawn({ prompt: "two", cwd: process.cwd() }),
       /Concurrency limit/,
     );
   });
@@ -148,10 +145,10 @@ describe("SubagentManager", () => {
       },
     });
 
-    const first = m.spawn({ backend: "pi", prompt: "one", cwd: process.cwd() });
+    const first = m.spawn({ prompt: "one", cwd: process.cwd() });
     await Promise.resolve();
     await assert.rejects(
-      () => m.spawn({ backend: "pi", prompt: "two", cwd: process.cwd() }),
+      () => m.spawn({ prompt: "two", cwd: process.cwd() }),
       /Concurrency limit/,
     );
 
@@ -174,11 +171,10 @@ describe("SubagentManager", () => {
     });
 
     await assert.rejects(
-      () => m.spawn({ backend: "pi", prompt: "first", cwd: process.cwd() }),
+      () => m.spawn({ prompt: "first", cwd: process.cwd() }),
       /starter failed/,
     );
     const started = await m.spawn({
-      backend: "pi",
       prompt: "second",
       cwd: process.cwd(),
     });
@@ -186,18 +182,16 @@ describe("SubagentManager", () => {
     assert.equal(m.get(started.id)?.status, "done");
   });
 
-  it("lists both backends", async () => {
+  it("tracks the named agent on the snapshot", async () => {
     const m = createManager({
       starters: {
         pi: async () => fakeJob({ exitCode: 0, resultText: "p", delayMs: 10 }),
-        codex: async () => fakeJob({ exitCode: 0, resultText: "c", delayMs: 10 }),
       },
     });
-    await m.spawn({ backend: "pi", prompt: "p", cwd: process.cwd() });
-    await m.spawn({ backend: "codex", prompt: "c", cwd: process.cwd() });
-    const list = m.list();
-    assert.equal(list.length, 2);
-    assert.deepEqual(list.map((s) => s.backend).sort(), ["codex", "pi"]);
+    const snap = await m.spawn({ agent: "scout", prompt: "p", cwd: process.cwd() });
+    assert.equal(snap.agent, "scout");
+    const adhoc = await m.spawn({ prompt: "q", cwd: process.cwd() });
+    assert.equal(adhoc.agent, undefined);
   });
 
   it("failed exit becomes failed status", async () => {
@@ -207,7 +201,7 @@ describe("SubagentManager", () => {
           fakeJob({ exitCode: 2, resultText: "", errorText: "boom", delayMs: 20 }),
       },
     });
-    const snap = await m.spawn({ backend: "pi", prompt: "f", cwd: process.cwd() });
+    const snap = await m.spawn({ prompt: "f", cwd: process.cwd() });
     await m.wait([snap.id]);
     assert.equal(m.get(snap.id)?.status, "failed");
     assert.equal(m.get(snap.id)?.exitCode, 2);

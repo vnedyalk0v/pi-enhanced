@@ -8,7 +8,6 @@ export const REPO_TASK_PHASES: Array<{ name: string; tasks: WorkflowTaskDef[] }>
       {
         key: "structure",
         title: "Map repository structure",
-        backend: "pi",
         role: [
           "You are a reconnaissance scout.",
           "Map the repository layout: entry points, packages, key modules, and how the project is built/tested.",
@@ -19,7 +18,6 @@ export const REPO_TASK_PHASES: Array<{ name: string; tasks: WorkflowTaskDef[] }>
       {
         key: "relevant",
         title: "Find goal-relevant code",
-        backend: "pi",
         role: [
           "You are a reconnaissance scout focused on the goal.",
           "Find files, symbols, and existing patterns relevant to the goal.",
@@ -35,7 +33,6 @@ export const REPO_TASK_PHASES: Array<{ name: string; tasks: WorkflowTaskDef[] }>
       {
         key: "implement",
         title: "Implement the goal",
-        backend: "codex",
         thinking: "high",
         role: [
           "You are the implementation worker.",
@@ -53,7 +50,6 @@ export const REPO_TASK_PHASES: Array<{ name: string; tasks: WorkflowTaskDef[] }>
       {
         key: "review",
         title: "Review the work",
-        backend: "pi",
         role: [
           "You are a critical reviewer.",
           "Review the implementation against the goal and recon notes.",
@@ -70,7 +66,6 @@ export const REPO_TASK_PHASES: Array<{ name: string; tasks: WorkflowTaskDef[] }>
       {
         key: "synthesize",
         title: "Synthesize final result",
-        backend: "pi",
         role: [
           "You are the synthesis agent.",
           "Produce ONE final report for the parent agent.",

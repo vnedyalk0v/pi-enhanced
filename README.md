@@ -2,12 +2,12 @@
 
 `pi-enhanced` is an opinionated [Pi coding agent](https://pi.dev/) package for
 repository work. It adds focused tools, background execution, web research,
-Pi/Codex subagents, structured workflows, skills, and a GitHub-inspired theme
+native pi subagents, structured workflows, skills, and a GitHub-inspired theme
 while keeping every extension independently disableable.
 
 The package follows three boundaries:
 
-- subagent backends are Pi and Codex only;
+- subagents are pi's own worker processes only — no third-party agent CLI (no Codex, no Claude);
 - Firecrawl is the primary research provider, with a no-key search fallback;
 - implementations are original and use Pi's public extension primitives.
 
@@ -18,7 +18,6 @@ The package follows three boundaries:
 | Pi | `0.82.1` |
 | Node.js | `24.12.0` or newer |
 | npm and Git | Available on `PATH` |
-| Codex CLI | Optional; required only for Codex subagents and workflow implementation |
 
 Node `24.12.0` is the minimum because its built-in TypeScript type stripping is
 stable. The package does not need a TypeScript runtime dependency.
@@ -61,7 +60,7 @@ before installation and use it only in trusted working directories.
 | Git and UI | `/git-info`, `github-dark-default` | Footer branch status and an automatically selected GitHub-style theme |
 | Background terminals | `bg_start`, `bg_status`, `bg_list`, `bg_kill`, `/ps` | Long-running non-interactive commands with completion delivery and full spill logs |
 | Web research | `fc_search`, `fc_scrape`, `fc_crawl` | Firecrawl search/scrape/crawl with DuckDuckGo fallback for no-key or quota-exhausted search |
-| Subagents | `sa_spawn`, `sa_status`, `sa_list`, `sa_wait`, `sa_cancel`, `/btw` | Isolated Pi or Codex workers with bounded concurrency |
+| Subagents | `sa_spawn`, `sa_agents`, `sa_status`, `sa_list`, `sa_wait`, `sa_cancel`, `/btw` | Isolated native pi workers (ad-hoc or named agent definitions) with bounded concurrency |
 | Workflows | `wf_start`, `wf_status`, `wf_list`, `wf_wait`, `wf_cancel`, `/workflow` | Reconnaissance, implementation, review, and synthesis with validated handoffs and artifacts |
 
 The package also provides on-demand skills for background terminals,
@@ -144,15 +143,16 @@ Workflow artifacts use private OS-temporary directories reported by
 cross-machine storage.
 
 Background commands and child agents inherit the Pi process environment and
-run in the requested working directory. Codex children use its
-`workspace-write` sandbox with approvals disabled, but this is a guardrail, not
-a security boundary. Treat repository contents, agent output, workflow
-handoffs, and artifacts as untrusted evidence.
+run in the requested working directory. Subagent sandboxing is whatever the
+`pi` CLI itself provides; this is a guardrail, not a security boundary. Treat
+repository contents, agent output, workflow handoffs, and artifacts as
+untrusted evidence. Project-local agent definitions (`.pi/agents/*.md`) are
+repo-controlled prompts — they only load for trusted projects, and `sa_spawn`
+confirms before running one interactively.
 
 ## Troubleshooting
 
-- `pi` or `codex` not found: install the CLI and confirm it is on `PATH`.
-  `codex` is unnecessary when using only Pi workers.
+- `pi` not found: install the CLI and confirm it is on `PATH`.
 - `fd` or `rg` installation fails: check HTTPS access, `tar`, directory
   permissions, and the reported digest; install manually on unsupported
   platforms.

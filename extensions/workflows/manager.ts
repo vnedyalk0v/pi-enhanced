@@ -173,7 +173,6 @@ export class WorkflowManager {
           {
             key: t.key,
             title: t.title,
-            backend: t.backend,
             status: "pending" as const,
           } satisfies TaskRunSnapshot,
         ]),
@@ -341,21 +340,11 @@ export class WorkflowManager {
         prior: entry.priorOutputs,
       });
 
-      // Match sa_spawn defaults: Pi inherits parent provider/id; Codex must not —
-      // parent labels look like "openai-codex/gpt-…" and Codex CLI rejects that form.
-      let model: string | undefined;
-      let thinking: string | undefined;
-      if (task.backend === "codex") {
-        model = task.model ?? (process.env.CODEX_DEFAULT_MODEL?.trim() || undefined);
-        thinking = task.thinking ?? "high";
-      } else {
-        model = task.model ?? entry.model;
-        thinking = task.thinking ?? entry.thinking;
-      }
+      const model = task.model ?? entry.model;
+      const thinking = task.thinking ?? entry.thinking;
 
       try {
         const snap = await entry.subagents.spawn({
-          backend: task.backend,
           prompt,
           title: `${entry.id}/${phaseName}/${task.key}`,
           cwd: entry.cwd,

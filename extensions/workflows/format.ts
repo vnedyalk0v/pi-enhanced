@@ -39,7 +39,7 @@ export function buildStatusResult(snap: WorkflowSnapshot) {
         : task.summary
           ? ` — ${truncateOneLine(task.summary, 80)}`
           : "";
-      lines.push(`  ${statusIcon(task.status)} ${task.key} (${task.backend}) [${task.status}]${sa}${extra}`);
+      lines.push(`  ${statusIcon(task.status)} ${task.key} [${task.status}]${sa}${extra}`);
     }
   }
   if (snap.finalArtifactPath) {
