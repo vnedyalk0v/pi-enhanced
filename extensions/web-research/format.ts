@@ -112,7 +112,7 @@ export function formatCrawlResult(result: CrawlResult): string {
   if (!state.truncatedTotalBytes) return content.trimEnd();
   return (
     content +
-    `\n\n${formatTruncationNotice("head", state.bytes, state.truncatedTotalBytes)}`
+    `\n\n${formatTruncationNotice("head", state.bytes, state.truncatedTotalBytes, true)}`
   );
 }
 

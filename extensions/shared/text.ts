@@ -27,9 +27,17 @@ export function truncateForModel(text: string, options?: { mode?: "head" | "tail
   );
 }
 
-export function formatTruncationNotice(mode: "head" | "tail", outputBytes: number, totalBytes: number) {
+export function formatTruncationNotice(
+  mode: "head" | "tail",
+  outputBytes: number,
+  totalBytes: number,
+  totalIsMinimum = false,
+) {
   const where = mode === "head" ? "first" : "last";
-  return `[truncated: ${where} ${formatSize(outputBytes)} of ${formatSize(totalBytes)}]`;
+  return (
+    `[truncated: ${where} ${formatSize(outputBytes)} of ` +
+    `${totalIsMinimum ? "at least " : ""}${formatSize(totalBytes)}]`
+  );
 }
 
 export function tailText(s: string, n: number) {

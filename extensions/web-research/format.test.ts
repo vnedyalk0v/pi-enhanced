@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   DEFAULT_MAX_BYTES,
   DEFAULT_MAX_LINES,
+  formatSize,
 } from "@earendil-works/pi-coding-agent";
 import {
   formatCrawlResult,
@@ -84,7 +85,7 @@ describe("web research formatting", () => {
       url: "https://later.example",
       get markdown() {
         laterMarkdownReads++;
-        return "must not be read";
+        return "x".repeat(DEFAULT_MAX_BYTES * 100);
       },
     };
     const pages: CrawlPage[] = [
@@ -96,14 +97,20 @@ describe("web research formatting", () => {
       laterPage,
     ];
 
-    assert.match(
-      formatCrawlResult({
-        provider: "firecrawl",
-        url: "https://root.example",
-        status: "completed",
-        pages,
-      }),
-      /\[truncated: first .+ of .+\]$/,
+    const output = formatCrawlResult({
+      provider: "firecrawl",
+      url: "https://root.example",
+      status: "completed",
+      pages,
+    });
+    const marker = "\n\n[truncated:";
+    const noticeAt = output.lastIndexOf(marker);
+    const content = output.slice(0, noticeAt);
+    const consumedBytes = Buffer.byteLength(content);
+    const minimumBytes = consumedBytes + Buffer.byteLength("\nline");
+    assert.equal(
+      output.slice(noticeAt + 2),
+      `[truncated: first ${formatSize(consumedBytes)} of at least ${formatSize(minimumBytes)}]`,
     );
     assert.equal(laterMarkdownReads, 0);
   });
