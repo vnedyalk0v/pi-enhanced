@@ -615,10 +615,10 @@ export class WorkflowManager {
         Promise.all(waits),
         abortPromise(signal, "Wait aborted; workflows continue in the background."),
       ]);
+      return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
     } finally {
       for (const id of ids) this.waitInterest.release(id);
     }
-    return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
   }
 
   async cancel(ids: readonly string[], signal?: AbortSignal): Promise<WorkflowSnapshot[]> {

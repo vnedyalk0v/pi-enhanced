@@ -5,7 +5,7 @@ import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "@earendil-work
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { type BinaryName, ensureBinary } from "./binaries.ts";
-import { buildFdArgs, buildRgArgs, runBinary } from "./run.ts";
+import { buildFdArgs, buildRgArgs, runBinary, type RunResult } from "./run.ts";
 
 const FdParams = Type.Object({
   pattern: Type.String({
@@ -74,14 +74,20 @@ export default function (pi: ExtensionAPI) {
   const spillDirectories = new Set<string>();
   let shuttingDown = false;
 
-  async function trackSpill(fullOutputPath?: string) {
-    if (!fullOutputPath) return;
+  async function trackSpill(result: RunResult) {
+    const { fullOutputPath } = result;
+    if (!fullOutputPath) return result;
     const directory = dirname(fullOutputPath);
     if (shuttingDown) {
       await rm(directory, { recursive: true, force: true }).catch(() => {});
-    } else {
-      spillDirectories.add(directory);
+      return {
+        ...result,
+        text: result.text.replace(` Full output: ${fullOutputPath}`, ""),
+        fullOutputPath: undefined,
+      };
     }
+    spillDirectories.add(directory);
+    return result;
   }
 
   pi.on("session_shutdown", async () => {
@@ -131,8 +137,9 @@ export default function (pi: ExtensionAPI) {
           if (ctx.hasUI) ctx.ui.notify(msg, "info");
         });
         const args = buildFdArgs(params);
-        const result = await runBinary(binary, args, ctx.cwd, "pi-fd", signal);
-        await trackSpill(result.fullOutputPath);
+        const result = await trackSpill(
+          await runBinary(binary, args, ctx.cwd, "pi-fd", signal),
+        );
         if (result.exitCode !== 0 && !result.hasOutput) {
           return {
             content: [
@@ -185,8 +192,9 @@ export default function (pi: ExtensionAPI) {
           if (ctx.hasUI) ctx.ui.notify(msg, "info");
         });
         const args = buildRgArgs(params);
-        const result = await runBinary(binary, args, ctx.cwd, "pi-rg", signal);
-        await trackSpill(result.fullOutputPath);
+        const result = await trackSpill(
+          await runBinary(binary, args, ctx.cwd, "pi-rg", signal),
+        );
         // rg exits 1 when no matches
         if (result.exitCode === 1 && !result.hasOutput) {
           return {

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { describe, it } from "node:test";
@@ -67,7 +67,10 @@ describe("file-search lifecycle", () => {
   });
 
   it("removes spill output created after shutdown begins", async () => {
-    const binDir = await mkdtemp(join(tmpdir(), "pi-file-search-late-bin-"));
+    const root = await mkdtemp(join(tmpdir(), "pi-file-search-late-"));
+    const binDir = join(root, "bin");
+    const spillRoot = join(root, "tmp");
+    await Promise.all([mkdir(binDir), mkdir(spillRoot)]);
     const binary = join(binDir, "rg");
     const readyPath = join(binDir, "ready");
     const releasePath = join(binDir, "release");
@@ -87,14 +90,19 @@ const timer = setInterval(() => {
 
     const { handlers, tools } = captureExtension();
     const originalPath = process.env.PATH;
+    const originalTmpdir = process.env.TMPDIR;
     process.env.PATH = `${binDir}${delimiter}${originalPath ?? ""}`;
+    process.env.TMPDIR = spillRoot;
     try {
       const execution = tools
         .get("rg")!
         .execute("test", { pattern: "." }, undefined, undefined, {
           cwd: tmpdir(),
           hasUI: false,
-        }) as Promise<{ details: { fullOutputPath?: string } }>;
+        }) as Promise<{
+          content: Array<{ type: string; text: string }>;
+          details: { fullOutputPath?: string };
+        }>;
 
       for (let i = 0; i < 100; i++) {
         try {
@@ -109,13 +117,15 @@ const timer = setInterval(() => {
       await writeFile(releasePath, "");
 
       const result = await execution;
-      const fullOutputPath = result.details.fullOutputPath;
-      assert.ok(fullOutputPath);
-      await assert.rejects(stat(fullOutputPath), { code: "ENOENT" });
+      assert.equal(result.details.fullOutputPath, undefined);
+      assert.doesNotMatch(result.content[0]?.text ?? "", /Full output:/);
+      assert.deepEqual(await readdir(spillRoot), []);
     } finally {
       process.env.PATH = originalPath;
+      if (originalTmpdir === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = originalTmpdir;
       await handlers.get("session_shutdown")!({});
-      await rm(binDir, { recursive: true, force: true });
+      await rm(root, { recursive: true, force: true });
     }
   });
 });
