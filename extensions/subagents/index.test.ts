@@ -14,6 +14,11 @@ type ToolResult = {
   content: Array<{ type: string; text: string }>;
   details: Record<string, unknown>;
 };
+type SpawnCapture = {
+  args: string[];
+  cwd: string;
+  systemPrompt: string;
+};
 
 function captureExtension(extension: (pi: ExtensionAPI) => void) {
   const handlers = new Map<string, Handler>();
@@ -42,6 +47,16 @@ function assertToolResult(value: unknown): asserts value is ToolResult {
   assert.ok(value && typeof value === "object");
   assert.ok("content" in value && Array.isArray(value.content));
   assert.ok("details" in value && value.details && typeof value.details === "object");
+}
+
+async function readSpawnCapture(path: string) {
+  return JSON.parse(await readFile(path, "utf8")) as SpawnCapture;
+}
+
+function assertArg(args: string[], flag: string, value: string) {
+  const index = args.indexOf(flag);
+  assert.notEqual(index, -1);
+  assert.equal(args[index + 1], value);
 }
 
 const ctx = {
@@ -96,7 +111,9 @@ it(
     const escapedWorkingDir = join(project, "escaped");
     const agentDir = join(root, "agent-dir");
     const binDir = join(root, "bin");
-    const capturePath = join(root, "spawn.json");
+    const explicitCapturePath = join(root, "spawn-explicit.json");
+    const agentCapturePath = join(root, "spawn-agent.json");
+    const parentCapturePath = join(root, "spawn-parent.json");
     await Promise.all([
       mkdir(join(project, ".git"), { recursive: true }),
       mkdir(join(project, ".pi", "agents"), { recursive: true }),
@@ -167,10 +184,10 @@ setTimeout(() => process.stdout.end(line.slice(23)), 20);
     const previousCapture = process.env.PI_ENHANCED_CAPTURE;
     process.env.PATH = `${binDir}${delimiter}${previousPath ?? ""}`;
     process.env.PI_CODING_AGENT_DIR = agentDir;
-    process.env.PI_ENHANCED_CAPTURE = capturePath;
+    process.env.PI_ENHANCED_CAPTURE = explicitCapturePath;
 
     const confirmations: Array<{ title: string; message: string; timeout?: number }> = [];
-    const confirmationAnswers = [false, true];
+    const confirmationAnswers = [false, true, true];
     const extensionCtx = {
       cwd: project,
       mode: "tui",
@@ -219,59 +236,90 @@ setTimeout(() => process.stdout.end(line.slice(23)), 20);
         );
       assertToolResult(declined);
       assert.deepEqual(declined.details, { cancelled: true });
-      await assert.rejects(readFile(capturePath), { code: "ENOENT" });
+      await assert.rejects(readFile(explicitCapturePath), { code: "ENOENT" });
 
-      const spawned = await tools
-        .get("sa_spawn")!
-        .execute(
-          "approve",
-          {
-            agent: "scout",
-            prompt: "inspect the project",
-            working_dir: nested,
-            model: "override/model",
-            thinking: "high",
-          },
-          undefined,
-          undefined,
-          extensionCtx,
-        );
-      assertToolResult(spawned);
-      assert.equal(spawned.details.agent, "scout");
-      assert.equal(spawned.details.status, "running");
-      const id = spawned.details.id;
-      assert.equal(typeof id, "string");
+      const spawnAndCapture = async (
+        toolCallId: string,
+        capturePath: string,
+        params: Record<string, unknown>,
+      ) => {
+        process.env.PI_ENHANCED_CAPTURE = capturePath;
+        const spawned = await tools
+          .get("sa_spawn")!
+          .execute(toolCallId, params, undefined, undefined, extensionCtx);
+        assertToolResult(spawned);
+        assert.equal(spawned.details.status, "running");
+        const id = spawned.details.id;
+        assert.equal(typeof id, "string");
 
-      const waited = await tools
-        .get("sa_wait")!
-        .execute("wait", { ids: [id] }, undefined, undefined, extensionCtx);
-      assertToolResult(waited);
-      assert.deepEqual(waited.details.results, [{ id, status: "done", agent: "scout" }]);
-
-      const capture = JSON.parse(await readFile(capturePath, "utf8")) as {
-        args: string[];
-        cwd: string;
-        systemPrompt: string;
+        const waited = await tools
+          .get("sa_wait")!
+          .execute(`wait-${toolCallId}`, { ids: [id] }, undefined, undefined, extensionCtx);
+        assertToolResult(waited);
+        assert.deepEqual(waited.details.results, [
+          { id, status: "done", agent: spawned.details.agent },
+        ]);
+        return { spawned, capture: await readSpawnCapture(capturePath) };
       };
-      assert.equal(await realpath(capture.cwd), await realpath(nested));
-      assert.deepEqual(capture.args.slice(0, 4), ["--mode", "json", "-p", "--no-session"]);
-      assert.deepEqual(capture.args.slice(capture.args.indexOf("--model"), capture.args.indexOf("--model") + 2), [
-        "--model",
-        "override/model",
-      ]);
-      assert.deepEqual(
-        capture.args.slice(capture.args.indexOf("--thinking"), capture.args.indexOf("--thinking") + 2),
-        ["--thinking", "high"],
+
+      const explicit = await spawnAndCapture(
+        "approve-explicit",
+        explicitCapturePath,
+        {
+          agent: "scout",
+          prompt: "inspect the project",
+          working_dir: nested,
+          model: "override/model",
+          thinking: "high",
+        },
       );
-      assert.deepEqual(capture.args.slice(capture.args.indexOf("--tools"), capture.args.indexOf("--tools") + 2), [
-        "--tools",
-        "read,grep",
-      ]);
-      assert.equal(capture.args.at(-1), "inspect the project");
-      assert.equal(capture.systemPrompt.match(/PROJECT SCOUT PROMPT/g)?.length, 1);
-      assert.doesNotMatch(capture.systemPrompt, /USER SCOUT PROMPT/);
-      assert.equal(confirmations.length, 2);
+      assert.equal(explicit.spawned.details.agent, "scout");
+      assert.equal(await realpath(explicit.capture.cwd), await realpath(nested));
+      assert.deepEqual(explicit.capture.args.slice(0, 4), ["--mode", "json", "-p", "--no-session"]);
+      assertArg(explicit.capture.args, "--model", "override/model");
+      assertArg(explicit.capture.args, "--thinking", "high");
+      assertArg(explicit.capture.args, "--tools", "read,grep");
+      assert.equal(explicit.capture.args.at(-1), "inspect the project");
+      assert.equal(explicit.capture.systemPrompt.match(/PROJECT SCOUT PROMPT/g)?.length, 1);
+      assert.doesNotMatch(explicit.capture.systemPrompt, /USER SCOUT PROMPT/);
+
+      const agentDefaults = await spawnAndCapture(
+        "approve-agent-defaults",
+        agentCapturePath,
+        {
+          agent: "scout",
+          prompt: "use named agent defaults",
+          working_dir: nested,
+        },
+      );
+      assert.equal(agentDefaults.spawned.details.agent, "scout");
+      assertArg(agentDefaults.capture.args, "--model", "project/model");
+      assertArg(agentDefaults.capture.args, "--thinking", "medium");
+      assertArg(agentDefaults.capture.args, "--tools", "read,grep");
+      assert.equal(agentDefaults.capture.args.at(-1), "use named agent defaults");
+      assert.equal(
+        agentDefaults.capture.systemPrompt.match(/PROJECT SCOUT PROMPT/g)?.length,
+        1,
+      );
+
+      const parentDefaults = await spawnAndCapture(
+        "parent-defaults",
+        parentCapturePath,
+        {
+          prompt: "use parent defaults",
+          working_dir: nested,
+        },
+      );
+      assert.equal(parentDefaults.spawned.details.agent, undefined);
+      assertArg(parentDefaults.capture.args, "--model", "parent/parent-model");
+      assertArg(parentDefaults.capture.args, "--thinking", "low");
+      assert.equal(parentDefaults.capture.args.includes("--tools"), false);
+      assert.equal(parentDefaults.capture.args.at(-1), "use parent defaults");
+      assert.doesNotMatch(parentDefaults.capture.systemPrompt, /PROJECT SCOUT PROMPT/);
+
+      assert.equal(confirmations.length, 3);
       assert.deepEqual(confirmations.map((entry) => entry.title), [
+        "Run project-local subagent?",
         "Run project-local subagent?",
         "Run project-local subagent?",
       ]);
