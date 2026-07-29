@@ -210,6 +210,57 @@ describe("firecrawl", () => {
     );
   });
 
+  it("bounds stalled cleanup without masking the polling error", { timeout: 2_000 }, async () => {
+    const pollingError = new Error("polling failed");
+    const requests: RequestRecord[] = [];
+    let cleanupAborted = false;
+    const fetchImpl = mockFetch(
+      [
+        () => new Response(JSON.stringify({ success: true, id: "job/1" }), { status: 200 }),
+        () => {
+          throw pollingError;
+        },
+        (_url, init) =>
+          new Promise((_resolve, reject) => {
+            assert.equal(init?.signal?.aborted, false);
+            init?.signal?.addEventListener(
+              "abort",
+              () => {
+                cleanupAborted = true;
+                reject(init.signal?.reason);
+              },
+              { once: true },
+            );
+          }),
+      ],
+      requests,
+    );
+
+    await assert.rejects(
+      () =>
+        firecrawlCrawl({
+          apiKey: "fc-test",
+          url: "https://example.com",
+          maxWaitMs: 1_000,
+          fetchImpl: fetchImpl as typeof fetch,
+        }),
+      (error) => {
+        assert.equal(error, pollingError);
+        assert.equal((error as Error).message, "polling failed");
+        return true;
+      },
+    );
+    assert.equal(cleanupAborted, true);
+    assert.deepEqual(
+      requests.map(({ method, url }) => [method, url]),
+      [
+        ["POST", "https://api.firecrawl.dev/v2/crawl"],
+        ["GET", "https://api.firecrawl.dev/v2/crawl/job%2F1"],
+        ["DELETE", "https://api.firecrawl.dev/v2/crawl/job%2F1"],
+      ],
+    );
+  });
+
   it("does not cancel provider-terminal crawls", async () => {
     for (const status of ["failed", "cancelled"]) {
       const requests: RequestRecord[] = [];
