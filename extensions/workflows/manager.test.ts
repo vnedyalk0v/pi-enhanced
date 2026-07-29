@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -198,6 +198,58 @@ describe("WorkflowManager", () => {
     assert.equal(m.get(later.id)?.status, "done");
   });
 
+  it("rolls back artifacts when startup aborts before registration", async () => {
+    const controller = new AbortController();
+    const nativeThrow = controller.signal.throwIfAborted.bind(controller.signal);
+    let checks = 0;
+    Object.defineProperty(controller.signal, "throwIfAborted", {
+      value: () => {
+        checks += 1;
+        if (checks === 4) controller.abort();
+        nativeThrow();
+      },
+    });
+    const { m, artifactsRoot } = await createManager();
+
+    await assert.rejects(
+      () =>
+        m.start({
+          goal: "abort after writing the first artifact",
+          cwd: process.cwd(),
+          signal: controller.signal,
+        }),
+      /aborted/i,
+    );
+
+    assert.deepEqual(await readdir(artifactsRoot), []);
+    assert.deepEqual(m.list(), []);
+  });
+
+  it("rejects a startup that overlaps disposal without retaining artifacts", async () => {
+    const { m, artifactsRoot } = await createManager();
+    const starting = m.start({ goal: "dispose during startup", cwd: process.cwd() });
+
+    await m.disposeAll();
+
+    await assert.rejects(starting, /Workflow manager is disposed/);
+    assert.deepEqual(await readdir(artifactsRoot), []);
+    assert.deepEqual(m.list(), []);
+  });
+
+  it("does not allocate artifacts for an already-aborted start", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const { m, artifactsRoot } = await createManager();
+
+    await assert.rejects(
+      () => m.start({ goal: "never starts", cwd: process.cwd(), signal: controller.signal }),
+      /aborted/i,
+    );
+
+    assert.deepEqual(await readdir(artifactsRoot), []);
+    assert.deepEqual(m.list(), []);
+  });
+
   it("runs four phases, preserves artifacts, synthesizes after partial failure", async () => {
     const settled: Array<{ status: string; consumed: boolean }> = [];
     const { m, artifactsRoot } = await createManager({
@@ -310,6 +362,180 @@ describe("WorkflowManager", () => {
     const cancelled = await m.cancel([snap.id]);
     assert.equal(cancelled[0]?.status, "cancelled");
   });
+
+  it("persists killed tasks when cancelled before the first phase starts", async () => {
+    let resolveSettled!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      resolveSettled = resolve;
+    });
+    let starts = 0;
+    const { m } = await createManager({
+      onSettled: resolveSettled,
+      subagentOptions: {
+        starters: {
+          pi: async () => {
+            starts += 1;
+            return fakeJob({ exitCode: 0, resultText: "unexpected" });
+          },
+        },
+      },
+    });
+
+    const snap = await m.start({ goal: "cancel immediately", cwd: process.cwd() });
+    const [cancelled] = await m.cancel([snap.id]);
+    await settled;
+
+    assert.equal(starts, 0);
+    assert.equal(cancelled?.status, "cancelled");
+    const tasks = cancelled?.phases[0]?.tasks ?? [];
+    assert.ok(tasks.length > 0);
+    for (const task of tasks) {
+      assert.equal(task.status, "killed");
+      assert.equal(task.error, "cancelled before start");
+      assert.ok(task.artifactPath);
+      const artifact = await readFile(task.artifactPath, "utf8");
+      assert.match(artifact, /- status: killed/);
+      assert.match(artifact, /- error: cancelled before start/);
+    }
+
+    const persisted = JSON.parse(
+      await readFile(join(snap.artifactsDir, "status.json"), "utf8"),
+    ) as typeof cancelled;
+    assert.deepEqual(persisted, JSON.parse(JSON.stringify(cancelled)));
+    const outputs = JSON.parse(
+      await readFile(join(snap.artifactsDir, "phases", "01-reconnaissance", "outputs.json"), "utf8"),
+    ) as Array<{ status: string }>;
+    assert.equal(outputs.length, tasks.length);
+    assert.ok(outputs.every((output) => output.status === "killed"));
+  });
+
+  it(
+    "records a delayed subagent start interrupted by shutdown as killed",
+    { timeout: 1000 },
+    async () => {
+      let starterEntered!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        starterEntered = resolve;
+      });
+      let releaseStarter!: () => void;
+      const release = new Promise<void>((resolve) => {
+        releaseStarter = resolve;
+      });
+      let jobKilled!: () => void;
+      const killed = new Promise<void>((resolve) => {
+        jobKilled = resolve;
+      });
+      const { m } = await createManager({
+        subagentOptions: {
+          starters: {
+            pi: async () => {
+              starterEntered();
+              await release;
+              return {
+                handle: {
+                  pid: 99_003,
+                  kill: jobKilled,
+                  wait: Promise.resolve({ exitCode: 1 }),
+                },
+                collect: async () => ({ exitCode: 1, resultText: "", output: "" }),
+              };
+            },
+          },
+        },
+      });
+
+      const snap = await m.start({ goal: "shutdown during startup", cwd: process.cwd() });
+      await entered;
+      const disposing = m.disposeAll();
+      releaseStarter();
+
+      await killed;
+      await disposing;
+      const persisted = JSON.parse(
+        await readFile(join(snap.artifactsDir, "status.json"), "utf8"),
+      ) as {
+        status: string;
+        failedTaskCount: number;
+        phases: Array<{ tasks: Array<{ status: string }> }>;
+      };
+      assert.equal(persisted.status, "cancelled");
+      assert.equal(persisted.failedTaskCount, 0);
+      assert.ok(persisted.phases[0]?.tasks.every((task) => task.status === "killed"));
+      const outputs = JSON.parse(
+        await readFile(join(snap.artifactsDir, "phases", "01-reconnaissance", "outputs.json"), "utf8"),
+      ) as Array<{ status: string }>;
+      assert.equal(outputs.length, 2);
+      assert.ok(outputs.every((output) => output.status === "killed"));
+    },
+  );
+
+  it(
+    "cancels a subagent that finishes starting after workflow cancellation",
+    { timeout: 1000 },
+    async () => {
+      let starterEntered!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        starterEntered = resolve;
+      });
+      let releaseStarter!: () => void;
+      const release = new Promise<void>((resolve) => {
+        releaseStarter = resolve;
+      });
+      let jobKilled!: () => void;
+      const killed = new Promise<void>((resolve) => {
+        jobKilled = resolve;
+      });
+      let finishJob!: () => void;
+      const wait = new Promise<{ exitCode: number }>((resolve) => {
+        finishJob = () => resolve({ exitCode: 1 });
+      });
+      const { m } = await createManager({
+        subagentOptions: {
+          starters: {
+            pi: async () => {
+              starterEntered();
+              await release;
+              return {
+                handle: {
+                  pid: 99_002,
+                  kill: () => {
+                    jobKilled();
+                    finishJob();
+                  },
+                  wait,
+                },
+                collect: async () => {
+                  const result = await wait;
+                  return { ...result, resultText: "", output: "" };
+                },
+              };
+            },
+          },
+        },
+      });
+
+      const snap = await m.start({ goal: "cancel during startup", cwd: process.cwd() });
+      await entered;
+      const cancelling = m.cancel([snap.id]);
+      releaseStarter();
+
+      await killed;
+      const [cancelled] = await cancelling;
+      assert.equal(cancelled?.status, "cancelled");
+      const tasks = cancelled?.phases[0]?.tasks ?? [];
+      assert.equal(tasks.length, 2);
+      assert.ok(tasks.every((task) => task.status === "killed"));
+      for (const task of tasks) {
+        assert.ok(task.artifactPath);
+        assert.match(await readFile(task.artifactPath, "utf8"), /- status: killed/);
+      }
+      const outputs = JSON.parse(
+        await readFile(join(snap.artifactsDir, "phases", "01-reconnaissance", "outputs.json"), "utf8"),
+      ) as Array<{ status: string }>;
+      assert.equal(outputs.length, 2);
+      assert.ok(outputs.every((output) => output.status === "killed"));
+    },
+  );
 
   it("rejects empty goal", async () => {
     const { m } = await createManager({

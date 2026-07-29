@@ -79,6 +79,7 @@ export default function (pi: ExtensionAPI) {
   let parentThinking: string | undefined;
 
   const getManager = () => {
+    if (disposed) throw new Error("Subagent manager is shutting down.");
     if (manager) return manager;
     manager = new SubagentManager({
       onSettled: ({ snapshot, consumed }) => {
@@ -168,7 +169,7 @@ export default function (pi: ExtensionAPI) {
       "After sa_spawn, keep working; a completion message arrives when the child finishes.",
     ],
     parameters: SpawnParams,
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       captureParentDefaults(ctx);
       const m = getManager();
       // Discover from (and confirm against) the directory the child actually
@@ -217,6 +218,7 @@ export default function (pi: ExtensionAPI) {
         thinking,
         tools: agentDef?.tools,
         systemPromptAppend: agentDef?.systemPrompt,
+        signal,
       });
       updateWidget();
       return {

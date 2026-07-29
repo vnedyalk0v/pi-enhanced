@@ -52,6 +52,40 @@ function createManager(opts: ManagerOptions = {}) {
 }
 
 describe("SubagentManager", () => {
+  it("keeps streamed output without notifying for every chunk", async () => {
+    let finish!: () => void;
+    const wait = new Promise<{ exitCode: number }>((resolve) => {
+      finish = () => resolve({ exitCode: 0 });
+    });
+    let changes = 0;
+    const m = createManager({
+      onChange: () => {
+        changes += 1;
+      },
+      starters: {
+        pi: async ({ onOutput }) => {
+          for (let i = 0; i < 120; i++) onOutput?.(`chunk ${i}\n`);
+          return {
+            handle: { pid: 12345, kill: finish, wait },
+            collect: async () => {
+              const result = await wait;
+              return { ...result, resultText: "done", output: "" };
+            },
+          };
+        },
+      },
+    });
+
+    const snap = await m.spawn({ prompt: "stream", cwd: process.cwd() });
+    assert.equal(changes, 1);
+
+    finish();
+    await m.wait([snap.id]);
+
+    assert.match(m.get(snap.id)?.outputTail ?? "", /chunk 119\n$/);
+    assert.equal(changes, 2);
+  });
+
   it("spawns, settles done, and delivers unconsumed completion", async () => {
     const settled: Array<{ id: string; consumed: boolean }> = [];
     const m = createManager({
@@ -180,6 +214,105 @@ describe("SubagentManager", () => {
     });
     await m.wait([started.id]);
     assert.equal(m.get(started.id)?.status, "done");
+  });
+
+  it("cleans a delayed startup when disposal wins before registration", async () => {
+    let starterEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      starterEntered = resolve;
+    });
+    let releaseStarter!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseStarter = resolve;
+    });
+    let kills = 0;
+    let collects = 0;
+    let finish!: () => void;
+    const wait = new Promise<{ exitCode: number }>((resolve) => {
+      finish = () => resolve({ exitCode: 1 });
+    });
+    const m = createManager({
+      starters: {
+        pi: async () => {
+          starterEntered();
+          await gate;
+          return {
+            handle: {
+              pid: 12345,
+              kill: () => {
+                kills += 1;
+                finish();
+              },
+              wait,
+            },
+            collect: async () => {
+              collects += 1;
+              const result = await wait;
+              return { ...result, resultText: "", output: "" };
+            },
+          };
+        },
+      },
+    });
+
+    const starting = m.spawn({ prompt: "late", cwd: process.cwd() });
+    await entered;
+    await m.disposeAll();
+    releaseStarter();
+
+    await assert.rejects(starting, /Subagent manager is disposed/);
+    assert.equal(kills, 1);
+    assert.equal(collects, 1);
+    assert.deepEqual(m.list(), []);
+  });
+
+  it("does not allocate for an already-aborted start", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    let calls = 0;
+    const m = createManager({
+      starters: {
+        pi: async () => {
+          calls += 1;
+          return fakeJob({ exitCode: 0 });
+        },
+      },
+    });
+
+    await assert.rejects(
+      () => m.spawn({ prompt: "no", cwd: process.cwd(), signal: controller.signal }),
+      /aborted/i,
+    );
+    assert.equal(calls, 0);
+    assert.deepEqual(m.list(), []);
+  });
+
+  it("keeps a registered subagent alive after its startup signal aborts", async () => {
+    const controller = new AbortController();
+    let kills = 0;
+    const job = fakeJob({ exitCode: 0, resultText: "later", delayMs: 5000 });
+    const originalKill = job.handle.kill;
+    job.handle.kill = (signal) => {
+      kills += 1;
+      originalKill(signal);
+    };
+    const m = createManager({
+      starters: {
+        pi: async () => job,
+      },
+    });
+
+    const started = await m.spawn({
+      prompt: "keep running",
+      cwd: process.cwd(),
+      signal: controller.signal,
+    });
+    controller.abort();
+
+    assert.equal(kills, 0);
+    assert.equal(m.get(started.id)?.status, "running");
+    await m.cancel([started.id]);
+    assert.equal(kills, 1);
   });
 
   it("tracks the named agent on the snapshot", async () => {

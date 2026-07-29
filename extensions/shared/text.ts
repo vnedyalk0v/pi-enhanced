@@ -21,10 +21,22 @@ export function truncateForModel(text: string, options?: { mode?: "head" | "tail
       ? truncateHead(text, { maxLines: DEFAULT_MAX_LINES, maxBytes: DEFAULT_MAX_BYTES })
       : truncateTail(text, { maxLines: DEFAULT_MAX_LINES, maxBytes: DEFAULT_MAX_BYTES });
   if (!truncation.truncated) return truncation.content || "(empty)";
-  const where = mode === "head" ? "first" : "last";
   return (
     truncation.content +
-    `\n\n[truncated: ${where} ${formatSize(truncation.outputBytes)} of ${formatSize(truncation.totalBytes)}]`
+    `\n\n${formatTruncationNotice(mode, truncation.outputBytes, truncation.totalBytes)}`
+  );
+}
+
+export function formatTruncationNotice(
+  mode: "head" | "tail",
+  outputBytes: number,
+  totalBytes: number,
+  totalIsMinimum = false,
+) {
+  const where = mode === "head" ? "first" : "last";
+  return (
+    `[truncated: ${where} ${formatSize(outputBytes)} of ` +
+    `${totalIsMinimum ? "at least " : ""}${formatSize(totalBytes)}]`
   );
 }
 
@@ -56,9 +68,11 @@ type ContentBlock = {
   name?: string;
 };
 
+const CONVERSATION_OMISSION = "[... conversation middle omitted ...]";
+
 export function extractConversationText(
   entries: Array<{ type: string; message?: { role?: string; content?: unknown } }>,
-  options?: { includeToolCalls?: boolean },
+  options?: { includeToolCalls?: boolean; maxChars?: number },
 ) {
   const sections: string[] = [];
   for (const entry of entries) {
@@ -69,7 +83,16 @@ export function extractConversationText(
     if (!body) continue;
     sections.push(`${role === "user" ? "User" : "Assistant"}:\n${body}`);
   }
-  return sections.join("\n\n");
+  const text = sections.join("\n\n");
+  const maxChars = options?.maxChars;
+  if (maxChars === undefined || text.length <= maxChars) return text;
+
+  const marker = `\n\n${CONVERSATION_OMISSION}\n\n`;
+  if (maxChars <= marker.length) return marker.slice(0, Math.max(0, maxChars));
+
+  const retainedChars = maxChars - marker.length;
+  const headChars = Math.floor(retainedChars / 3);
+  return text.slice(0, headChars) + marker + text.slice(-(retainedChars - headChars));
 }
 
 function extractBlocks(content: unknown, includeToolCalls?: boolean) {

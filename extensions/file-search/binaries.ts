@@ -5,17 +5,20 @@ import {
   createReadStream,
   createWriteStream,
   existsSync,
+  linkSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   renameSync,
+  rmdirSync,
   rmSync,
   statSync,
 } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
+import { setTimeout as delay } from "node:timers/promises";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 export type BinaryName = "fd" | "rg";
@@ -29,6 +32,7 @@ type TargetKey = `${PlatformTarget["os"]}-${PlatformTarget["arch"]}`;
 
 const FD_VERSION = "10.2.0";
 const RG_VERSION = "14.1.1";
+const PUBLISH_LOCK_STALE_MS = 5_000;
 
 const DIGESTS: Record<BinaryName, Record<TargetKey, string>> = {
   fd: {
@@ -154,41 +158,116 @@ function findNamedFile(dir: string, name: string): string | null {
 async function extractBinary(
   archivePath: string,
   binaryName: BinaryName,
-  destPath: string,
-): Promise<void> {
-  const extractDir = await mkdtemp(join(tmpdir(), `pi-${binaryName}-`));
-  try {
-    await new Promise<void>((resolve, reject) => {
-      const child = spawn("tar", ["-xzf", archivePath, "-C", extractDir], {
-        stdio: ["ignore", "ignore", "pipe"],
-      });
-      let err = "";
-      child.stderr.on("data", (c: Buffer) => {
-        err += c.toString("utf8");
-      });
-      child.on("error", reject);
-      child.on("close", (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(`tar extract failed (${code}): ${err.trim() || archivePath}`));
-      });
+  attemptDir: string,
+): Promise<string> {
+  const extractDir = join(attemptDir, "extract");
+  mkdirSync(extractDir);
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn("tar", ["-xzf", archivePath, "-C", extractDir], {
+      stdio: ["ignore", "ignore", "pipe"],
     });
+    let err = "";
+    child.stderr.on("data", (c: Buffer) => {
+      err += c.toString("utf8");
+    });
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`tar extract failed (${code}): ${err.trim() || archivePath}`));
+    });
+  });
 
-    const found = findNamedFile(extractDir, binaryName);
-    if (!found) throw new Error(`Binary ${binaryName} not found in archive`);
-    if (!statSync(found).isFile()) throw new Error(`Expected file at ${found}`);
-    renameSync(found, destPath);
-    chmodSync(destPath, 0o755);
+  const found = findNamedFile(extractDir, binaryName);
+  if (!found) throw new Error(`Binary ${binaryName} not found in archive`);
+  if (!statSync(found).isFile()) throw new Error(`Expected file at ${found}`);
+  const prepared = join(attemptDir, binaryName);
+  renameSync(found, prepared);
+  chmodSync(prepared, 0o755);
+  return prepared;
+}
+
+function isRegularExecutable(path: string): boolean {
+  try {
+    const stat = lstatSync(path);
+    return stat.isFile() && (stat.mode & 0o111) !== 0;
+  } catch {
+    return false;
+  }
+}
+
+function removeStaleLock(path: string): boolean {
+  try {
+    const stat = lstatSync(path);
+    if (!stat.isDirectory() || Date.now() - stat.mtimeMs < PUBLISH_LOCK_STALE_MS) return false;
+    rmdirSync(path);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT";
+  }
+}
+
+async function publishPrepared(
+  prepared: string,
+  dest: string,
+  linkPrepared = linkSync,
+): Promise<boolean> {
+  try {
+    linkPrepared(prepared, dest);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "EEXIST") {
+      if (!isRegularExecutable(dest)) {
+        throw new Error(`Refusing to replace invalid binary destination ${dest}`);
+      }
+      return false;
+    }
+    if (code !== "EPERM" && code !== "EOPNOTSUPP" && code !== "ENOTSUP") throw error;
+  }
+
+  const lockDir = `${dest}.install-lock`;
+  const deadline = Date.now() + 5_000;
+  while (true) {
+    try {
+      mkdirSync(lockDir);
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (isRegularExecutable(dest)) return false;
+      if (removeStaleLock(lockDir)) continue;
+      if (Date.now() >= deadline) {
+        throw new Error(`Timed out waiting to install ${dest}`);
+      }
+      await delay(10);
+    }
+  }
+
+  try {
+    if (existsSync(dest)) {
+      if (!isRegularExecutable(dest)) {
+        throw new Error(`Refusing to replace invalid binary destination ${dest}`);
+      }
+      return false;
+    }
+    renameSync(prepared, dest);
+    return true;
   } finally {
-    rmSync(extractDir, { recursive: true, force: true });
+    rmSync(lockDir, { recursive: true, force: true });
   }
 }
 
 export async function ensureBinary(
   name: BinaryName,
   options?: { agentDir?: string; platform?: PlatformTarget | null },
+  dependencies: {
+    resolveExisting: typeof resolveExisting;
+    downloadToFile: typeof downloadToFile;
+    expectedDigest: typeof expectedDigest;
+    linkPrepared?: typeof linkSync;
+  } = { resolveExisting, downloadToFile, expectedDigest },
 ): Promise<{ path: string; installed: boolean }> {
   const agentDir = options?.agentDir ?? getAgentDir();
-  const existing = await resolveExisting(name, agentDir);
+  const existing = await dependencies.resolveExisting(name, agentDir);
   if (existing) return { path: existing, installed: false };
 
   const target = options?.platform === undefined ? detectPlatform() : options.platform;
@@ -201,24 +280,27 @@ export async function ensureBinary(
   const binDir = fallbackBinDir(agentDir);
   mkdirSync(binDir, { recursive: true });
   const dest = join(binDir, name);
-  const archive = join(binDir, `${name}-download.tar.gz`);
+  const attemptDir = await mkdtemp(join(binDir, `.${name}-install-`));
+  const archive = join(attemptDir, `${name}.tar.gz`);
   const url = releaseUrl(name, target);
 
-  await downloadToFile(url, archive);
+  let installed = true;
   try {
-    const digest = expectedDigest(name, target);
+    await dependencies.downloadToFile(url, archive);
+    const digest = dependencies.expectedDigest(name, target);
     if (!digest) {
       throw new Error(`No pinned digest for ${name} on ${target.os}/${target.arch}`);
     }
     const version = name === "fd" ? FD_VERSION : RG_VERSION;
     await verifyArchive(archive, digest, `${name} ${version} on ${target.os}/${target.arch}`);
-    await extractBinary(archive, name, dest);
+    const prepared = await extractBinary(archive, name, attemptDir);
+    installed = await publishPrepared(prepared, dest, dependencies.linkPrepared);
   } finally {
-    rmSync(archive, { force: true });
+    rmSync(attemptDir, { recursive: true, force: true });
   }
 
-  if (!existsSync(dest)) {
+  if (!isRegularExecutable(dest)) {
     throw new Error(`Failed to install ${name} to ${dest}`);
   }
-  return { path: dest, installed: true };
+  return { path: dest, installed };
 }
