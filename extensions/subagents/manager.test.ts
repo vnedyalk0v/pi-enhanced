@@ -84,7 +84,7 @@ describe("SubagentManager", () => {
     await m.wait([snap.id]);
 
     assert.match(m.get(snap.id)?.outputTail ?? "", /chunk 119\n$/);
-    assert.equal(changes, 3);
+    assert.equal(changes, 2);
   });
 
   it("spawns, settles done, and delivers unconsumed completion", async () => {

@@ -79,6 +79,16 @@ export class SubagentManager {
     this.onChange?.();
   }
 
+  private pruneAfterInterestRelease() {
+    const size = this.entries.size;
+    pruneSettled(
+      this.entries,
+      this.maxTracked,
+      (e) => e.status === "running" || this.waitInterest.has(e.id),
+    );
+    if (this.entries.size < size) this.notify();
+  }
+
   private runningCount() {
     let n = 0;
     for (const e of this.entries.values()) {
@@ -314,12 +324,7 @@ export class SubagentManager {
       return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
     } finally {
       for (const id of ids) this.waitInterest.release(id);
-      pruneSettled(
-        this.entries,
-        this.maxTracked,
-        (e) => e.status === "running" || this.waitInterest.has(e.id),
-      );
-      this.notify();
+      this.pruneAfterInterestRelease();
     }
   }
 
@@ -351,12 +356,7 @@ export class SubagentManager {
       return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
     } finally {
       for (const id of ids) this.waitInterest.release(id);
-      pruneSettled(
-        this.entries,
-        this.maxTracked,
-        (e) => e.status === "running" || this.waitInterest.has(e.id),
-      );
-      this.notify();
+      this.pruneAfterInterestRelease();
     }
   }
 
