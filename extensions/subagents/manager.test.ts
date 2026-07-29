@@ -209,6 +209,58 @@ describe("SubagentManager", () => {
     );
   });
 
+  it("kills a subagent after its max runtime and releases capacity", async () => {
+    const signals: NodeJS.Signals[] = [];
+    let finish!: () => void;
+    const wait = new Promise<{ exitCode: number }>((resolve) => {
+      finish = () => resolve({ exitCode: 1 });
+    });
+    let calls = 0;
+    const m = createManager({
+      maxRunning: 1,
+      maxRuntimeMs: 30,
+      killGraceMs: 10,
+      starters: {
+        pi: async () => {
+          calls += 1;
+          if (calls > 1) {
+            return fakeJob({ exitCode: 0, resultText: "next", delayMs: 10 });
+          }
+          return {
+            handle: {
+              pid: 12345,
+              kill: (signal = "SIGTERM") => {
+                signals.push(signal);
+                if (signal === "SIGKILL") finish();
+              },
+              wait,
+            },
+            collect: async () => {
+              const result = await wait;
+              return {
+                ...result,
+                signal: signals.at(-1),
+                resultText: "",
+                output: "",
+              };
+            },
+          };
+        },
+      },
+    });
+
+    const started = await m.spawn({ prompt: "timeout", cwd: process.cwd() });
+    const [timedOut] = await m.wait([started.id]);
+    assert.equal(timedOut?.status, "killed");
+    assert.match(timedOut?.errorText ?? "", /exceeded max runtime/);
+    assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+
+    const next = await m.spawn({ prompt: "next", cwd: process.cwd() });
+    const [completed] = await m.wait([next.id]);
+    assert.equal(completed?.status, "done");
+    assert.equal(calls, 2);
+  });
+
   it("reserves concurrency while a subagent is starting", async () => {
     let releaseStart!: () => void;
     const startGate = new Promise<void>((resolve) => {
