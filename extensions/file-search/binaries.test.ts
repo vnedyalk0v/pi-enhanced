@@ -1,16 +1,42 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { describe, it } from "node:test";
 import {
   candidateNames,
   detectPlatform,
+  ensureBinary,
   expectedDigest,
   releaseUrl,
   verifyArchive,
 } from "./binaries.ts";
 import { buildFdArgs, buildRgArgs } from "./run.ts";
+
+const execFileAsync = promisify(execFile);
+
+async function createBinaryArchive(root: string, name: "fd" | "rg") {
+  const sourceDir = join(root, "source");
+  const archive = join(root, `${name}.tar.gz`);
+  const contents = "#!/bin/sh\nexit 0\n";
+  await mkdir(sourceDir);
+  await writeFile(join(sourceDir, name), contents);
+  await execFileAsync("tar", ["-czf", archive, "-C", sourceDir, name]);
+  const digest = createHash("sha256").update(await readFile(archive)).digest("hex");
+  return { archive, contents, digest };
+}
 
 describe("detectPlatform", () => {
   it("accepts darwin/linux x64/arm64", () => {
@@ -85,6 +111,71 @@ describe("verifyArchive", () => {
       );
     } finally {
       await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("ensureBinary", () => {
+  it("publishes one complete executable across concurrent installs and cleans attempts", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-binary-race-"));
+    try {
+      const agentDir = join(root, "agent");
+      const fixture = await createBinaryArchive(root, "fd");
+      let downloadCount = 0;
+      let releaseDownloads = () => {};
+      const downloadsReady = new Promise<void>((resolve) => {
+        releaseDownloads = resolve;
+      });
+      const dependencies = {
+        resolveExisting: async () => null,
+        downloadToFile: async (_url: string, dest: string) => {
+          await copyFile(fixture.archive, dest);
+          downloadCount++;
+          if (downloadCount === 2) releaseDownloads();
+          await downloadsReady;
+        },
+        expectedDigest: () => fixture.digest,
+      };
+
+      const results = await Promise.all([
+        ensureBinary("fd", { agentDir, platform: { os: "darwin", arch: "arm64" } }, dependencies),
+        ensureBinary("fd", { agentDir, platform: { os: "darwin", arch: "arm64" } }, dependencies),
+      ]);
+
+      assert.equal(downloadCount, 2);
+      assert.equal(results.filter(({ installed }) => installed).length, 1);
+      assert.deepEqual(new Set(results.map(({ path }) => path)), new Set([join(agentDir, "bin", "fd")]));
+      assert.equal(await readFile(results[0].path, "utf8"), fixture.contents);
+      assert.notEqual((await stat(results[0].path)).mode & 0o111, 0);
+      assert.deepEqual(await readdir(join(agentDir, "bin")), ["fd"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not overwrite an invalid destination created during installation", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-binary-invalid-"));
+    try {
+      const agentDir = join(root, "agent");
+      const dest = join(agentDir, "bin", "fd");
+      const fixture = await createBinaryArchive(root, "fd");
+      const dependencies = {
+        resolveExisting: async () => null,
+        downloadToFile: async (_url: string, archive: string) => {
+          await copyFile(fixture.archive, archive);
+          await writeFile(dest, "keep me");
+        },
+        expectedDigest: () => fixture.digest,
+      };
+
+      await assert.rejects(
+        ensureBinary("fd", { agentDir, platform: { os: "darwin", arch: "arm64" } }, dependencies),
+        /Refusing to replace invalid binary destination/,
+      );
+      assert.equal(await readFile(dest, "utf8"), "keep me");
+      assert.deepEqual(await readdir(join(agentDir, "bin")), ["fd"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
     }
   });
 });
