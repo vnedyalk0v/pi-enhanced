@@ -402,7 +402,72 @@ describe("WorkflowManager", () => {
       await readFile(join(snap.artifactsDir, "status.json"), "utf8"),
     ) as typeof cancelled;
     assert.deepEqual(persisted, JSON.parse(JSON.stringify(cancelled)));
+    const outputs = JSON.parse(
+      await readFile(join(snap.artifactsDir, "phases", "01-reconnaissance", "outputs.json"), "utf8"),
+    ) as Array<{ status: string }>;
+    assert.equal(outputs.length, tasks.length);
+    assert.ok(outputs.every((output) => output.status === "killed"));
   });
+
+  it(
+    "records a delayed subagent start interrupted by shutdown as killed",
+    { timeout: 1000 },
+    async () => {
+      let starterEntered!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        starterEntered = resolve;
+      });
+      let releaseStarter!: () => void;
+      const release = new Promise<void>((resolve) => {
+        releaseStarter = resolve;
+      });
+      let jobKilled!: () => void;
+      const killed = new Promise<void>((resolve) => {
+        jobKilled = resolve;
+      });
+      const { m } = await createManager({
+        subagentOptions: {
+          starters: {
+            pi: async () => {
+              starterEntered();
+              await release;
+              return {
+                handle: {
+                  pid: 99_003,
+                  kill: jobKilled,
+                  wait: Promise.resolve({ exitCode: 1 }),
+                },
+                collect: async () => ({ exitCode: 1, resultText: "", output: "" }),
+              };
+            },
+          },
+        },
+      });
+
+      const snap = await m.start({ goal: "shutdown during startup", cwd: process.cwd() });
+      await entered;
+      const disposing = m.disposeAll();
+      releaseStarter();
+
+      await killed;
+      await disposing;
+      const persisted = JSON.parse(
+        await readFile(join(snap.artifactsDir, "status.json"), "utf8"),
+      ) as {
+        status: string;
+        failedTaskCount: number;
+        phases: Array<{ tasks: Array<{ status: string }> }>;
+      };
+      assert.equal(persisted.status, "cancelled");
+      assert.equal(persisted.failedTaskCount, 0);
+      assert.ok(persisted.phases[0]?.tasks.every((task) => task.status === "killed"));
+      const outputs = JSON.parse(
+        await readFile(join(snap.artifactsDir, "phases", "01-reconnaissance", "outputs.json"), "utf8"),
+      ) as Array<{ status: string }>;
+      assert.equal(outputs.length, 2);
+      assert.ok(outputs.every((output) => output.status === "killed"));
+    },
+  );
 
   it(
     "cancels a subagent that finishes starting after workflow cancellation",

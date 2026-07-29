@@ -354,6 +354,11 @@ export class WorkflowManager {
           }),
         );
       }
+      await writeFile(join(dir, "outputs.json"), `${JSON.stringify(outputs, null, 2)}\n`, {
+        encoding: "utf8",
+        mode: 0o600,
+      });
+      this.notify();
       return outputs;
     }
 
@@ -392,15 +397,21 @@ export class WorkflowManager {
         }
         this.notify();
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        tr.status = "failed";
+        const cancelled = entry.cancelRequested || this.disposed;
+        const status = cancelled ? "killed" : "failed";
+        const message = cancelled
+          ? "cancelled during start"
+          : error instanceof Error
+            ? error.message
+            : String(error);
+        tr.status = status;
         tr.error = message;
-        entry.failedTaskCount += 1;
+        if (!cancelled) entry.failedTaskCount += 1;
         const artifactPath = await writeTaskArtifact({
           dir,
           taskKey: task.key,
           title: task.title,
-          status: "failed",
+          status,
           body: "",
           error: message,
         });
@@ -422,9 +433,9 @@ export class WorkflowManager {
       const already = spawned.find((s) => s.task.key === task.key);
       if (already) continue;
       const tr = phaseRt.tasks.get(task.key)!;
-      const skipped = tr.status === "pending" && entry.cancelRequested;
-      const status = skipped ? "killed" : "failed";
-      const errorText = tr.error ?? (skipped ? "cancelled before start" : "failed to start");
+      const cancelled = tr.status === "killed" || (tr.status === "pending" && entry.cancelRequested);
+      const status = cancelled ? "killed" : "failed";
+      const errorText = tr.error ?? (cancelled ? "cancelled before start" : "failed to start");
       const artifactPath =
         tr.artifactPath ??
         (await writeTaskArtifact({
