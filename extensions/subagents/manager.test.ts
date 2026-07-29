@@ -84,7 +84,7 @@ describe("SubagentManager", () => {
     await m.wait([snap.id]);
 
     assert.match(m.get(snap.id)?.outputTail ?? "", /chunk 119\n$/);
-    assert.equal(changes, 2);
+    assert.equal(changes, 3);
   });
 
   it("spawns, settles done, and delivers unconsumed completion", async () => {
@@ -138,7 +138,9 @@ describe("SubagentManager", () => {
   it("keeps actively awaited subagents until final snapshots are returned", async () => {
     const finishers: Array<() => void> = [];
     const settled = new Map<string, () => void>();
-    const m = createManager({
+    const observedIds: string[][] = [];
+    let m!: SubagentManager;
+    m = createManager({
       maxTracked: 1,
       starters: {
         pi: async () => {
@@ -157,6 +159,7 @@ describe("SubagentManager", () => {
         },
       },
       onSettled: ({ snapshot }) => settled.get(snapshot.id)?.(),
+      onChange: () => observedIds.push(m.list().map((snapshot) => snapshot.id)),
     });
     const first = await m.spawn({ prompt: "first", cwd: process.cwd() });
     const second = await m.spawn({ prompt: "second", cwd: process.cwd() });
@@ -172,13 +175,17 @@ describe("SubagentManager", () => {
       snapshots.map((snapshot) => snapshot.status),
       ["done", "done"],
     );
+    assert.deepEqual(m.list().map((snapshot) => snapshot.id), [second.id]);
+    assert.deepEqual(observedIds.at(-1), [second.id]);
 
     const third = await m.spawn({ prompt: "third", cwd: process.cwd() });
-    const cancelled = await m.cancel([first.id, third.id]);
+    const cancelled = await m.cancel([second.id, third.id]);
     assert.deepEqual(
       cancelled.map((snapshot) => snapshot.status),
       ["done", "killed"],
     );
+    assert.deepEqual(m.list().map((snapshot) => snapshot.id), [third.id]);
+    assert.deepEqual(observedIds.at(-1), [third.id]);
   });
 
   it("cancel kills a running subagent", async () => {

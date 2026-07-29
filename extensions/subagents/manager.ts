@@ -311,10 +311,16 @@ export class SubagentManager {
         Promise.all(waits),
         abortPromise(signal, "Wait aborted; subagents continue in the background."),
       ]);
+      return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
     } finally {
       for (const id of ids) this.waitInterest.release(id);
+      pruneSettled(
+        this.entries,
+        this.maxTracked,
+        (e) => e.status === "running" || this.waitInterest.has(e.id),
+      );
+      this.notify();
     }
-    return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
   }
 
   async cancel(ids: readonly string[], signal?: AbortSignal): Promise<SubagentSnapshot[]> {
@@ -345,6 +351,12 @@ export class SubagentManager {
       return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
     } finally {
       for (const id of ids) this.waitInterest.release(id);
+      pruneSettled(
+        this.entries,
+        this.maxTracked,
+        (e) => e.status === "running" || this.waitInterest.has(e.id),
+      );
+      this.notify();
     }
   }
 
