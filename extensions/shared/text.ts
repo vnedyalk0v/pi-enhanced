@@ -21,11 +21,15 @@ export function truncateForModel(text: string, options?: { mode?: "head" | "tail
       ? truncateHead(text, { maxLines: DEFAULT_MAX_LINES, maxBytes: DEFAULT_MAX_BYTES })
       : truncateTail(text, { maxLines: DEFAULT_MAX_LINES, maxBytes: DEFAULT_MAX_BYTES });
   if (!truncation.truncated) return truncation.content || "(empty)";
-  const where = mode === "head" ? "first" : "last";
   return (
     truncation.content +
-    `\n\n[truncated: ${where} ${formatSize(truncation.outputBytes)} of ${formatSize(truncation.totalBytes)}]`
+    `\n\n${formatTruncationNotice(mode, truncation.outputBytes, truncation.totalBytes)}`
   );
+}
+
+export function formatTruncationNotice(mode: "head" | "tail", outputBytes: number, totalBytes: number) {
+  const where = mode === "head" ? "first" : "last";
+  return `[truncated: ${where} ${formatSize(outputBytes)} of ${formatSize(totalBytes)}]`;
 }
 
 export function tailText(s: string, n: number) {
