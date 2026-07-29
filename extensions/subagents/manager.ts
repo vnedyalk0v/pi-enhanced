@@ -287,7 +287,11 @@ export class SubagentManager {
 
     const consumed = this.waitInterest.has(entry.id);
     entry.resolveSettle();
-    pruneSettled(this.entries, this.maxTracked, (e) => e.status === "running");
+    pruneSettled(
+      this.entries,
+      this.maxTracked,
+      (e) => e.status === "running" || this.waitInterest.has(e.id),
+    );
     this.notify();
 
     if (!this.disposed) {
@@ -319,30 +323,31 @@ export class SubagentManager {
     if (unknown.length > 0) throw new Error(`Unknown subagent id(s): ${unknown.join(", ")}`);
 
     const waiting: Promise<void>[] = [];
+    const interested: string[] = [];
     for (const id of ids) {
       const entry = this.entries.get(id)!;
       if (entry.status !== "running") continue;
       this.waitInterest.add(id);
+      interested.push(id);
       entry.killSignaled = true;
       entry.job?.handle.kill("SIGTERM");
       setTimeout(() => {
         if (entry.status === "running") entry.job?.handle.kill("SIGKILL");
       }, this.killGraceMs).unref?.();
-      waiting.push(
-        entry.settlePromise.finally(() => {
-          this.waitInterest.release(id);
-        }),
-      );
+      waiting.push(entry.settlePromise);
     }
 
-    if (waiting.length > 0) {
-      await Promise.race([
-        Promise.all(waiting),
-        abortPromise(signal, "Cancel wait aborted; termination continues in the background."),
-      ]);
+    try {
+      if (waiting.length > 0) {
+        await Promise.race([
+          Promise.all(waiting),
+          abortPromise(signal, "Cancel wait aborted; termination continues in the background."),
+        ]);
+      }
+      return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
+    } finally {
+      for (const id of interested) this.waitInterest.release(id);
     }
-
-    return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
   }
 
   async disposeAll() {

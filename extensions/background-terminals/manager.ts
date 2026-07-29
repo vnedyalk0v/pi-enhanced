@@ -350,7 +350,11 @@ export class TerminalManager {
 
     const consumed = this.killInterest.has(entry.id);
     entry.resolveSettle();
-    pruneSettled(this.entries, this.maxTracked, (e) => e.status === "running");
+    pruneSettled(
+      this.entries,
+      this.maxTracked,
+      (e) => e.status === "running" || this.killInterest.has(e.id),
+    );
     this.notify();
 
     if (!this.disposed) {
@@ -375,6 +379,7 @@ export class TerminalManager {
 
     const results: KillResult[] = [];
     const waiting: Promise<void>[] = [];
+    const interested: string[] = [];
 
     for (const id of ids) {
       const entry = this.entries.get(id)!;
@@ -388,14 +393,11 @@ export class TerminalManager {
       }
 
       this.killInterest.add(id);
+      interested.push(id);
       entry.killSignaled = true;
       void this.terminateChild(entry);
 
-      waiting.push(
-        entry.settlePromise.finally(() => {
-          this.killInterest.release(id);
-        }),
-      );
+      waiting.push(entry.settlePromise);
       results.push({
         id,
         snapshot: this.snapshotOf(entry),
@@ -405,16 +407,20 @@ export class TerminalManager {
 
     if (waiting.length === 0) return results;
 
-    await Promise.race([
-      Promise.all(waiting),
-      abortPromise(signal, "Kill wait aborted; termination continues in the background."),
-    ]);
+    try {
+      await Promise.race([
+        Promise.all(waiting),
+        abortPromise(signal, "Kill wait aborted; termination continues in the background."),
+      ]);
 
-    // Refresh snapshots after settle when wait completed.
-    return results.map((r) => {
-      const snap = this.get(r.id);
-      return snap ? { ...r, snapshot: snap } : r;
-    });
+      // Refresh snapshots after settle when wait completed.
+      return results.map((r) => {
+        const snap = this.get(r.id);
+        return snap ? { ...r, snapshot: snap } : r;
+      });
+    } finally {
+      for (const id of interested) this.killInterest.release(id);
+    }
   }
 
   private async terminateChild(entry: Entry) {

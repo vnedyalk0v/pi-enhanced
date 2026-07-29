@@ -169,6 +169,10 @@ describe("WorkflowManager", () => {
   });
 
   it("rejects starts at capacity and releases capacity after settlement", async () => {
+    let resolveThird!: () => void;
+    const thirdSettled = new Promise<void>((resolve) => {
+      resolveThird = resolve;
+    });
     const { m } = await createManager({
       maxRunning: 1,
       maxTracked: 1,
@@ -177,6 +181,9 @@ describe("WorkflowManager", () => {
           pi: async () =>
             fakeJob({ exitCode: 0, resultText: "ok scout/review/synth", delayMs: 30 }),
         },
+      },
+      onSettled: ({ snapshot }) => {
+        if (snapshot.goal === "third workflow") resolveThird();
       },
     });
 
@@ -191,11 +198,81 @@ describe("WorkflowManager", () => {
     const later = await m.start({ goal: "later workflow", cwd: process.cwd() });
     await m.wait([later.id]);
 
-    for (let i = 0; i < 20 && m.get(first.id); i++) {
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
+    const third = await m.start({ goal: "third workflow", cwd: process.cwd() });
+    await thirdSettled;
     assert.equal(m.get(first.id), undefined);
-    assert.equal(m.get(later.id)?.status, "done");
+    assert.equal(m.get(later.id), undefined);
+    assert.equal(m.get(third.id)?.status, "done");
+  });
+
+  it("keeps actively awaited workflow artifacts until final snapshots are returned", async () => {
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let releaseSecond!: () => void;
+    const secondGate = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    const settled = new Map<string, () => void>();
+    const { m } = await createManager({
+      maxRunning: 2,
+      maxTracked: 1,
+      subagentOptions: {
+        starters: {
+          pi: async ({ prompt }) => {
+            if (!prompt.includes("retained workflow")) {
+              return fakeJob({ exitCode: 0, resultText: "slow", delayMs: 30_000 });
+            }
+            const gate = prompt.includes("first retained workflow") ? firstGate : secondGate;
+            const wait = gate.then(() => ({ exitCode: 0 }));
+            return {
+              handle: { pid: 99_001, kill: () => {}, wait },
+              collect: async () => {
+                const result = await wait;
+                return { ...result, resultText: "done", output: "" };
+              },
+            };
+          },
+        },
+      },
+      onSettled: ({ snapshot }) => settled.get(snapshot.id)?.(),
+    });
+    const first = await m.start({
+      goal: "first retained workflow",
+      cwd: process.cwd(),
+    });
+    const second = await m.start({
+      goal: "second retained workflow",
+      cwd: process.cwd(),
+    });
+    const firstSettled = new Promise<void>((resolve) => settled.set(first.id, resolve));
+
+    const waiting = m.wait([first.id, second.id]);
+    releaseFirst();
+    await firstSettled;
+    releaseSecond();
+
+    const snapshots = await waiting;
+    assert.deepEqual(
+      snapshots.map((snapshot) => snapshot.status),
+      ["done", "done"],
+    );
+    await stat(first.artifactsDir);
+
+    const third = await m.start({
+      goal: "third cancelled workflow",
+      cwd: process.cwd(),
+    });
+    const fourth = await m.start({
+      goal: "fourth cancelled workflow",
+      cwd: process.cwd(),
+    });
+    const cancelled = await m.cancel([third.id, fourth.id]);
+    assert.deepEqual(
+      cancelled.map((snapshot) => snapshot.status),
+      ["cancelled", "cancelled"],
+    );
   });
 
   it("rolls back artifacts when startup aborts before registration", async () => {

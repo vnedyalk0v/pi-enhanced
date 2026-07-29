@@ -134,6 +134,53 @@ describe("SubagentManager", () => {
     assert.equal(settled.at(-1), false);
   });
 
+  it("keeps actively awaited subagents until final snapshots are returned", async () => {
+    const finishers: Array<() => void> = [];
+    const settled = new Map<string, () => void>();
+    const m = createManager({
+      maxTracked: 1,
+      starters: {
+        pi: async () => {
+          let finish!: () => void;
+          const wait = new Promise<{ exitCode: number }>((resolve) => {
+            finish = () => resolve({ exitCode: 0 });
+          });
+          finishers.push(finish);
+          return {
+            handle: { pid: 12345, kill: finish, wait },
+            collect: async () => {
+              const result = await wait;
+              return { ...result, resultText: "done", output: "" };
+            },
+          };
+        },
+      },
+      onSettled: ({ snapshot }) => settled.get(snapshot.id)?.(),
+    });
+    const first = await m.spawn({ prompt: "first", cwd: process.cwd() });
+    const second = await m.spawn({ prompt: "second", cwd: process.cwd() });
+    const firstSettled = new Promise<void>((resolve) => settled.set(first.id, resolve));
+
+    const waiting = m.wait([first.id, second.id]);
+    finishers[0]!();
+    await firstSettled;
+    finishers[1]!();
+
+    const snapshots = await waiting;
+    assert.deepEqual(
+      snapshots.map((snapshot) => snapshot.status),
+      ["done", "done"],
+    );
+
+    const third = await m.spawn({ prompt: "third", cwd: process.cwd() });
+    const fourth = await m.spawn({ prompt: "fourth", cwd: process.cwd() });
+    const cancelled = await m.cancel([third.id, fourth.id]);
+    assert.deepEqual(
+      cancelled.map((snapshot) => snapshot.status),
+      ["killed", "killed"],
+    );
+  });
+
   it("cancel kills a running subagent", async () => {
     const m = createManager({
       starters: {

@@ -541,11 +541,16 @@ export class WorkflowManager {
 
     await this.persist(entry);
     entry.resolveSettle();
-    pruneSettled(this.entries, this.maxTracked, (e) => e.status === "running", (evicted) => {
-      // Once evicted, wf_status can never surface this path again — nothing
-      // else will ever remove these files (unlike per-session spill dirs).
-      void rm(evicted.artifactsDir, { recursive: true, force: true }).catch(() => {});
-    });
+    pruneSettled(
+      this.entries,
+      this.maxTracked,
+      (e) => e.status === "running" || this.waitInterest.has(e.id),
+      (evicted) => {
+        // Once evicted, wf_status can never surface this path again — nothing
+        // else will ever remove these files (unlike per-session spill dirs).
+        void rm(evicted.artifactsDir, { recursive: true, force: true }).catch(() => {});
+      },
+    );
     this.notify();
 
     if (!this.disposed) {
@@ -616,10 +621,12 @@ export class WorkflowManager {
     if (unknown.length > 0) throw new Error(`Unknown workflow id(s): ${unknown.join(", ")}`);
 
     const waiting: Promise<void>[] = [];
+    const interested: string[] = [];
     for (const id of ids) {
       const entry = this.entries.get(id)!;
       if (entry.status !== "running") continue;
       this.waitInterest.add(id);
+      interested.push(id);
       entry.cancelRequested = true;
       const runningIds = entry.subagents
         .list()
@@ -628,21 +635,20 @@ export class WorkflowManager {
       if (runningIds.length > 0) {
         void entry.subagents.cancel(runningIds).catch(() => {});
       }
-      waiting.push(
-        entry.settlePromise.finally(() => {
-          this.waitInterest.release(id);
-        }),
-      );
+      waiting.push(entry.settlePromise);
     }
 
-    if (waiting.length > 0) {
-      await Promise.race([
-        Promise.all(waiting),
-        abortPromise(signal, "Cancel wait aborted; termination continues in the background."),
-      ]);
+    try {
+      if (waiting.length > 0) {
+        await Promise.race([
+          Promise.all(waiting),
+          abortPromise(signal, "Cancel wait aborted; termination continues in the background."),
+        ]);
+      }
+      return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
+    } finally {
+      for (const id of interested) this.waitInterest.release(id);
     }
-
-    return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
   }
 
   async disposeAll() {

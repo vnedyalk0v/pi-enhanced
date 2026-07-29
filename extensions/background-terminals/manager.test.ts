@@ -19,13 +19,14 @@ function createManager(
     onSettled?: (info: SettledInfo) => void;
     onChange?: () => void;
     maxRunning?: number;
+    maxTracked?: number;
   } = {},
 ) {
   const sessionKey = `test-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const m = new TerminalManager({
     sessionKey,
     maxRunning: opts.maxRunning ?? 8,
-    maxTracked: 8,
+    maxTracked: opts.maxTracked ?? 8,
     killGraceMs: 500,
     onSettled: opts.onSettled,
     onChange: opts.onChange,
@@ -221,6 +222,38 @@ describe("TerminalManager", () => {
     assert.equal(after.status, "killed");
     assert.equal(settled.length, 1);
     assert.equal(settled[0]!.consumed, true);
+  });
+
+  it("keeps actively killed terminals until final snapshots are returned", async () => {
+    const settled = createSettlementTracker();
+    const m = createManager({ maxTracked: 1, onSettled: settled.onSettled });
+    const first = await m.start({
+      command: "sleep 30",
+      title: "first",
+      cwd: process.cwd(),
+    });
+    const second = await m.start({
+      command: "sleep 30",
+      title: "second",
+      cwd: process.cwd(),
+    });
+
+    const killed = await m.kill([first.id, second.id]);
+    assert.deepEqual(
+      killed.map((result) => result.snapshot.status),
+      ["killed", "killed"],
+    );
+
+    const later = await m.start({
+      command: "printf later",
+      title: "later",
+      cwd: process.cwd(),
+    });
+    await settled.waitFor(later.id);
+    assert.deepEqual(
+      m.list().map((snapshot) => snapshot.id),
+      [later.id],
+    );
   });
 
   it("lists running and completed terminals", async () => {
