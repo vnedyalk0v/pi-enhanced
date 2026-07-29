@@ -17,6 +17,7 @@ import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { Readable } from "node:stream";
+import { setTimeout as delay } from "node:timers/promises";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 export type BinaryName = "fd" | "rg";
@@ -192,6 +193,55 @@ function isRegularExecutable(path: string): boolean {
   }
 }
 
+async function publishPrepared(
+  prepared: string,
+  dest: string,
+  linkPrepared = linkSync,
+): Promise<boolean> {
+  try {
+    linkPrepared(prepared, dest);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "EEXIST") {
+      if (!isRegularExecutable(dest)) {
+        throw new Error(`Refusing to replace invalid binary destination ${dest}`);
+      }
+      return false;
+    }
+    if (code !== "EPERM" && code !== "EOPNOTSUPP" && code !== "ENOTSUP") throw error;
+  }
+
+  const lockDir = `${dest}.install-lock`;
+  const deadline = Date.now() + 5_000;
+  while (true) {
+    try {
+      mkdirSync(lockDir);
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (isRegularExecutable(dest)) return false;
+      if (Date.now() >= deadline) {
+        throw new Error(`Timed out waiting to install ${dest}`);
+      }
+      await delay(10);
+    }
+  }
+
+  try {
+    if (existsSync(dest)) {
+      if (!isRegularExecutable(dest)) {
+        throw new Error(`Refusing to replace invalid binary destination ${dest}`);
+      }
+      return false;
+    }
+    renameSync(prepared, dest);
+    return true;
+  } finally {
+    rmSync(lockDir, { recursive: true, force: true });
+  }
+}
+
 export async function ensureBinary(
   name: BinaryName,
   options?: { agentDir?: string; platform?: PlatformTarget | null },
@@ -199,6 +249,7 @@ export async function ensureBinary(
     resolveExisting: typeof resolveExisting;
     downloadToFile: typeof downloadToFile;
     expectedDigest: typeof expectedDigest;
+    linkPrepared?: typeof linkSync;
   } = { resolveExisting, downloadToFile, expectedDigest },
 ): Promise<{ path: string; installed: boolean }> {
   const agentDir = options?.agentDir ?? getAgentDir();
@@ -229,15 +280,7 @@ export async function ensureBinary(
     const version = name === "fd" ? FD_VERSION : RG_VERSION;
     await verifyArchive(archive, digest, `${name} ${version} on ${target.os}/${target.arch}`);
     const prepared = await extractBinary(archive, name, attemptDir);
-    try {
-      linkSync(prepared, dest);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      if (!isRegularExecutable(dest)) {
-        throw new Error(`Refusing to replace invalid binary destination ${dest}`);
-      }
-      installed = false;
-    }
+    installed = await publishPrepared(prepared, dest, dependencies.linkPrepared);
   } finally {
     rmSync(attemptDir, { recursive: true, force: true });
   }

@@ -78,6 +78,26 @@ describe("web research formatting", () => {
     assert.ok(!output.includes("\uFFFD"));
   });
 
+  it("preserves a UTF-8-safe prefix of an oversized crawl line", () => {
+    const output = formatCrawlResult({
+      provider: "firecrawl",
+      url: "https://root.example",
+      status: "completed",
+      pages: [{
+        title: "Large",
+        url: "https://large.example",
+        markdown: "é".repeat(DEFAULT_MAX_BYTES),
+      }],
+    });
+    const noticeAt = output.lastIndexOf("\n\n[truncated:");
+    const content = output.slice(0, noticeAt);
+
+    assert.ok(content.endsWith("é"));
+    assert.ok(Buffer.byteLength(content) >= DEFAULT_MAX_BYTES - 1);
+    assert.ok(Buffer.byteLength(content) <= DEFAULT_MAX_BYTES);
+    assert.ok(!output.includes("\uFFFD"));
+  });
+
   it("does not consume pages after the bounded head is full", () => {
     let laterMarkdownReads = 0;
     const laterPage = {

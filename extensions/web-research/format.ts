@@ -2,6 +2,7 @@ import {
   DEFAULT_MAX_BYTES,
   DEFAULT_MAX_LINES,
 } from "@earendil-works/pi-coding-agent";
+import { StringDecoder } from "node:string_decoder";
 import { formatTruncationNotice, truncateForModel } from "../shared/text.ts";
 import type { ClassifiedError } from "./errors.ts";
 import type { CrawlResult, ScrapeResult, SearchResult } from "./normalize.ts";
@@ -54,8 +55,20 @@ export function formatCrawlResult(result: CrawlResult): string {
     const remainingBytes = DEFAULT_MAX_BYTES - state.bytes - separatorBytes;
     const line = text.slice(start, end);
     const lineBytes = Buffer.byteLength(line);
-    if (state.lines.length >= DEFAULT_MAX_LINES || lineBytes > remainingBytes) {
+    if (state.lines.length >= DEFAULT_MAX_LINES) {
       state.truncatedTotalBytes = state.bytes + separatorBytes + lineBytes;
+      return false;
+    }
+    if (lineBytes > remainingBytes) {
+      state.truncatedTotalBytes = state.bytes + separatorBytes + lineBytes;
+      if (remainingBytes > 0) {
+        const decoder = new StringDecoder("utf8");
+        const prefix = decoder.write(Buffer.from(line).subarray(0, remainingBytes));
+        if (prefix) {
+          state.lines.push(prefix);
+          state.bytes += separatorBytes + Buffer.byteLength(prefix);
+        }
+      }
       return false;
     }
     state.lines.push(line);

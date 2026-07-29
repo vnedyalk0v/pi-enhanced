@@ -153,6 +153,44 @@ describe("ensureBinary", () => {
     }
   });
 
+  it("publishes safely when the filesystem does not support hard links", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-binary-no-links-"));
+    try {
+      const agentDir = join(root, "agent");
+      const fixture = await createBinaryArchive(root, "fd");
+      let downloadCount = 0;
+      let releaseDownloads = () => {};
+      const downloadsReady = new Promise<void>((resolve) => {
+        releaseDownloads = resolve;
+      });
+      const dependencies = {
+        resolveExisting: async () => null,
+        downloadToFile: async (_url: string, dest: string) => {
+          await copyFile(fixture.archive, dest);
+          downloadCount++;
+          if (downloadCount === 2) releaseDownloads();
+          await downloadsReady;
+        },
+        expectedDigest: () => fixture.digest,
+        linkPrepared: () => {
+          throw Object.assign(new Error("hard links unsupported"), { code: "EOPNOTSUPP" });
+        },
+      };
+
+      const results = await Promise.all([
+        ensureBinary("fd", { agentDir, platform: { os: "darwin", arch: "arm64" } }, dependencies),
+        ensureBinary("fd", { agentDir, platform: { os: "darwin", arch: "arm64" } }, dependencies),
+      ]);
+
+      assert.equal(results.filter(({ installed }) => installed).length, 1);
+      assert.equal(await readFile(results[0].path, "utf8"), fixture.contents);
+      assert.notEqual((await stat(results[0].path)).mode & 0o111, 0);
+      assert.deepEqual(await readdir(join(agentDir, "bin")), ["fd"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("does not overwrite an invalid destination created during installation", async () => {
     const root = await mkdtemp(join(tmpdir(), "pi-binary-invalid-"));
     try {
