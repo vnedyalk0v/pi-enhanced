@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { parseDuckDuckGoHtml } from "./fallback-search.ts";
+import {
+  DUCKDUCKGO_MAX_RESPONSE_BYTES,
+  duckDuckGoSearch,
+  parseDuckDuckGoHtml,
+} from "./fallback-search.ts";
+import { readResponseText, withResponseTimeout } from "./response.ts";
 
 describe("parseDuckDuckGoHtml", () => {
   it("extracts result__a links and snippets", () => {
@@ -20,5 +25,59 @@ describe("parseDuckDuckGoHtml", () => {
     assert.equal(hits[0]?.url, "https://example.com/page");
     assert.match(hits[0]?.description ?? "", /short description/);
     assert.equal(hits[1]?.url, "https://other.test/docs");
+  });
+});
+
+describe("duckDuckGoSearch", () => {
+  it("reads a below-limit response", async () => {
+    const fetchImpl = async () =>
+      new Response(
+        '<a class="result__a" href="https://example.com/">Example</a>' +
+          '<a class="result__snippet">Description</a>',
+      );
+    const result = await duckDuckGoSearch("pi", { fetchImpl: fetchImpl as typeof fetch });
+
+    assert.equal(result.provider, "duckduckgo");
+    assert.equal(result.results[0]?.url, "https://example.com/");
+  });
+
+  it("rejects oversized responses before buffering them", async () => {
+    const fetchImpl = async () =>
+      new Response(new Uint8Array(DUCKDUCKGO_MAX_RESPONSE_BYTES + 1));
+
+    await assert.rejects(
+      () => duckDuckGoSearch("pi", { fetchImpl: fetchImpl as typeof fetch }),
+      new RegExp(`DuckDuckGo response exceeded ${DUCKDUCKGO_MAX_RESPONSE_BYTES} bytes`),
+    );
+  });
+
+  it("honors caller abort while reading a stalled response", async () => {
+    const controller = new AbortController();
+    let streamCancelled = false;
+    const fetchImpl = async () =>
+      new Response(
+        new ReadableStream({
+          cancel() {
+            streamCancelled = true;
+          },
+        }),
+      );
+    const search = duckDuckGoSearch("pi", {
+      signal: controller.signal,
+      fetchImpl: fetchImpl as typeof fetch,
+    });
+    setImmediate(() => controller.abort());
+
+    await assert.rejects(search, { name: "AbortError" });
+    assert.equal(streamCancelled, true);
+  });
+
+  it("times out while reading a stalled response", async () => {
+    const response = new Response(new ReadableStream());
+
+    await assert.rejects(
+      () => readResponseText(response, 1, "test", withResponseTimeout(undefined, 10)),
+      { name: "TimeoutError" },
+    );
   });
 });

@@ -17,8 +17,10 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, it } from "node:test";
 import {
+  ARCHIVE_MAX_BYTES,
   candidateNames,
   detectPlatform,
+  downloadToFile,
   ensureBinary,
   expectedDigest,
   firstLocatorResult,
@@ -158,6 +160,80 @@ describe("verifyArchive", () => {
 });
 
 describe("ensureBinary", () => {
+  it("rejects oversized downloads and removes the install attempt", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-binary-oversized-"));
+    try {
+      const agentDir = join(root, "agent");
+      const fetchImpl = async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new Uint8Array(ARCHIVE_MAX_BYTES + 1));
+              controller.close();
+            },
+          }),
+        );
+
+      await assert.rejects(
+        ensureBinary(
+          "fd",
+          { agentDir, platform: { os: "darwin", arch: "arm64" } },
+          {
+            resolveExisting: async () => null,
+            downloadToFile: (url, dest, signal) =>
+              downloadToFile(url, dest, signal, fetchImpl as typeof fetch),
+            expectedDigest: () => "unused",
+          },
+        ),
+        new RegExp(`Download exceeded ${ARCHIVE_MAX_BYTES} bytes`),
+      );
+      assert.deepEqual(await readdir(join(agentDir, "bin")), []);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("aborts stalled downloads and removes the install attempt", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-binary-aborted-"));
+    try {
+      const agentDir = join(root, "agent");
+      const controller = new AbortController();
+      let streamCancelled = false;
+      const fetchImpl = async () =>
+        new Response(
+          new ReadableStream({
+            start(streamController) {
+              streamController.enqueue(new Uint8Array([1]));
+            },
+            cancel() {
+              streamCancelled = true;
+            },
+          }),
+        );
+      const install = ensureBinary(
+        "fd",
+        {
+          agentDir,
+          platform: { os: "darwin", arch: "arm64" },
+          signal: controller.signal,
+        },
+        {
+          resolveExisting: async () => null,
+          downloadToFile: (url, dest, signal) =>
+            downloadToFile(url, dest, signal, fetchImpl as typeof fetch),
+          expectedDigest: () => "unused",
+        },
+      );
+      setImmediate(() => controller.abort());
+
+      await assert.rejects(install, { name: "AbortError" });
+      assert.equal(streamCancelled, true);
+      assert.deepEqual(await readdir(join(agentDir, "bin")), []);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("publishes one complete executable across concurrent installs and cleans attempts", async () => {
     const root = await mkdtemp(join(tmpdir(), "pi-binary-race-"));
     try {

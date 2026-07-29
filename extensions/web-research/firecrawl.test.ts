@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { classifyThrown } from "./errors.ts";
-import { firecrawlCrawl, firecrawlScrape, firecrawlSearch } from "./firecrawl.ts";
+import {
+  FIRECRAWL_MAX_RESPONSE_BYTES,
+  firecrawlCrawl,
+  firecrawlScrape,
+  firecrawlSearch,
+} from "./firecrawl.ts";
 
 type RequestRecord = { method: string; url: string };
 
@@ -61,6 +66,44 @@ describe("firecrawl", () => {
         const c = classifyThrown(err);
         assert.equal(c.kind, "quota");
         assert.equal(c.fallbackEligible, true);
+        return true;
+      },
+    );
+  });
+
+  it("rejects oversized responses before buffering them", async () => {
+    const fetchImpl = mockFetch([
+      () => new Response(new Uint8Array(FIRECRAWL_MAX_RESPONSE_BYTES + 1)),
+    ]);
+
+    await assert.rejects(
+      () =>
+        firecrawlSearch({
+          apiKey: "fc-test",
+          query: "q",
+          fetchImpl: fetchImpl as typeof fetch,
+        }),
+      new RegExp(`Firecrawl response exceeded ${FIRECRAWL_MAX_RESPONSE_BYTES} bytes`),
+    );
+  });
+
+  it("preserves HTTP classification without exposing provider bodies", async () => {
+    const fetchImpl = mockFetch([
+      () => new Response("provider-secret-details", { status: 500 }),
+    ]);
+
+    await assert.rejects(
+      () =>
+        firecrawlSearch({
+          apiKey: "fc-test",
+          query: "q",
+          fetchImpl: fetchImpl as typeof fetch,
+        }),
+      (error: unknown) => {
+        const classified = classifyThrown(error);
+        assert.equal(classified.kind, "transient");
+        assert.equal(classified.message, "Firecrawl request failed: HTTP 500");
+        assert.doesNotMatch(classified.message, /provider-secret-details/);
         return true;
       },
     );

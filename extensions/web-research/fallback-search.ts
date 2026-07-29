@@ -1,5 +1,9 @@
+import { DEFAULT_MAX_BYTES } from "@earendil-works/pi-coding-agent";
 import type { SearchHit, SearchResult } from "./normalize.ts";
 import { normalizeFallbackSearch } from "./normalize.ts";
+import { readResponseText, withResponseTimeout } from "./response.ts";
+
+export const DUCKDUCKGO_MAX_RESPONSE_BYTES = DEFAULT_MAX_BYTES * 20;
 
 /**
  * No-key web search via DuckDuckGo HTML results.
@@ -11,6 +15,7 @@ export async function duckDuckGoSearch(
 ): Promise<SearchResult> {
   const limit = Math.min(Math.max(options.limit ?? 5, 1), 10);
   const fetchImpl = options.fetchImpl ?? fetch;
+  const signal = withResponseTimeout(options.signal);
   const url =
     "https://html.duckduckgo.com/html/?" +
     new URLSearchParams({ q: query }).toString();
@@ -21,7 +26,7 @@ export async function duckDuckGoSearch(
       Accept: "text/html",
       "User-Agent": "pi-enhanced-web-research/0.1 (+https://github.com/vnedyalk0v/pi-enhanced)",
     },
-    signal: options.signal,
+    signal,
     redirect: "follow",
   });
 
@@ -29,7 +34,7 @@ export async function duckDuckGoSearch(
     throw new Error(`DuckDuckGo search failed: HTTP ${res.status}`);
   }
 
-  const html = await res.text();
+  const html = await readResponseText(res, DUCKDUCKGO_MAX_RESPONSE_BYTES, "DuckDuckGo", signal);
   const hits = parseDuckDuckGoHtml(html, limit);
   if (hits.length === 0) {
     throw new Error("DuckDuckGo search returned no parseable results");
