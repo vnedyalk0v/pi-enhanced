@@ -72,8 +72,20 @@ function preferFdAndRg(pi: ExtensionAPI) {
 
 export default function (pi: ExtensionAPI) {
   const spillDirectories = new Set<string>();
+  let shuttingDown = false;
+
+  async function trackSpill(fullOutputPath?: string) {
+    if (!fullOutputPath) return;
+    const directory = dirname(fullOutputPath);
+    if (shuttingDown) {
+      await rm(directory, { recursive: true, force: true });
+    } else {
+      spillDirectories.add(directory);
+    }
+  }
 
   pi.on("session_shutdown", async () => {
+    shuttingDown = true;
     const directories = [...spillDirectories];
     spillDirectories.clear();
     await Promise.allSettled(
@@ -120,7 +132,7 @@ export default function (pi: ExtensionAPI) {
         });
         const args = buildFdArgs(params);
         const result = await runBinary(binary, args, ctx.cwd, "pi-fd", signal);
-        if (result.fullOutputPath) spillDirectories.add(dirname(result.fullOutputPath));
+        await trackSpill(result.fullOutputPath);
         if (result.exitCode !== 0 && !result.hasOutput) {
           return {
             content: [
@@ -174,7 +186,7 @@ export default function (pi: ExtensionAPI) {
         });
         const args = buildRgArgs(params);
         const result = await runBinary(binary, args, ctx.cwd, "pi-rg", signal);
-        if (result.fullOutputPath) spillDirectories.add(dirname(result.fullOutputPath));
+        await trackSpill(result.fullOutputPath);
         // rg exits 1 when no matches
         if (result.exitCode === 1 && !result.hasOutput) {
           return {

@@ -129,6 +129,27 @@ describe("createPiAssistantTextCollector", () => {
     }
   });
 
+  it("accepts an exact-limit record split inside a surrogate pair", () => {
+    const event = assistantEvent("😀");
+    const split = event.indexOf("😀") + 1;
+    const collector = createPiAssistantTextCollector(Buffer.byteLength(event, "utf8"));
+
+    collector.push(event.slice(0, split));
+    collector.push(`${event.slice(split)}\n`);
+
+    assert.equal(collector.finish(), "😀");
+  });
+
+  it("accepts an exact-limit CRLF record", () => {
+    const event = assistantEvent("crlf");
+    const collector = createPiAssistantTextCollector(Buffer.byteLength(event, "utf8"));
+
+    collector.push(`${event}\r`);
+    collector.push("\n");
+
+    assert.equal(collector.finish(), "crlf");
+  });
+
   it("rejects a complete record one UTF-8 byte over the ceiling", () => {
     const emptyBytes = Buffer.byteLength(assistantEvent(""), "utf8");
     const limit = emptyBytes + 16;

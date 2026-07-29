@@ -292,14 +292,10 @@ describe("WorkflowManager", () => {
       goal: "third cancelled workflow",
       cwd: process.cwd(),
     });
-    const fourth = await m.start({
-      goal: "fourth cancelled workflow",
-      cwd: process.cwd(),
-    });
-    const cancelled = await m.cancel([third.id, fourth.id]);
+    const cancelled = await m.cancel([first.id, third.id]);
     assert.deepEqual(
       cancelled.map((snapshot) => snapshot.status),
-      ["cancelled", "cancelled"],
+      ["done", "cancelled"],
     );
   });
 

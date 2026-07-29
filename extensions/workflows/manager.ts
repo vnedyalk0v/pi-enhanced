@@ -626,25 +626,23 @@ export class WorkflowManager {
     const unknown = ids.filter((id) => !this.entries.has(id));
     if (unknown.length > 0) throw new Error(`Unknown workflow id(s): ${unknown.join(", ")}`);
 
-    const waiting: Promise<void>[] = [];
-    const interested: string[] = [];
-    for (const id of ids) {
-      const entry = this.entries.get(id)!;
-      if (entry.status !== "running") continue;
-      this.waitInterest.add(id);
-      interested.push(id);
-      entry.cancelRequested = true;
-      const runningIds = entry.subagents
-        .list()
-        .filter((s) => s.status === "running")
-        .map((s) => s.id);
-      if (runningIds.length > 0) {
-        void entry.subagents.cancel(runningIds).catch(() => {});
-      }
-      waiting.push(entry.settlePromise);
-    }
-
+    for (const id of ids) this.waitInterest.add(id);
     try {
+      const waiting: Promise<void>[] = [];
+      for (const id of ids) {
+        const entry = this.entries.get(id)!;
+        if (entry.status !== "running") continue;
+        entry.cancelRequested = true;
+        const runningIds = entry.subagents
+          .list()
+          .filter((s) => s.status === "running")
+          .map((s) => s.id);
+        if (runningIds.length > 0) {
+          void entry.subagents.cancel(runningIds).catch(() => {});
+        }
+        waiting.push(entry.settlePromise);
+      }
+
       if (waiting.length > 0) {
         await Promise.race([
           Promise.all(waiting),
@@ -653,7 +651,7 @@ export class WorkflowManager {
       }
       return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
     } finally {
-      for (const id of interested) this.waitInterest.release(id);
+      for (const id of ids) this.waitInterest.release(id);
     }
   }
 

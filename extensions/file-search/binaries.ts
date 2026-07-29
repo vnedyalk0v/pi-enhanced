@@ -178,6 +178,7 @@ export async function downloadToFile(
     signal: requestSignal,
   });
   if (!response.ok || !response.body) {
+    await response.body?.cancel().catch(() => {});
     throw new Error(`Download failed (${response.status}): ${url}`);
   }
   const nodeStream = Readable.fromWeb(response.body as import("node:stream/web").ReadableStream);

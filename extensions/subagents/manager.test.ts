@@ -174,11 +174,10 @@ describe("SubagentManager", () => {
     );
 
     const third = await m.spawn({ prompt: "third", cwd: process.cwd() });
-    const fourth = await m.spawn({ prompt: "fourth", cwd: process.cwd() });
-    const cancelled = await m.cancel([third.id, fourth.id]);
+    const cancelled = await m.cancel([first.id, third.id]);
     assert.deepEqual(
       cancelled.map((snapshot) => snapshot.status),
-      ["killed", "killed"],
+      ["done", "killed"],
     );
   });
 

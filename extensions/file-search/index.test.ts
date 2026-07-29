@@ -65,4 +65,57 @@ describe("file-search lifecycle", () => {
       await rm(binDir, { recursive: true, force: true });
     }
   });
+
+  it("removes spill output created after shutdown begins", async () => {
+    const binDir = await mkdtemp(join(tmpdir(), "pi-file-search-late-bin-"));
+    const binary = join(binDir, "rg");
+    const readyPath = join(binDir, "ready");
+    const releasePath = join(binDir, "release");
+    await writeFile(
+      binary,
+      `#!${process.execPath}
+const { existsSync, writeFileSync } = require("node:fs");
+writeFileSync(${JSON.stringify(readyPath)}, "");
+const timer = setInterval(() => {
+  if (!existsSync(${JSON.stringify(releasePath)})) return;
+  clearInterval(timer);
+  for (let i = 0; i < ${DEFAULT_MAX_LINES + 100}; i++) console.log(i);
+}, 5);
+`,
+    );
+    await chmod(binary, 0o755);
+
+    const { handlers, tools } = captureExtension();
+    const originalPath = process.env.PATH;
+    process.env.PATH = `${binDir}${delimiter}${originalPath ?? ""}`;
+    try {
+      const execution = tools
+        .get("rg")!
+        .execute("test", { pattern: "." }, undefined, undefined, {
+          cwd: tmpdir(),
+          hasUI: false,
+        }) as Promise<{ details: { fullOutputPath?: string } }>;
+
+      for (let i = 0; i < 100; i++) {
+        try {
+          await stat(readyPath);
+          break;
+        } catch {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      }
+      await stat(readyPath);
+      await handlers.get("session_shutdown")!({});
+      await writeFile(releasePath, "");
+
+      const result = await execution;
+      const fullOutputPath = result.details.fullOutputPath;
+      assert.ok(fullOutputPath);
+      await assert.rejects(stat(fullOutputPath), { code: "ENOENT" });
+    } finally {
+      process.env.PATH = originalPath;
+      await handlers.get("session_shutdown")!({});
+      await rm(binDir, { recursive: true, force: true });
+    }
+  });
 });

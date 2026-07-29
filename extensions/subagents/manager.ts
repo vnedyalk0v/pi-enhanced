@@ -322,22 +322,20 @@ export class SubagentManager {
     const unknown = ids.filter((id) => !this.entries.has(id));
     if (unknown.length > 0) throw new Error(`Unknown subagent id(s): ${unknown.join(", ")}`);
 
-    const waiting: Promise<void>[] = [];
-    const interested: string[] = [];
-    for (const id of ids) {
-      const entry = this.entries.get(id)!;
-      if (entry.status !== "running") continue;
-      this.waitInterest.add(id);
-      interested.push(id);
-      entry.killSignaled = true;
-      entry.job?.handle.kill("SIGTERM");
-      setTimeout(() => {
-        if (entry.status === "running") entry.job?.handle.kill("SIGKILL");
-      }, this.killGraceMs).unref?.();
-      waiting.push(entry.settlePromise);
-    }
-
+    for (const id of ids) this.waitInterest.add(id);
     try {
+      const waiting: Promise<void>[] = [];
+      for (const id of ids) {
+        const entry = this.entries.get(id)!;
+        if (entry.status !== "running") continue;
+        entry.killSignaled = true;
+        entry.job?.handle.kill("SIGTERM");
+        setTimeout(() => {
+          if (entry.status === "running") entry.job?.handle.kill("SIGKILL");
+        }, this.killGraceMs).unref?.();
+        waiting.push(entry.settlePromise);
+      }
+
       if (waiting.length > 0) {
         await Promise.race([
           Promise.all(waiting),
@@ -346,7 +344,7 @@ export class SubagentManager {
       }
       return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
     } finally {
-      for (const id of interested) this.waitInterest.release(id);
+      for (const id of ids) this.waitInterest.release(id);
     }
   }
 

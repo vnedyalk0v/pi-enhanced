@@ -159,6 +159,37 @@ describe("verifyArchive", () => {
   });
 });
 
+describe("downloadToFile", () => {
+  it("cancels a failed response body before preserving the HTTP error", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-binary-failed-response-"));
+    let cancelled = false;
+    const fetchImpl = async () =>
+      new Response(
+        new ReadableStream({
+          cancel() {
+            cancelled = true;
+          },
+        }),
+        { status: 503 },
+      );
+
+    try {
+      await assert.rejects(
+        downloadToFile(
+          "https://example.test/fd.tar.gz",
+          join(root, "archive.tar.gz"),
+          undefined,
+          fetchImpl as typeof fetch,
+        ),
+        /Download failed \(503\): https:\/\/example\.test\/fd\.tar\.gz/,
+      );
+      assert.equal(cancelled, true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("ensureBinary", () => {
   it("rejects oversized downloads and removes the install attempt", async () => {
     const root = await mkdtemp(join(tmpdir(), "pi-binary-oversized-"));

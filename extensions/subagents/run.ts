@@ -143,7 +143,9 @@ export function createPiAssistantTextCollector(maxBytes = PI_RESULT_RECORD_MAX_B
   const check = (text: string) => {
     if (Buffer.byteLength(text, "utf8") > maxBytes) fail();
   };
-  const processLine = (line: string) => {
+  const normalizeLine = (line: string) => (line.endsWith("\r") ? line.slice(0, -1) : line);
+  const processLine = (rawLine: string) => {
+    const line = normalizeLine(rawLine);
     check(line);
     const text = parsePiAssistantText(line);
     if (text) {
@@ -157,20 +159,13 @@ export function createPiAssistantTextCollector(maxBytes = PI_RESULT_RECORD_MAX_B
       if (overflow) throw overflow;
       let offset = 0;
       for (let newline = chunk.indexOf("\n"); newline >= 0; newline = chunk.indexOf("\n", offset)) {
-        const part = chunk.slice(offset, newline);
-        if (Buffer.byteLength(remainder, "utf8") + Buffer.byteLength(part, "utf8") > maxBytes) {
-          fail();
-        }
-        const line = remainder + part;
+        const line = remainder + chunk.slice(offset, newline);
         remainder = "";
         processLine(line);
         offset = newline + 1;
       }
-      const tail = chunk.slice(offset);
-      if (Buffer.byteLength(remainder, "utf8") + Buffer.byteLength(tail, "utf8") > maxBytes) {
-        fail();
-      }
-      remainder += tail;
+      remainder += chunk.slice(offset);
+      check(normalizeLine(remainder));
       return last;
     },
     finish() {
