@@ -21,8 +21,11 @@ import {
   detectPlatform,
   ensureBinary,
   expectedDigest,
+  firstLocatorResult,
+  locatorCommand,
   releaseUrl,
   verifyArchive,
+  which,
 } from "./binaries.ts";
 import { buildFdArgs, buildRgArgs } from "./run.ts";
 
@@ -87,6 +90,44 @@ describe("expectedDigest", () => {
       }
     }
     assert.equal(expectedDigest("fd", { os: "win32", arch: "x64" }), null);
+  });
+});
+
+describe("which", () => {
+  it("selects the platform locator", () => {
+    for (const [platform, expected] of [
+      ["win32", "where.exe"],
+      ["darwin", "which"],
+      ["linux", "which"],
+    ] as const) {
+      assert.equal(locatorCommand(platform), expected);
+    }
+  });
+
+  it("returns the first non-empty locator result", () => {
+    for (const [output, expected] of [
+      ["\r\nC:\\Tools\\rg.exe\r\nD:\\Tools\\rg.exe\r\n", "C:\\Tools\\rg.exe"],
+      ["\n/usr/local/bin/fd\n/usr/bin/fd\n", "/usr/local/bin/fd"],
+      [" \r\n\t\r\n", null],
+    ] as const) {
+      assert.equal(firstLocatorResult(output), expected);
+    }
+  });
+
+  it("returns null when the locator exits nonzero or errors", async () => {
+    assert.equal(
+      await which("rg", "win32", async (locator, command) => {
+        assert.deepEqual([locator, command], ["where.exe", "rg"]);
+        return { code: 1, output: "not found" };
+      }),
+      null,
+    );
+    assert.equal(
+      await which("rg", "linux", async () => {
+        throw new Error("spawn failed");
+      }),
+      null,
+    );
   });
 });
 

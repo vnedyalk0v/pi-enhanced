@@ -67,19 +67,45 @@ export function candidateNames(name: BinaryName): string[] {
   return [name];
 }
 
-export async function which(command: string): Promise<string | null> {
-  return await new Promise((resolve) => {
-    const child = spawn("which", [command], { stdio: ["ignore", "pipe", "ignore"] });
+export function locatorCommand(platform = process.platform): "where.exe" | "which" {
+  return platform === "win32" ? "where.exe" : "which";
+}
+
+export function firstLocatorResult(output: string): string | null {
+  return output
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0) ?? null;
+}
+
+type RunLocator = (
+  locator: string,
+  command: string,
+) => Promise<{ code: number | null; output: string }>;
+
+async function runLocator(locator: string, command: string) {
+  return await new Promise<{ code: number | null; output: string }>((resolve, reject) => {
+    const child = spawn(locator, [command], { stdio: ["ignore", "pipe", "ignore"] });
     let out = "";
     child.stdout.on("data", (chunk: Buffer) => {
       out += chunk.toString("utf8");
     });
-    child.on("error", () => resolve(null));
-    child.on("close", (code) => {
-      const path = out.trim().split("\n")[0];
-      resolve(code === 0 && path ? path : null);
-    });
+    child.on("error", reject);
+    child.on("close", (code) => resolve({ code, output: out }));
   });
+}
+
+export async function which(
+  command: string,
+  platform = process.platform,
+  locate: RunLocator = runLocator,
+): Promise<string | null> {
+  try {
+    const result = await locate(locatorCommand(platform), command);
+    return result.code === 0 ? firstLocatorResult(result.output) : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function resolveExisting(
