@@ -17,7 +17,7 @@ import {
 import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
@@ -33,6 +33,9 @@ type TargetKey = `${PlatformTarget["os"]}-${PlatformTarget["arch"]}`;
 const FD_VERSION = "10.2.0";
 const RG_VERSION = "14.1.1";
 const PUBLISH_LOCK_STALE_MS = 5_000;
+// The largest pinned archive is 2.6 MB; 8 MiB leaves ample release-format headroom.
+export const ARCHIVE_MAX_BYTES = 8 * 1024 * 1024;
+const DOWNLOAD_TIMEOUT_MS = 120_000;
 
 const DIGESTS: Record<BinaryName, Record<TargetKey, string>> = {
   fd: {
@@ -67,19 +70,45 @@ export function candidateNames(name: BinaryName): string[] {
   return [name];
 }
 
-export async function which(command: string): Promise<string | null> {
-  return await new Promise((resolve) => {
-    const child = spawn("which", [command], { stdio: ["ignore", "pipe", "ignore"] });
+export function locatorCommand(platform = process.platform): "where.exe" | "which" {
+  return platform === "win32" ? "where.exe" : "which";
+}
+
+export function firstLocatorResult(output: string): string | null {
+  return output
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0) ?? null;
+}
+
+type RunLocator = (
+  locator: string,
+  command: string,
+) => Promise<{ code: number | null; output: string }>;
+
+async function runLocator(locator: string, command: string) {
+  return await new Promise<{ code: number | null; output: string }>((resolve, reject) => {
+    const child = spawn(locator, [command], { stdio: ["ignore", "pipe", "ignore"] });
     let out = "";
     child.stdout.on("data", (chunk: Buffer) => {
       out += chunk.toString("utf8");
     });
-    child.on("error", () => resolve(null));
-    child.on("close", (code) => {
-      const path = out.trim().split("\n")[0];
-      resolve(code === 0 && path ? path : null);
-    });
+    child.on("error", reject);
+    child.on("close", (code) => resolve({ code, output: out }));
   });
+}
+
+export async function which(
+  command: string,
+  platform = process.platform,
+  locate: RunLocator = runLocator,
+): Promise<string | null> {
+  try {
+    const result = await locate(locatorCommand(platform), command);
+    return result.code === 0 ? firstLocatorResult(result.output) : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function resolveExisting(
@@ -130,16 +159,49 @@ export async function verifyArchive(
   }
 }
 
-async function downloadToFile(url: string, dest: string): Promise<void> {
-  const response = await fetch(url, {
+export async function downloadToFile(
+  url: string,
+  dest: string,
+  signal?: AbortSignal,
+  fetchImpl: typeof fetch = fetch,
+): Promise<void> {
+  const limitController = new AbortController();
+  const timeoutSignal = AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
+  const requestSignal = AbortSignal.any(
+    signal
+      ? [signal, timeoutSignal, limitController.signal]
+      : [timeoutSignal, limitController.signal],
+  );
+  const response = await fetchImpl(url, {
     headers: { "User-Agent": "pi-enhanced-file-search" },
     redirect: "follow",
+    signal: requestSignal,
   });
   if (!response.ok || !response.body) {
+    await response.body?.cancel().catch(() => {});
     throw new Error(`Download failed (${response.status}): ${url}`);
   }
   const nodeStream = Readable.fromWeb(response.body as import("node:stream/web").ReadableStream);
-  await pipeline(nodeStream, createWriteStream(dest));
+  let bytes = 0;
+  const byteLimit = new Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      bytes += chunk.length;
+      if (bytes > ARCHIVE_MAX_BYTES) {
+        const error = new Error(`Download exceeded ${ARCHIVE_MAX_BYTES} bytes: ${url}`);
+        callback(error);
+        return;
+      }
+      callback(null, chunk);
+    },
+  });
+
+  try {
+    await pipeline(nodeStream, byteLimit, createWriteStream(dest), { signal: requestSignal });
+  } catch (error) {
+    limitController.abort(error);
+    rmSync(dest, { force: true });
+    throw error;
+  }
 }
 
 function findNamedFile(dir: string, name: string): string | null {
@@ -258,7 +320,7 @@ async function publishPrepared(
 
 export async function ensureBinary(
   name: BinaryName,
-  options?: { agentDir?: string; platform?: PlatformTarget | null },
+  options?: { agentDir?: string; platform?: PlatformTarget | null; signal?: AbortSignal },
   dependencies: {
     resolveExisting: typeof resolveExisting;
     downloadToFile: typeof downloadToFile;
@@ -286,7 +348,7 @@ export async function ensureBinary(
 
   let installed = true;
   try {
-    await dependencies.downloadToFile(url, archive);
+    await dependencies.downloadToFile(url, archive, options?.signal);
     const digest = dependencies.expectedDigest(name, target);
     if (!digest) {
       throw new Error(`No pinned digest for ${name} on ${target.os}/${target.arch}`);

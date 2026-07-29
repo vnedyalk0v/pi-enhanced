@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import type { BackendJob } from "./backend.ts";
 import { SubagentManager, type ManagerOptions } from "./manager.ts";
+import { PiResultRecordTooLargeError } from "./run.ts";
 
 const managers: SubagentManager[] = [];
 
@@ -134,6 +135,59 @@ describe("SubagentManager", () => {
     assert.equal(settled.at(-1), false);
   });
 
+  it("keeps actively awaited subagents until final snapshots are returned", async () => {
+    const finishers: Array<() => void> = [];
+    const settled = new Map<string, () => void>();
+    const observedIds: string[][] = [];
+    let m!: SubagentManager;
+    m = createManager({
+      maxTracked: 1,
+      starters: {
+        pi: async () => {
+          let finish!: () => void;
+          const wait = new Promise<{ exitCode: number }>((resolve) => {
+            finish = () => resolve({ exitCode: 0 });
+          });
+          finishers.push(finish);
+          return {
+            handle: { pid: 12345, kill: finish, wait },
+            collect: async () => {
+              const result = await wait;
+              return { ...result, resultText: "done", output: "" };
+            },
+          };
+        },
+      },
+      onSettled: ({ snapshot }) => settled.get(snapshot.id)?.(),
+      onChange: () => observedIds.push(m.list().map((snapshot) => snapshot.id)),
+    });
+    const first = await m.spawn({ prompt: "first", cwd: process.cwd() });
+    const second = await m.spawn({ prompt: "second", cwd: process.cwd() });
+    const firstSettled = new Promise<void>((resolve) => settled.set(first.id, resolve));
+
+    const waiting = m.wait([first.id, second.id]);
+    finishers[0]!();
+    await firstSettled;
+    finishers[1]!();
+
+    const snapshots = await waiting;
+    assert.deepEqual(
+      snapshots.map((snapshot) => snapshot.status),
+      ["done", "done"],
+    );
+    assert.deepEqual(m.list().map((snapshot) => snapshot.id), [second.id]);
+    assert.deepEqual(observedIds.at(-1), [second.id]);
+
+    const third = await m.spawn({ prompt: "third", cwd: process.cwd() });
+    const cancelled = await m.cancel([second.id, third.id]);
+    assert.deepEqual(
+      cancelled.map((snapshot) => snapshot.status),
+      ["done", "killed"],
+    );
+    assert.deepEqual(m.list().map((snapshot) => snapshot.id), [third.id]);
+    assert.deepEqual(observedIds.at(-1), [third.id]);
+  });
+
   it("cancel kills a running subagent", async () => {
     const m = createManager({
       starters: {
@@ -148,6 +202,36 @@ describe("SubagentManager", () => {
     assert.equal(cancelled[0]?.status, "killed");
   });
 
+  it("keeps cancel interest until an aborted termination settles", async () => {
+    let finish!: () => void;
+    const wait = new Promise<{ exitCode: number }>((resolve) => {
+      finish = () => resolve({ exitCode: 1 });
+    });
+    let resolveSettled!: (consumed: boolean) => void;
+    const settled = new Promise<boolean>((resolve) => {
+      resolveSettled = resolve;
+    });
+    const m = createManager({
+      starters: {
+        pi: async () => ({
+          handle: { pid: 12345, kill: () => {}, wait },
+          collect: async () => ({ ...(await wait), resultText: "", output: "" }),
+        }),
+      },
+      onSettled: ({ consumed }) => resolveSettled(consumed),
+    });
+    const snap = await m.spawn({ prompt: "long", cwd: process.cwd() });
+    const controller = new AbortController();
+    const cancelling = m.cancel([snap.id], controller.signal);
+
+    controller.abort();
+    await assert.rejects(cancelling, /aborted/i);
+    assert.equal(m.get(snap.id)?.status, "running");
+    finish();
+
+    assert.equal(await settled, true);
+  });
+
   it("enforces concurrency limit", async () => {
     const m = createManager({
       maxRunning: 1,
@@ -160,6 +244,58 @@ describe("SubagentManager", () => {
       () => m.spawn({ prompt: "two", cwd: process.cwd() }),
       /Concurrency limit/,
     );
+  });
+
+  it("kills a subagent after its max runtime and releases capacity", async () => {
+    const signals: NodeJS.Signals[] = [];
+    let finish!: () => void;
+    const wait = new Promise<{ exitCode: number }>((resolve) => {
+      finish = () => resolve({ exitCode: 1 });
+    });
+    let calls = 0;
+    const m = createManager({
+      maxRunning: 1,
+      maxRuntimeMs: 30,
+      killGraceMs: 10,
+      starters: {
+        pi: async () => {
+          calls += 1;
+          if (calls > 1) {
+            return fakeJob({ exitCode: 0, resultText: "next", delayMs: 10 });
+          }
+          return {
+            handle: {
+              pid: 12345,
+              kill: (signal = "SIGTERM") => {
+                signals.push(signal);
+                if (signal === "SIGKILL") finish();
+              },
+              wait,
+            },
+            collect: async () => {
+              const result = await wait;
+              return {
+                ...result,
+                signal: signals.at(-1),
+                resultText: "",
+                output: "",
+              };
+            },
+          };
+        },
+      },
+    });
+
+    const started = await m.spawn({ prompt: "timeout", cwd: process.cwd() });
+    const [timedOut] = await m.wait([started.id]);
+    assert.equal(timedOut?.status, "killed");
+    assert.match(timedOut?.errorText ?? "", /exceeded max runtime/);
+    assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+
+    const next = await m.spawn({ prompt: "next", cwd: process.cwd() });
+    const [completed] = await m.wait([next.id]);
+    assert.equal(completed?.status, "done");
+    assert.equal(calls, 2);
   });
 
   it("reserves concurrency while a subagent is starting", async () => {
@@ -338,5 +474,39 @@ describe("SubagentManager", () => {
     await m.wait([snap.id]);
     assert.equal(m.get(snap.id)?.status, "failed");
     assert.equal(m.get(snap.id)?.exitCode, 2);
+  });
+
+  it("fails an oversized result and releases capacity for the next spawn", async () => {
+    let calls = 0;
+    const m = createManager({
+      maxRunning: 1,
+      starters: {
+        pi: async () => {
+          calls += 1;
+          if (calls > 1) {
+            return fakeJob({ exitCode: 0, resultText: "recovered", delayMs: 10 });
+          }
+          const job = fakeJob({ exitCode: 0, delayMs: 10 });
+          job.collect = async () => {
+            await job.handle.wait;
+            throw new PiResultRecordTooLargeError();
+          };
+          return job;
+        },
+      },
+    });
+
+    const oversized = await m.spawn({ prompt: "oversized", cwd: process.cwd() });
+    await m.wait([oversized.id]);
+    const failed = m.get(oversized.id);
+    assert.equal(failed?.status, "failed");
+    assert.equal(failed?.resultText, undefined);
+    assert.match(failed?.errorText ?? "", /result record exceeds.*UTF-8 limit/);
+    assert.ok((failed?.errorText?.length ?? Infinity) < 100);
+
+    const next = await m.spawn({ prompt: "next", cwd: process.cwd() });
+    await m.wait([next.id]);
+    assert.equal(m.get(next.id)?.status, "done");
+    assert.equal(m.get(next.id)?.resultText, "recovered");
   });
 });

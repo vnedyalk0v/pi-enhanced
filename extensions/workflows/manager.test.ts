@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import { access, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import type { BackendJob } from "../subagents/backend.ts";
+import { PiResultRecordTooLargeError } from "../subagents/run.ts";
 import { WorkflowManager } from "./manager.ts";
 
 const managers: WorkflowManager[] = [];
@@ -121,6 +122,33 @@ async function createManager(
 }
 
 describe("WorkflowManager", () => {
+  it("creates distinct private default directories that survive disposal", async () => {
+    const starters = {
+      pi: async () => fakeJob({ exitCode: 0, resultText: "ok", delayMs: 10 }),
+    };
+    const firstManager = new WorkflowManager({ subagentOptions: { starters } });
+    const secondManager = new WorkflowManager({ subagentOptions: { starters } });
+    managers.push(firstManager, secondManager);
+
+    const [first, second] = await Promise.all([
+      firstManager.start({ goal: "first default workflow", cwd: process.cwd() }),
+      secondManager.start({ goal: "second default workflow", cwd: process.cwd() }),
+    ]);
+    tempDirs.push(first.artifactsDir, second.artifactsDir);
+    await Promise.all([firstManager.wait([first.id]), secondManager.wait([second.id])]);
+
+    assert.notEqual(first.artifactsDir, second.artifactsDir);
+    assert.equal(dirname(first.artifactsDir), tmpdir());
+    assert.equal(dirname(second.artifactsDir), tmpdir());
+    if (process.platform !== "win32") {
+      assert.equal((await stat(first.artifactsDir)).mode & 0o077, 0);
+      assert.equal((await stat(second.artifactsDir)).mode & 0o077, 0);
+    }
+
+    await Promise.all([firstManager.disposeAll(), secondManager.disposeAll()]);
+    await Promise.all([access(first.artifactsDir), access(second.artifactsDir)]);
+  });
+
   it("isolates workflow artifacts across managers sharing a root", async () => {
     const artifactsRoot = await mkdtemp(join(tmpdir(), "wf-shared-test-"));
     tempDirs.push(artifactsRoot);
@@ -169,6 +197,10 @@ describe("WorkflowManager", () => {
   });
 
   it("rejects starts at capacity and releases capacity after settlement", async () => {
+    let resolveThird!: () => void;
+    const thirdSettled = new Promise<void>((resolve) => {
+      resolveThird = resolve;
+    });
     const { m } = await createManager({
       maxRunning: 1,
       maxTracked: 1,
@@ -177,6 +209,9 @@ describe("WorkflowManager", () => {
           pi: async () =>
             fakeJob({ exitCode: 0, resultText: "ok scout/review/synth", delayMs: 30 }),
         },
+      },
+      onSettled: ({ snapshot }) => {
+        if (snapshot.goal === "third workflow") resolveThird();
       },
     });
 
@@ -191,11 +226,77 @@ describe("WorkflowManager", () => {
     const later = await m.start({ goal: "later workflow", cwd: process.cwd() });
     await m.wait([later.id]);
 
-    for (let i = 0; i < 20 && m.get(first.id); i++) {
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
+    const third = await m.start({ goal: "third workflow", cwd: process.cwd() });
+    await thirdSettled;
     assert.equal(m.get(first.id), undefined);
-    assert.equal(m.get(later.id)?.status, "done");
+    assert.equal(m.get(later.id), undefined);
+    assert.equal(m.get(third.id)?.status, "done");
+  });
+
+  it("keeps actively awaited workflow artifacts until final snapshots are returned", async () => {
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let releaseSecond!: () => void;
+    const secondGate = new Promise<void>((resolve) => {
+      releaseSecond = resolve;
+    });
+    const settled = new Map<string, () => void>();
+    const { m } = await createManager({
+      maxRunning: 2,
+      maxTracked: 1,
+      subagentOptions: {
+        starters: {
+          pi: async ({ prompt }) => {
+            if (!prompt.includes("retained workflow")) {
+              return fakeJob({ exitCode: 0, resultText: "slow", delayMs: 30_000 });
+            }
+            const gate = prompt.includes("first retained workflow") ? firstGate : secondGate;
+            const wait = gate.then(() => ({ exitCode: 0 }));
+            return {
+              handle: { pid: 99_001, kill: () => {}, wait },
+              collect: async () => {
+                const result = await wait;
+                return { ...result, resultText: "done", output: "" };
+              },
+            };
+          },
+        },
+      },
+      onSettled: ({ snapshot }) => settled.get(snapshot.id)?.(),
+    });
+    const first = await m.start({
+      goal: "first retained workflow",
+      cwd: process.cwd(),
+    });
+    const second = await m.start({
+      goal: "second retained workflow",
+      cwd: process.cwd(),
+    });
+    const firstSettled = new Promise<void>((resolve) => settled.set(first.id, resolve));
+
+    const waiting = m.wait([first.id, second.id]);
+    releaseFirst();
+    await firstSettled;
+    releaseSecond();
+
+    const snapshots = await waiting;
+    assert.deepEqual(
+      snapshots.map((snapshot) => snapshot.status),
+      ["done", "done"],
+    );
+    await stat(first.artifactsDir);
+
+    const third = await m.start({
+      goal: "third cancelled workflow",
+      cwd: process.cwd(),
+    });
+    const cancelled = await m.cancel([first.id, third.id]);
+    assert.deepEqual(
+      cancelled.map((snapshot) => snapshot.status),
+      ["done", "cancelled"],
+    );
   });
 
   it("rolls back artifacts when startup aborts before registration", async () => {
@@ -210,6 +311,7 @@ describe("WorkflowManager", () => {
       },
     });
     const { m, artifactsRoot } = await createManager();
+    await writeFile(join(artifactsRoot, "caller-owned"), "keep");
 
     await assert.rejects(
       () =>
@@ -221,7 +323,7 @@ describe("WorkflowManager", () => {
       /aborted/i,
     );
 
-    assert.deepEqual(await readdir(artifactsRoot), []);
+    assert.deepEqual(await readdir(artifactsRoot), ["caller-owned"]);
     assert.deepEqual(m.list(), []);
   });
 
@@ -361,6 +463,46 @@ describe("WorkflowManager", () => {
     await new Promise((r) => setTimeout(r, 40));
     const cancelled = await m.cancel([snap.id]);
     assert.equal(cancelled[0]?.status, "cancelled");
+  });
+
+  it("keeps cancel interest until an aborted workflow settles", async () => {
+    let backendStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      backendStarted = resolve;
+    });
+    let finish!: () => void;
+    const wait = new Promise<{ exitCode: number }>((resolve) => {
+      finish = () => resolve({ exitCode: 1 });
+    });
+    let resolveSettled!: (consumed: boolean) => void;
+    const settled = new Promise<boolean>((resolve) => {
+      resolveSettled = resolve;
+    });
+    const { m } = await createManager({
+      onSettled: ({ consumed }) => resolveSettled(consumed),
+      subagentOptions: {
+        starters: {
+          pi: async () => {
+            backendStarted();
+            return {
+              handle: { pid: 99_001, kill: () => {}, wait },
+              collect: async () => ({ ...(await wait), resultText: "", output: "" }),
+            };
+          },
+        },
+      },
+    });
+    const snap = await m.start({ goal: "late cancellation", cwd: process.cwd() });
+    await started;
+    const controller = new AbortController();
+    const cancelling = m.cancel([snap.id], controller.signal);
+
+    controller.abort();
+    await assert.rejects(cancelling, /aborted/i);
+    assert.equal(m.get(snap.id)?.status, "running");
+    finish();
+
+    assert.equal(await settled, true);
   });
 
   it("persists killed tasks when cancelled before the first phase starts", async () => {
@@ -550,6 +692,63 @@ describe("WorkflowManager", () => {
       () => m.start({ goal: "  ", cwd: process.cwd() }),
       /goal must not be empty/,
     );
+  });
+
+  it("preserves a large valid synthesis artifact exactly", async () => {
+    const largeResult = `large valid result\n${"é".repeat(512_000)}`;
+    const { m } = await createManager({
+      subagentOptions: {
+        starters: {
+          pi: async (opts: { prompt: string }) =>
+            fakeJob({
+              exitCode: 0,
+              resultText: opts.prompt.includes("task key: synthesize")
+                ? largeResult
+                : "phase ok",
+              delayMs: 5,
+            }),
+        },
+      },
+    });
+
+    const snap = await m.start({ goal: "preserve output", cwd: process.cwd() });
+    const [done] = await m.wait([snap.id]);
+
+    assert.equal(done?.status, "done");
+    assert.ok(done?.finalArtifactPath);
+    assert.equal(await readFile(done!.finalArtifactPath!, "utf8"), `${largeResult}\n`);
+  });
+
+  it("records an oversized synthesis as failed without a complete artifact", async () => {
+    const { m } = await createManager({
+      subagentOptions: {
+        starters: {
+          pi: async (opts: { prompt: string }) => {
+            const job = fakeJob({ exitCode: 0, resultText: "phase ok", delayMs: 5 });
+            if (opts.prompt.includes("task key: synthesize")) {
+              job.collect = async () => {
+                await job.handle.wait;
+                throw new PiResultRecordTooLargeError();
+              };
+            }
+            return job;
+          },
+        },
+      },
+    });
+
+    const snap = await m.start({ goal: "reject oversized output", cwd: process.cwd() });
+    const [done] = await m.wait([snap.id]);
+    const synthesis = done?.phases.find((phase) => phase.name === "synthesis");
+    const task = synthesis?.tasks.find((candidate) => candidate.key === "synthesize");
+
+    assert.equal(done?.status, "partial");
+    assert.equal(task?.status, "failed");
+    assert.match(task?.error ?? "", /result record exceeds.*UTF-8 limit/);
+    assert.ok(task?.artifactPath);
+    assert.match(await readFile(task!.artifactPath!, "utf8"), /- status: failed/);
+    assert.ok(done?.finalArtifactPath);
+    assert.match(await readFile(done!.finalArtifactPath!, "utf8"), /fallback/i);
   });
 
   it("fallback synthesis when synthesis agent fails", async () => {

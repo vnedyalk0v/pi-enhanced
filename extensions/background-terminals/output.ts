@@ -1,5 +1,5 @@
-import { createWriteStream, type WriteStream } from "node:fs";
-import { mkdir, rm } from "node:fs/promises";
+import type { WriteStream } from "node:fs";
+import { mkdtemp, open, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -97,9 +97,9 @@ export class OutputBuffer {
     });
   }
 
-  view(): OutputView {
+  view(includeText = true): OutputView {
     return {
-      text: this.chunks.join(""),
+      text: includeText ? this.chunks.join("") : "",
       totalBytes: this.totalBytes,
       truncatedBytes: this.truncatedBytes,
       spillPath: this.spillPath,
@@ -124,43 +124,43 @@ export class OutputBuffer {
   }
 }
 
-export function sessionSpillDir(sessionKey: string) {
-  return join(tmpdir(), "pi-background-terminals", sanitizePathSegment(sessionKey));
+export function createSpillDir() {
+  return mkdtemp(join(tmpdir(), "pi-background-terminals-"));
 }
 
 export async function openSpillStreams(
-  sessionKey: string,
+  dir: string,
   terminalId: string,
 ): Promise<{
   dir: string;
   stdout: { path: string; stream: WriteStream };
   stderr: { path: string; stream: WriteStream };
 }> {
-  const dir = sessionSpillDir(sessionKey);
-  await mkdir(dir, { recursive: true, mode: 0o700 });
-
   const stdoutPath = join(dir, `${terminalId}.stdout.log`);
   const stderrPath = join(dir, `${terminalId}.stderr.log`);
+  const stdoutHandle = await open(stdoutPath, "wx", 0o600);
+  let stderrHandle;
+  try {
+    stderrHandle = await open(stderrPath, "wx", 0o600);
+  } catch (error) {
+    await stdoutHandle.close();
+    await rm(stdoutPath, { force: true });
+    throw error;
+  }
 
   return {
     dir,
     stdout: {
       path: stdoutPath,
-      stream: createWriteStream(stdoutPath, { flags: "a", mode: 0o600 }),
+      stream: stdoutHandle.createWriteStream(),
     },
     stderr: {
       path: stderrPath,
-      stream: createWriteStream(stderrPath, { flags: "a", mode: 0o600 }),
+      stream: stderrHandle.createWriteStream(),
     },
   };
 }
 
-export async function removeSpillDir(sessionKey: string) {
-  const dir = sessionSpillDir(sessionKey);
+export async function removeSpillDir(dir: string) {
   await rm(dir, { recursive: true, force: true }).catch(() => {});
-}
-
-function sanitizePathSegment(value: string) {
-  const cleaned = value.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 120);
-  return cleaned || "session";
 }

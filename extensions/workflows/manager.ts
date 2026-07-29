@@ -61,7 +61,7 @@ export type WorkflowSettledInfo = {
 export type WorkflowManagerOptions = {
   maxRunning?: number;
   maxTracked?: number;
-  /** Root for artifact dirs (default: tmpdir/pi-enhanced-workflows). */
+  /** Optional caller-owned root for artifact dirs. */
   artifactsRoot?: string;
   onSettled?: (info: WorkflowSettledInfo) => void;
   onChange?: () => void;
@@ -77,7 +77,7 @@ export class WorkflowManager {
   private waitInterest = new InterestTracker();
   private readonly maxRunning: number;
   private readonly maxTracked: number;
-  private readonly artifactsRoot: string;
+  private readonly artifactsRoot?: string;
   private onSettled?: (info: WorkflowSettledInfo) => void;
   private onChange?: () => void;
   private subagentOptions?: Omit<SubagentManagerOptions, "onSettled" | "onChange">;
@@ -85,7 +85,7 @@ export class WorkflowManager {
   constructor(options: WorkflowManagerOptions = {}) {
     this.maxRunning = options.maxRunning ?? DEFAULT_MAX_RUNNING;
     this.maxTracked = options.maxTracked ?? DEFAULT_MAX_TRACKED;
-    this.artifactsRoot = options.artifactsRoot ?? join(tmpdir(), "pi-enhanced-workflows");
+    this.artifactsRoot = options.artifactsRoot;
     this.onSettled = options.onSettled;
     this.onChange = options.onChange;
     this.subagentOptions = options.subagentOptions;
@@ -137,10 +137,16 @@ export class WorkflowManager {
     let artifactsDir: string | undefined;
     let subagents: SubagentManager | undefined;
     try {
-      await mkdir(this.artifactsRoot, { recursive: true, mode: 0o700 });
+      if (this.artifactsRoot) {
+        await mkdir(this.artifactsRoot, { recursive: true, mode: 0o700 });
+      }
       if (this.disposed) throw new Error("Workflow manager is disposed.");
       options.signal?.throwIfAborted();
-      artifactsDir = await mkdtemp(join(this.artifactsRoot, `${id}-`));
+      artifactsDir = await mkdtemp(
+        this.artifactsRoot
+          ? join(this.artifactsRoot, `${id}-`)
+          : join(tmpdir(), `pi-enhanced-workflow-${id}-`),
+      );
       if (this.disposed) throw new Error("Workflow manager is disposed.");
       options.signal?.throwIfAborted();
       await writeFile(join(artifactsDir, "goal.txt"), `${goal.trim()}\n`, {
@@ -541,11 +547,16 @@ export class WorkflowManager {
 
     await this.persist(entry);
     entry.resolveSettle();
-    pruneSettled(this.entries, this.maxTracked, (e) => e.status === "running", (evicted) => {
-      // Once evicted, wf_status can never surface this path again — nothing
-      // else will ever remove these files (unlike per-session spill dirs).
-      void rm(evicted.artifactsDir, { recursive: true, force: true }).catch(() => {});
-    });
+    pruneSettled(
+      this.entries,
+      this.maxTracked,
+      (e) => e.status === "running" || this.waitInterest.has(e.id),
+      (evicted) => {
+        // Once evicted, wf_status can never surface this path again — nothing
+        // else will ever remove these files (unlike per-session spill dirs).
+        void rm(evicted.artifactsDir, { recursive: true, force: true }).catch(() => {});
+      },
+    );
     this.notify();
 
     if (!this.disposed) {
@@ -592,6 +603,19 @@ export class WorkflowManager {
     this.onChange?.();
   }
 
+  private pruneAfterInterestRelease() {
+    const size = this.entries.size;
+    pruneSettled(
+      this.entries,
+      this.maxTracked,
+      (e) => e.status === "running" || this.waitInterest.has(e.id),
+      (evicted) => {
+        void rm(evicted.artifactsDir, { recursive: true, force: true }).catch(() => {});
+      },
+    );
+    if (this.entries.size < size) this.notify();
+  }
+
   async wait(ids: readonly string[], signal?: AbortSignal): Promise<WorkflowSnapshot[]> {
     if (this.disposed) throw new Error("Workflow manager is disposed.");
     const unknown = ids.filter((id) => !this.entries.has(id));
@@ -604,10 +628,10 @@ export class WorkflowManager {
         Promise.all(waits),
         abortPromise(signal, "Wait aborted; workflows continue in the background."),
       ]);
+      return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
     } finally {
       for (const id of ids) this.waitInterest.release(id);
     }
-    return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
   }
 
   async cancel(ids: readonly string[], signal?: AbortSignal): Promise<WorkflowSnapshot[]> {
@@ -615,34 +639,49 @@ export class WorkflowManager {
     const unknown = ids.filter((id) => !this.entries.has(id));
     if (unknown.length > 0) throw new Error(`Unknown workflow id(s): ${unknown.join(", ")}`);
 
-    const waiting: Promise<void>[] = [];
-    for (const id of ids) {
-      const entry = this.entries.get(id)!;
-      if (entry.status !== "running") continue;
-      this.waitInterest.add(id);
-      entry.cancelRequested = true;
-      const runningIds = entry.subagents
-        .list()
-        .filter((s) => s.status === "running")
-        .map((s) => s.id);
-      if (runningIds.length > 0) {
-        void entry.subagents.cancel(runningIds).catch(() => {});
+    let completed = false;
+    for (const id of ids) this.waitInterest.add(id);
+    try {
+      const waiting: Promise<void>[] = [];
+      for (const id of ids) {
+        const entry = this.entries.get(id)!;
+        if (entry.status !== "running") continue;
+        entry.cancelRequested = true;
+        const runningIds = entry.subagents
+          .list()
+          .filter((s) => s.status === "running")
+          .map((s) => s.id);
+        if (runningIds.length > 0) {
+          void entry.subagents.cancel(runningIds).catch(() => {});
+        }
+        waiting.push(entry.settlePromise);
       }
-      waiting.push(
-        entry.settlePromise.finally(() => {
+
+      if (waiting.length > 0) {
+        await Promise.race([
+          Promise.all(waiting),
+          abortPromise(signal, "Cancel wait aborted; termination continues in the background."),
+        ]);
+      }
+      const snapshots = ids.map((id) => this.snapshotOf(this.entries.get(id)!));
+      completed = true;
+      return snapshots;
+    } finally {
+      for (const id of ids) {
+        const entry = this.entries.get(id);
+        if (entry?.status === "running") {
+          void entry.settlePromise
+            .then(() => {
+              this.waitInterest.release(id);
+              this.pruneAfterInterestRelease();
+            })
+            .catch(() => {});
+        } else {
           this.waitInterest.release(id);
-        }),
-      );
+        }
+      }
+      if (!completed) this.pruneAfterInterestRelease();
     }
-
-    if (waiting.length > 0) {
-      await Promise.race([
-        Promise.all(waiting),
-        abortPromise(signal, "Cancel wait aborted; termination continues in the background."),
-      ]);
-    }
-
-    return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
   }
 
   async disposeAll() {

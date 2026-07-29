@@ -6,7 +6,13 @@ import type { Readable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { InterestTracker, pruneSettled } from "../shared/lifecycle.ts";
 import { abortPromise, sleep } from "../shared/time.ts";
-import { OutputBuffer, openSpillStreams, removeSpillDir, type OutputView } from "./output.ts";
+import {
+  createSpillDir,
+  OutputBuffer,
+  openSpillStreams,
+  removeSpillDir,
+  type OutputView,
+} from "./output.ts";
 
 export type TerminalStatus = "running" | "done" | "failed" | "killed";
 
@@ -86,7 +92,8 @@ export class TerminalManager {
   private killInterest = new InterestTracker();
   private listeners = new Set<() => void>();
   private outputNotifyTimer?: ReturnType<typeof setTimeout>;
-  private readonly sessionKey: string;
+  private spillDirPromise?: Promise<string>;
+  private spillOpenings = new Set<Promise<Awaited<ReturnType<typeof openSpillStreams>>>>();
   private readonly maxRunning: number;
   private readonly maxTracked: number;
   private readonly killGraceMs: number;
@@ -94,7 +101,6 @@ export class TerminalManager {
   private onChange?: () => void;
 
   constructor(options: ManagerOptions) {
-    this.sessionKey = options.sessionKey;
     this.maxRunning = options.maxRunning ?? DEFAULT_MAX_RUNNING;
     this.maxTracked = options.maxTracked ?? DEFAULT_MAX_TRACKED;
     this.killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
@@ -124,6 +130,16 @@ export class TerminalManager {
     }
   }
 
+  private pruneAfterInterestRelease() {
+    const size = this.entries.size;
+    pruneSettled(
+      this.entries,
+      this.maxTracked,
+      (e) => e.status === "running" || this.killInterest.has(e.id),
+    );
+    if (this.entries.size < size) this.notify();
+  }
+
   private notifyOutput() {
     if (this.disposed || this.outputNotifyTimer) return;
     this.outputNotifyTimer = setTimeout(() => {
@@ -141,7 +157,7 @@ export class TerminalManager {
     return n;
   }
 
-  private snapshotOf(entry: Entry): TerminalSnapshot {
+  private snapshotOf(entry: Entry, includeText = true): TerminalSnapshot {
     return {
       id: entry.id,
       command: entry.command,
@@ -154,13 +170,13 @@ export class TerminalManager {
       exitCode: entry.exitCode,
       signal: entry.signal,
       errorText: entry.errorText,
-      stdout: entry.stdout.view(),
-      stderr: entry.stderr.view(),
+      stdout: entry.stdout.view(includeText),
+      stderr: entry.stderr.view(includeText),
     };
   }
 
   list(): TerminalSnapshot[] {
-    return [...this.entries.values()].map((e) => this.snapshotOf(e));
+    return [...this.entries.values()].map((e) => this.snapshotOf(e, false));
   }
 
   get(id: string): TerminalSnapshot | undefined {
@@ -193,19 +209,25 @@ export class TerminalManager {
     this.counter += 1;
     const id = `bt-${this.counter}`;
 
-    const spill = await openSpillStreams(this.sessionKey, id).catch((error) => {
+    const spillOpening = this.openSpillStreams(id);
+    this.spillOpenings.add(spillOpening);
+    let spill: Awaited<typeof spillOpening>;
+    try {
+      spill = await spillOpening;
+    } catch (error) {
       this.startingCount -= 1;
       throw error;
-    });
-    if (this.disposed) {
-      this.startingCount -= 1;
-      spill.stdout.stream.end();
-      spill.stderr.stream.end();
-      await removeSpillFiles(spill);
-      throw new Error("Background terminal manager is disposed.");
+    } finally {
+      this.spillOpenings.delete(spillOpening);
     }
     const stdout = new OutputBuffer(undefined, spill.stdout);
     const stderr = new OutputBuffer(undefined, spill.stderr);
+    if (this.disposed) {
+      this.startingCount -= 1;
+      await Promise.all([stdout.close(), stderr.close()]);
+      await removeSpillDir(spill.dir);
+      throw new Error("Background terminal manager is disposed.");
+    }
 
     let resolveSettle!: () => void;
     const settlePromise = new Promise<void>((resolveSettleFn) => {
@@ -350,7 +372,11 @@ export class TerminalManager {
 
     const consumed = this.killInterest.has(entry.id);
     entry.resolveSettle();
-    pruneSettled(this.entries, this.maxTracked, (e) => e.status === "running");
+    pruneSettled(
+      this.entries,
+      this.maxTracked,
+      (e) => e.status === "running" || this.killInterest.has(e.id),
+    );
     this.notify();
 
     if (!this.disposed) {
@@ -375,6 +401,7 @@ export class TerminalManager {
 
     const results: KillResult[] = [];
     const waiting: Promise<void>[] = [];
+    const interested: string[] = [];
 
     for (const id of ids) {
       const entry = this.entries.get(id)!;
@@ -388,14 +415,11 @@ export class TerminalManager {
       }
 
       this.killInterest.add(id);
+      interested.push(id);
       entry.killSignaled = true;
       void this.terminateChild(entry);
 
-      waiting.push(
-        entry.settlePromise.finally(() => {
-          this.killInterest.release(id);
-        }),
-      );
+      waiting.push(entry.settlePromise);
       results.push({
         id,
         snapshot: this.snapshotOf(entry),
@@ -405,16 +429,33 @@ export class TerminalManager {
 
     if (waiting.length === 0) return results;
 
-    await Promise.race([
-      Promise.all(waiting),
-      abortPromise(signal, "Kill wait aborted; termination continues in the background."),
-    ]);
+    try {
+      await Promise.race([
+        Promise.all(waiting),
+        abortPromise(signal, "Kill wait aborted; termination continues in the background."),
+      ]);
 
-    // Refresh snapshots after settle when wait completed.
-    return results.map((r) => {
-      const snap = this.get(r.id);
-      return snap ? { ...r, snapshot: snap } : r;
-    });
+      // Refresh snapshots after settle when wait completed.
+      return results.map((r) => {
+        const snap = this.get(r.id);
+        return snap ? { ...r, snapshot: snap } : r;
+      });
+    } finally {
+      for (const id of interested) {
+        const entry = this.entries.get(id);
+        if (entry?.status === "running") {
+          void entry.settlePromise
+            .then(() => {
+              this.killInterest.release(id);
+              this.pruneAfterInterestRelease();
+            })
+            .catch(() => {});
+        } else {
+          this.killInterest.release(id);
+        }
+      }
+      this.pruneAfterInterestRelease();
+    }
   }
 
   private async terminateChild(entry: Entry) {
@@ -495,8 +536,20 @@ export class TerminalManager {
     this.entries.clear();
     this.listeners.clear();
     this.killInterest.clear();
-    await removeSpillDir(this.sessionKey);
+    await Promise.allSettled([...this.spillOpenings]);
+    const spillDir = await this.spillDirPromise?.catch(() => undefined);
+    if (spillDir) await removeSpillDir(spillDir);
     this.notify();
+  }
+
+  private async openSpillStreams(id: string) {
+    this.spillDirPromise ??= createSpillDir().catch((error) => {
+      this.spillDirPromise = undefined;
+      throw error;
+    });
+    const dir = await this.spillDirPromise;
+    if (this.disposed) throw new Error("Background terminal manager is disposed.");
+    return openSpillStreams(dir, id);
   }
 }
 

@@ -8,6 +8,13 @@
   "keywords": [
     "pi-package"
   ],
+  "files": [
+    "extensions",
+    "skills",
+    "themes",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "check": "tsc --noEmit",
     "test": "node --test extensions/**/*.test.ts",

@@ -138,6 +138,8 @@ capacity immediately.
 
 Background streams retain a 2 MiB in-memory tail while full logs spill to a
 private OS-temporary directory. Those logs are removed at Pi session shutdown.
+Native subagent JSON result records have a 4 MiB UTF-8 ceiling. An oversized
+record fails the worker instead of returning a truncated successful result.
 Workflow artifacts use private OS-temporary directories reported by
 `wf_status`; completed artifacts survive the session but are not durable or
 cross-machine storage.
