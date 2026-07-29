@@ -500,7 +500,12 @@ export class WorkflowManager {
       tr.artifactPath = artifactPath;
       tr.error = out.error;
       tr.subagentId = subagentId;
-      if (out.status !== "ok") entry.failedTaskCount += 1;
+      if (
+        out.status !== "ok" &&
+        !(out.status === "killed" && (entry.cancelRequested || this.disposed))
+      ) {
+        entry.failedTaskCount += 1;
+      }
 
       outputs.push(out);
 

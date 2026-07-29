@@ -522,6 +522,7 @@ describe("WorkflowManager", () => {
       await killed;
       const [cancelled] = await cancelling;
       assert.equal(cancelled?.status, "cancelled");
+      assert.equal(cancelled?.failedTaskCount, 0);
       const tasks = cancelled?.phases[0]?.tasks ?? [];
       assert.equal(tasks.length, 2);
       assert.ok(tasks.every((task) => task.status === "killed"));
