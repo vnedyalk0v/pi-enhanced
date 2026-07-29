@@ -52,6 +52,40 @@ function createManager(opts: ManagerOptions = {}) {
 }
 
 describe("SubagentManager", () => {
+  it("keeps streamed output without notifying for every chunk", async () => {
+    let finish!: () => void;
+    const wait = new Promise<{ exitCode: number }>((resolve) => {
+      finish = () => resolve({ exitCode: 0 });
+    });
+    let changes = 0;
+    const m = createManager({
+      onChange: () => {
+        changes += 1;
+      },
+      starters: {
+        pi: async ({ onOutput }) => {
+          for (let i = 0; i < 120; i++) onOutput?.(`chunk ${i}\n`);
+          return {
+            handle: { pid: 12345, kill: finish, wait },
+            collect: async () => {
+              const result = await wait;
+              return { ...result, resultText: "done", output: "" };
+            },
+          };
+        },
+      },
+    });
+
+    const snap = await m.spawn({ prompt: "stream", cwd: process.cwd() });
+    assert.equal(changes, 1);
+
+    finish();
+    await m.wait([snap.id]);
+
+    assert.match(m.get(snap.id)?.outputTail ?? "", /chunk 119\n$/);
+    assert.equal(changes, 2);
+  });
+
   it("spawns, settles done, and delivers unconsumed completion", async () => {
     const settled: Array<{ id: string; consumed: boolean }> = [];
     const m = createManager({

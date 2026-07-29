@@ -162,7 +162,6 @@ export class SubagentManager {
 
     const onOutput = (chunk: string) => {
       entry.outputTail = appendBounded(entry.outputTail, chunk, OUTPUT_TAIL_CHARS);
-      this.notify();
     };
 
     let job: BackendJob;
