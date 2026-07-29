@@ -1,3 +1,5 @@
+import { rm } from "node:fs/promises";
+import { dirname } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
@@ -69,6 +71,16 @@ function preferFdAndRg(pi: ExtensionAPI) {
 }
 
 export default function (pi: ExtensionAPI) {
+  const spillDirectories = new Set<string>();
+
+  pi.on("session_shutdown", async () => {
+    const directories = [...spillDirectories];
+    spillDirectories.clear();
+    await Promise.allSettled(
+      directories.map((directory) => rm(directory, { recursive: true, force: true })),
+    );
+  });
+
   pi.on("session_start", async (_event, ctx) => {
     // Resolve quietly at startup; install only if missing.
     for (const name of ["fd", "rg"] as const) {
@@ -108,6 +120,7 @@ export default function (pi: ExtensionAPI) {
         });
         const args = buildFdArgs(params);
         const result = await runBinary(binary, args, ctx.cwd, "pi-fd", signal);
+        if (result.fullOutputPath) spillDirectories.add(dirname(result.fullOutputPath));
         if (result.exitCode !== 0 && !result.hasOutput) {
           return {
             content: [
@@ -161,6 +174,7 @@ export default function (pi: ExtensionAPI) {
         });
         const args = buildRgArgs(params);
         const result = await runBinary(binary, args, ctx.cwd, "pi-rg", signal);
+        if (result.fullOutputPath) spillDirectories.add(dirname(result.fullOutputPath));
         // rg exits 1 when no matches
         if (result.exitCode === 1 && !result.hasOutput) {
           return {
