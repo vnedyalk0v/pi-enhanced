@@ -61,7 +61,7 @@ export type WorkflowSettledInfo = {
 export type WorkflowManagerOptions = {
   maxRunning?: number;
   maxTracked?: number;
-  /** Root for artifact dirs (default: tmpdir/pi-enhanced-workflows). */
+  /** Optional caller-owned root for artifact dirs. */
   artifactsRoot?: string;
   onSettled?: (info: WorkflowSettledInfo) => void;
   onChange?: () => void;
@@ -77,7 +77,7 @@ export class WorkflowManager {
   private waitInterest = new InterestTracker();
   private readonly maxRunning: number;
   private readonly maxTracked: number;
-  private readonly artifactsRoot: string;
+  private readonly artifactsRoot?: string;
   private onSettled?: (info: WorkflowSettledInfo) => void;
   private onChange?: () => void;
   private subagentOptions?: Omit<SubagentManagerOptions, "onSettled" | "onChange">;
@@ -85,7 +85,7 @@ export class WorkflowManager {
   constructor(options: WorkflowManagerOptions = {}) {
     this.maxRunning = options.maxRunning ?? DEFAULT_MAX_RUNNING;
     this.maxTracked = options.maxTracked ?? DEFAULT_MAX_TRACKED;
-    this.artifactsRoot = options.artifactsRoot ?? join(tmpdir(), "pi-enhanced-workflows");
+    this.artifactsRoot = options.artifactsRoot;
     this.onSettled = options.onSettled;
     this.onChange = options.onChange;
     this.subagentOptions = options.subagentOptions;
@@ -137,10 +137,16 @@ export class WorkflowManager {
     let artifactsDir: string | undefined;
     let subagents: SubagentManager | undefined;
     try {
-      await mkdir(this.artifactsRoot, { recursive: true, mode: 0o700 });
+      if (this.artifactsRoot) {
+        await mkdir(this.artifactsRoot, { recursive: true, mode: 0o700 });
+      }
       if (this.disposed) throw new Error("Workflow manager is disposed.");
       options.signal?.throwIfAborted();
-      artifactsDir = await mkdtemp(join(this.artifactsRoot, `${id}-`));
+      artifactsDir = await mkdtemp(
+        this.artifactsRoot
+          ? join(this.artifactsRoot, `${id}-`)
+          : join(tmpdir(), `pi-enhanced-workflow-${id}-`),
+      );
       if (this.disposed) throw new Error("Workflow manager is disposed.");
       options.signal?.throwIfAborted();
       await writeFile(join(artifactsDir, "goal.txt"), `${goal.trim()}\n`, {

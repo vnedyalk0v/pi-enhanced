@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import { access, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import type { BackendJob } from "../subagents/backend.ts";
 import { PiResultRecordTooLargeError } from "../subagents/run.ts";
@@ -122,6 +122,33 @@ async function createManager(
 }
 
 describe("WorkflowManager", () => {
+  it("creates distinct private default directories that survive disposal", async () => {
+    const starters = {
+      pi: async () => fakeJob({ exitCode: 0, resultText: "ok", delayMs: 10 }),
+    };
+    const firstManager = new WorkflowManager({ subagentOptions: { starters } });
+    const secondManager = new WorkflowManager({ subagentOptions: { starters } });
+    managers.push(firstManager, secondManager);
+
+    const [first, second] = await Promise.all([
+      firstManager.start({ goal: "first default workflow", cwd: process.cwd() }),
+      secondManager.start({ goal: "second default workflow", cwd: process.cwd() }),
+    ]);
+    tempDirs.push(first.artifactsDir, second.artifactsDir);
+    await Promise.all([firstManager.wait([first.id]), secondManager.wait([second.id])]);
+
+    assert.notEqual(first.artifactsDir, second.artifactsDir);
+    assert.equal(dirname(first.artifactsDir), tmpdir());
+    assert.equal(dirname(second.artifactsDir), tmpdir());
+    if (process.platform !== "win32") {
+      assert.equal((await stat(first.artifactsDir)).mode & 0o077, 0);
+      assert.equal((await stat(second.artifactsDir)).mode & 0o077, 0);
+    }
+
+    await Promise.all([firstManager.disposeAll(), secondManager.disposeAll()]);
+    await Promise.all([access(first.artifactsDir), access(second.artifactsDir)]);
+  });
+
   it("isolates workflow artifacts across managers sharing a root", async () => {
     const artifactsRoot = await mkdtemp(join(tmpdir(), "wf-shared-test-"));
     tempDirs.push(artifactsRoot);
@@ -288,6 +315,7 @@ describe("WorkflowManager", () => {
       },
     });
     const { m, artifactsRoot } = await createManager();
+    await writeFile(join(artifactsRoot, "caller-owned"), "keep");
 
     await assert.rejects(
       () =>
@@ -299,7 +327,7 @@ describe("WorkflowManager", () => {
       /aborted/i,
     );
 
-    assert.deepEqual(await readdir(artifactsRoot), []);
+    assert.deepEqual(await readdir(artifactsRoot), ["caller-owned"]);
     assert.deepEqual(m.list(), []);
   });
 

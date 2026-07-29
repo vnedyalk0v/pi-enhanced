@@ -6,7 +6,13 @@ import type { Readable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { InterestTracker, pruneSettled } from "../shared/lifecycle.ts";
 import { abortPromise, sleep } from "../shared/time.ts";
-import { OutputBuffer, openSpillStreams, removeSpillDir, type OutputView } from "./output.ts";
+import {
+  createSpillDir,
+  OutputBuffer,
+  openSpillStreams,
+  removeSpillDir,
+  type OutputView,
+} from "./output.ts";
 
 export type TerminalStatus = "running" | "done" | "failed" | "killed";
 
@@ -86,7 +92,8 @@ export class TerminalManager {
   private killInterest = new InterestTracker();
   private listeners = new Set<() => void>();
   private outputNotifyTimer?: ReturnType<typeof setTimeout>;
-  private readonly sessionKey: string;
+  private spillDirPromise?: Promise<string>;
+  private spillOpenings = new Set<Promise<Awaited<ReturnType<typeof openSpillStreams>>>>();
   private readonly maxRunning: number;
   private readonly maxTracked: number;
   private readonly killGraceMs: number;
@@ -94,7 +101,6 @@ export class TerminalManager {
   private onChange?: () => void;
 
   constructor(options: ManagerOptions) {
-    this.sessionKey = options.sessionKey;
     this.maxRunning = options.maxRunning ?? DEFAULT_MAX_RUNNING;
     this.maxTracked = options.maxTracked ?? DEFAULT_MAX_TRACKED;
     this.killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
@@ -193,10 +199,17 @@ export class TerminalManager {
     this.counter += 1;
     const id = `bt-${this.counter}`;
 
-    const spill = await openSpillStreams(this.sessionKey, id).catch((error) => {
+    const spillOpening = this.openSpillStreams(id);
+    this.spillOpenings.add(spillOpening);
+    let spill: Awaited<typeof spillOpening>;
+    try {
+      spill = await spillOpening;
+    } catch (error) {
       this.startingCount -= 1;
       throw error;
-    });
+    } finally {
+      this.spillOpenings.delete(spillOpening);
+    }
     if (this.disposed) {
       this.startingCount -= 1;
       spill.stdout.stream.end();
@@ -501,8 +514,20 @@ export class TerminalManager {
     this.entries.clear();
     this.listeners.clear();
     this.killInterest.clear();
-    await removeSpillDir(this.sessionKey);
+    await Promise.allSettled([...this.spillOpenings]);
+    const spillDir = await this.spillDirPromise?.catch(() => undefined);
+    if (spillDir) await removeSpillDir(spillDir);
     this.notify();
+  }
+
+  private async openSpillStreams(id: string) {
+    this.spillDirPromise ??= createSpillDir().catch((error) => {
+      this.spillDirPromise = undefined;
+      throw error;
+    });
+    const dir = await this.spillDirPromise;
+    if (this.disposed) throw new Error("Background terminal manager is disposed.");
+    return openSpillStreams(dir, id);
   }
 }
 

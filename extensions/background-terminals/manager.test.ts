@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import { buildStatusResult, buildTerminalResultMessage } from "./format.ts";
 import { TerminalManager, type SettledInfo, type TerminalSnapshot } from "./manager.ts";
@@ -334,12 +334,25 @@ describe("TerminalManager", () => {
     }
     assert.equal(alive, false);
   });
+
+  it("rejects a startup that overlaps disposal", async () => {
+    const m = createManager();
+    const starting = m.start({
+      command: "sleep 60",
+      title: "startup-dispose",
+      cwd: process.cwd(),
+    });
+    const rejected = assert.rejects(starting, /disposed/);
+
+    await m.disposeAll();
+    await rejected;
+    assert.deepEqual(m.list(), []);
+  });
 });
 
-describe("spill session isolation", () => {
-  it("uses distinct session keys without collision", async () => {
+describe("spill root isolation", () => {
+  it("uses distinct roots and removes only the disposed manager root", async () => {
     const dir = await mkdtemp(join(tmpdir(), "pi-bt-sess-"));
-    // Managers use their own tmp spill dirs keyed by session; just ensure two managers work.
     const aSettled = createSettlementTracker();
     const bSettled = createSettlementTracker();
     const a = createManager({ onSettled: aSettled.onSettled });
@@ -347,8 +360,16 @@ describe("spill session isolation", () => {
     const aSnap = await a.start({ command: "printf a", title: "a", cwd: dir });
     const bSnap = await b.start({ command: "printf b", title: "b", cwd: dir });
     await Promise.all([aSettled.waitFor(aSnap.id), bSettled.waitFor(bSnap.id)]);
+    const aRoot = dirname(aSnap.stdout.spillPath!);
+    const bRoot = dirname(bSnap.stdout.spillPath!);
+    assert.notEqual(aRoot, bRoot);
     assert.equal(a.list().length, 1);
     assert.equal(b.list().length, 1);
+
+    await a.disposeAll();
+    await assert.rejects(() => access(aRoot));
+    await access(bRoot);
+
     await rm(dir, { recursive: true, force: true });
   });
 });
