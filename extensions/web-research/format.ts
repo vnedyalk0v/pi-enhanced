@@ -50,10 +50,9 @@ export function formatCrawlResult(result: CrawlResult): string {
     bytes: 0,
     truncatedTotalBytes: 0,
   };
-  const append = (text: string, start = 0, end = text.length) => {
+  const appendLine = (line: string) => {
     const separatorBytes = state.lines.length === 0 ? 0 : 1;
     const remainingBytes = DEFAULT_MAX_BYTES - state.bytes - separatorBytes;
-    const line = text.slice(start, end);
     const lineBytes = Buffer.byteLength(line);
     if (state.lines.length >= DEFAULT_MAX_LINES) {
       state.truncatedTotalBytes = state.bytes + separatorBytes + lineBytes;
@@ -74,6 +73,16 @@ export function formatCrawlResult(result: CrawlResult): string {
     state.lines.push(line);
     state.bytes += separatorBytes + lineBytes;
     return true;
+  };
+  const append = (text: string, start = 0, end = text.length) => {
+    const value = text.slice(start, end);
+    let lineStart = 0;
+    while (true) {
+      const newline = value.indexOf("\n", lineStart);
+      if (newline === -1) return appendLine(value.slice(lineStart));
+      if (!appendLine(value.slice(lineStart, newline))) return false;
+      lineStart = newline + 1;
+    }
   };
 
   const metadata = [

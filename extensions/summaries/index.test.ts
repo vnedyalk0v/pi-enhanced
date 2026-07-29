@@ -6,7 +6,7 @@ import type {
   ExtensionCommandContext,
   RegisteredCommand,
 } from "@earendil-works/pi-coding-agent";
-import summaries, { SUMMARY_PROMPT_MAX_CHARS } from "./index.ts";
+import summaries, { registerSummaryCommand, SUMMARY_PROMPT_MAX_CHARS } from "./index.ts";
 
 const model = {
   id: "test-model",
@@ -22,6 +22,7 @@ const model = {
 } satisfies Model<"openai-completions">;
 
 it("bounds the conversation before sending the summary prompt", async () => {
+  assert.equal(summaries.length, 1);
   let handler: RegisteredCommand["handler"] | undefined;
   let prompt = "";
   const pi = {
@@ -31,7 +32,7 @@ it("bounds the conversation before sending the summary prompt", async () => {
     },
   } satisfies Pick<ExtensionAPI, "registerCommand">;
 
-  summaries(pi as ExtensionAPI, async (_model, context) => {
+  registerSummaryCommand(pi as ExtensionAPI, async (_model, context) => {
     const message = context.messages[0];
     assert.equal(message?.role, "user");
     assert.ok(message && Array.isArray(message.content));

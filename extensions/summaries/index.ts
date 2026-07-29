@@ -45,7 +45,7 @@ async function showSummary(summary: string, ctx: ExtensionCommandContext) {
   });
 }
 
-export default function (pi: ExtensionAPI, completeSummary: typeof complete = complete) {
+export function registerSummaryCommand(pi: ExtensionAPI, completeSummary: typeof complete) {
   pi.registerCommand("summary", {
     description: "Summarize the current conversation with the active model",
     handler: async (_args, ctx) => {
@@ -113,4 +113,8 @@ export default function (pi: ExtensionAPI, completeSummary: typeof complete = co
       }
     },
   });
+}
+
+export default function (pi: ExtensionAPI) {
+  registerSummaryCommand(pi, complete);
 }

@@ -98,6 +98,25 @@ describe("web research formatting", () => {
     assert.ok(!output.includes("\uFFFD"));
   });
 
+  it("counts embedded newlines in crawl fields against the line ceiling", () => {
+    const output = formatCrawlResult({
+      provider: "firecrawl",
+      url: "https://root.example",
+      status: "completed",
+      pages: [{
+        title: Array.from({ length: DEFAULT_MAX_LINES }, () => "line").join("\n"),
+        url: "https://large.example",
+        markdown: "unreachable",
+      }],
+    });
+    const noticeAt = output.lastIndexOf("\n\n[truncated:");
+    const content = output.slice(0, noticeAt);
+
+    assert.notEqual(noticeAt, -1);
+    assert.equal(content.split("\n").length, DEFAULT_MAX_LINES);
+    assert.ok(!content.includes("unreachable"));
+  });
+
   it("does not consume pages after the bounded head is full", () => {
     let laterMarkdownReads = 0;
     const laterPage = {

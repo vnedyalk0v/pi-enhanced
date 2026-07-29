@@ -172,8 +172,8 @@ npm pack --dry-run --json
 ```
 
 `npm run verify` runs TypeScript type-checking, the Node test suite, and an
-aggregate-package smoke load. CI runs the same gate on the latest Node 24
-release.
+aggregate-package smoke load. CI runs the same gate on Node 24.12.0 and the
+latest Node 24 release.
 
 ## Acknowledgments
 
