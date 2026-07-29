@@ -108,8 +108,11 @@ export class WorkflowManager {
     return n;
   }
 
-  async start(options: StartWorkflowOptions): Promise<WorkflowSnapshot> {
+  async start(
+    options: StartWorkflowOptions & { signal?: AbortSignal },
+  ): Promise<WorkflowSnapshot> {
     if (this.disposed) throw new Error("Workflow manager is disposed.");
+    options.signal?.throwIfAborted();
     if (this.runningCount() + this.startingCount >= this.maxRunning) {
       throw new Error(
         `Concurrency limit: at most ${this.maxRunning} workflows may run at once.`,
@@ -131,14 +134,21 @@ export class WorkflowManager {
       options.title?.trim().slice(0, 80) ||
       `workflow: ${goal.replace(/\s+/g, " ").slice(0, 48)}`;
 
-    let artifactsDir: string;
+    let artifactsDir: string | undefined;
+    let subagents: SubagentManager | undefined;
     try {
       await mkdir(this.artifactsRoot, { recursive: true, mode: 0o700 });
+      if (this.disposed) throw new Error("Workflow manager is disposed.");
+      options.signal?.throwIfAborted();
       artifactsDir = await mkdtemp(join(this.artifactsRoot, `${id}-`));
+      if (this.disposed) throw new Error("Workflow manager is disposed.");
+      options.signal?.throwIfAborted();
       await writeFile(join(artifactsDir, "goal.txt"), `${goal.trim()}\n`, {
         encoding: "utf8",
         mode: 0o600,
       });
+      if (this.disposed) throw new Error("Workflow manager is disposed.");
+      options.signal?.throwIfAborted();
       await writeFile(
         join(artifactsDir, "meta.json"),
         `${JSON.stringify(
@@ -154,64 +164,71 @@ export class WorkflowManager {
         )}\n`,
         { encoding: "utf8", mode: 0o600 },
       );
+      if (this.disposed) throw new Error("Workflow manager is disposed.");
+      options.signal?.throwIfAborted();
+
+      let resolveSettle!: () => void;
+      const settlePromise = new Promise<void>((r) => {
+        resolveSettle = r;
+      });
+
+      const phases: PhaseRuntime[] = REPO_TASK_PHASES.map((p) => ({
+        name: p.name,
+        status: "pending" as const,
+        tasks: new Map(
+          p.tasks.map((t) => [
+            t.key,
+            {
+              key: t.key,
+              title: t.title,
+              status: "pending" as const,
+            } satisfies TaskRunSnapshot,
+          ]),
+        ),
+      }));
+
+      subagents = new SubagentManager({
+        ...this.subagentOptions,
+        onChange: () => this.notify(),
+      });
+
+      const entry: Entry = {
+        id,
+        title,
+        goal,
+        cwd,
+        model: options.model,
+        thinking: options.thinking,
+        status: "running",
+        createdAt: Date.now(),
+        artifactsDir,
+        phases,
+        priorOutputs: [],
+        failedTaskCount: 0,
+        cancelRequested: false,
+        settlePromise,
+        resolveSettle,
+        subagents,
+      };
+
+      await this.persist(entry);
+      if (this.disposed) throw new Error("Workflow manager is disposed.");
+      options.signal?.throwIfAborted();
+
+      this.entries.set(id, entry);
+      this.notify();
+
+      // Background orchestration — never await here.
+      void this.runWorkflow(entry);
+
+      return this.snapshotOf(entry);
     } catch (error) {
-      this.startingCount -= 1;
+      if (subagents) await subagents.disposeAll();
+      if (artifactsDir) await rm(artifactsDir, { recursive: true, force: true });
       throw error;
+    } finally {
+      this.startingCount -= 1;
     }
-
-    let resolveSettle!: () => void;
-    const settlePromise = new Promise<void>((r) => {
-      resolveSettle = r;
-    });
-
-    const phases: PhaseRuntime[] = REPO_TASK_PHASES.map((p) => ({
-      name: p.name,
-      status: "pending" as const,
-      tasks: new Map(
-        p.tasks.map((t) => [
-          t.key,
-          {
-            key: t.key,
-            title: t.title,
-            status: "pending" as const,
-          } satisfies TaskRunSnapshot,
-        ]),
-      ),
-    }));
-
-    const subagents = new SubagentManager({
-      ...this.subagentOptions,
-      onChange: () => this.notify(),
-    });
-
-    const entry: Entry = {
-      id,
-      title,
-      goal,
-      cwd,
-      model: options.model,
-      thinking: options.thinking,
-      status: "running",
-      createdAt: Date.now(),
-      artifactsDir,
-      phases,
-      priorOutputs: [],
-      failedTaskCount: 0,
-      cancelRequested: false,
-      settlePromise,
-      resolveSettle,
-      subagents,
-    };
-
-    this.entries.set(id, entry);
-    this.startingCount -= 1;
-    this.notify();
-    await this.persist(entry);
-
-    // Background orchestration — never await here.
-    void this.runWorkflow(entry);
-
-    return this.snapshotOf(entry);
   }
 
   private async runWorkflow(entry: Entry) {

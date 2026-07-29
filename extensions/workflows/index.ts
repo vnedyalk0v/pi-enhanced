@@ -44,6 +44,7 @@ export default function (pi: ExtensionAPI) {
   let parentThinking: string | undefined;
 
   const getManager = () => {
+    if (disposed) throw new Error("Workflow manager is shutting down.");
     if (manager) return manager;
     manager = new WorkflowManager({
       onSettled: ({ snapshot, consumed }) => {
@@ -135,7 +136,7 @@ export default function (pi: ExtensionAPI) {
       "After wf_start, keep working; a completion message arrives when the workflow finishes.",
     ],
     parameters: StartParams,
-    async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       captureParentDefaults(ctx);
       const m = getManager();
       const cwd = resolve(ctx.cwd, params.working_dir ?? ".");
@@ -145,6 +146,7 @@ export default function (pi: ExtensionAPI) {
         cwd,
         model: parentModelLabel,
         thinking: parentThinking,
+        signal,
       });
       updateWidget();
       return {

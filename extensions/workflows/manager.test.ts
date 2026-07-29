@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -196,6 +196,58 @@ describe("WorkflowManager", () => {
     }
     assert.equal(m.get(first.id), undefined);
     assert.equal(m.get(later.id)?.status, "done");
+  });
+
+  it("rolls back artifacts when startup aborts before registration", async () => {
+    const controller = new AbortController();
+    const nativeThrow = controller.signal.throwIfAborted.bind(controller.signal);
+    let checks = 0;
+    Object.defineProperty(controller.signal, "throwIfAborted", {
+      value: () => {
+        checks += 1;
+        if (checks === 4) controller.abort();
+        nativeThrow();
+      },
+    });
+    const { m, artifactsRoot } = await createManager();
+
+    await assert.rejects(
+      () =>
+        m.start({
+          goal: "abort after writing the first artifact",
+          cwd: process.cwd(),
+          signal: controller.signal,
+        }),
+      /aborted/i,
+    );
+
+    assert.deepEqual(await readdir(artifactsRoot), []);
+    assert.deepEqual(m.list(), []);
+  });
+
+  it("rejects a startup that overlaps disposal without retaining artifacts", async () => {
+    const { m, artifactsRoot } = await createManager();
+    const starting = m.start({ goal: "dispose during startup", cwd: process.cwd() });
+
+    await m.disposeAll();
+
+    await assert.rejects(starting, /Workflow manager is disposed/);
+    assert.deepEqual(await readdir(artifactsRoot), []);
+    assert.deepEqual(m.list(), []);
+  });
+
+  it("does not allocate artifacts for an already-aborted start", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const { m, artifactsRoot } = await createManager();
+
+    await assert.rejects(
+      () => m.start({ goal: "never starts", cwd: process.cwd(), signal: controller.signal }),
+      /aborted/i,
+    );
+
+    assert.deepEqual(await readdir(artifactsRoot), []);
+    assert.deepEqual(m.list(), []);
   });
 
   it("runs four phases, preserves artifacts, synthesizes after partial failure", async () => {

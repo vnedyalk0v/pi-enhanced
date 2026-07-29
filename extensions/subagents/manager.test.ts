@@ -182,6 +182,105 @@ describe("SubagentManager", () => {
     assert.equal(m.get(started.id)?.status, "done");
   });
 
+  it("cleans a delayed startup when disposal wins before registration", async () => {
+    let starterEntered!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      starterEntered = resolve;
+    });
+    let releaseStarter!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseStarter = resolve;
+    });
+    let kills = 0;
+    let collects = 0;
+    let finish!: () => void;
+    const wait = new Promise<{ exitCode: number }>((resolve) => {
+      finish = () => resolve({ exitCode: 1 });
+    });
+    const m = createManager({
+      starters: {
+        pi: async () => {
+          starterEntered();
+          await gate;
+          return {
+            handle: {
+              pid: 12345,
+              kill: () => {
+                kills += 1;
+                finish();
+              },
+              wait,
+            },
+            collect: async () => {
+              collects += 1;
+              const result = await wait;
+              return { ...result, resultText: "", output: "" };
+            },
+          };
+        },
+      },
+    });
+
+    const starting = m.spawn({ prompt: "late", cwd: process.cwd() });
+    await entered;
+    await m.disposeAll();
+    releaseStarter();
+
+    await assert.rejects(starting, /Subagent manager is disposed/);
+    assert.equal(kills, 1);
+    assert.equal(collects, 1);
+    assert.deepEqual(m.list(), []);
+  });
+
+  it("does not allocate for an already-aborted start", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    let calls = 0;
+    const m = createManager({
+      starters: {
+        pi: async () => {
+          calls += 1;
+          return fakeJob({ exitCode: 0 });
+        },
+      },
+    });
+
+    await assert.rejects(
+      () => m.spawn({ prompt: "no", cwd: process.cwd(), signal: controller.signal }),
+      /aborted/i,
+    );
+    assert.equal(calls, 0);
+    assert.deepEqual(m.list(), []);
+  });
+
+  it("keeps a registered subagent alive after its startup signal aborts", async () => {
+    const controller = new AbortController();
+    let kills = 0;
+    const job = fakeJob({ exitCode: 0, resultText: "later", delayMs: 5000 });
+    const originalKill = job.handle.kill;
+    job.handle.kill = (signal) => {
+      kills += 1;
+      originalKill(signal);
+    };
+    const m = createManager({
+      starters: {
+        pi: async () => job,
+      },
+    });
+
+    const started = await m.spawn({
+      prompt: "keep running",
+      cwd: process.cwd(),
+      signal: controller.signal,
+    });
+    controller.abort();
+
+    assert.equal(kills, 0);
+    assert.equal(m.get(started.id)?.status, "running");
+    await m.cancel([started.id]);
+    assert.equal(kills, 1);
+  });
+
   it("tracks the named agent on the snapshot", async () => {
     const m = createManager({
       starters: {
