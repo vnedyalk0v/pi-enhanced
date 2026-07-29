@@ -108,12 +108,12 @@ export async function startPiBackend(options: PiBackendOptions): Promise<Backend
       if (resultError) return;
       try {
         resultCollector.push(c);
-        options.onOutput?.(c);
       } catch (error) {
         if (!(error instanceof PiResultRecordTooLargeError)) throw error;
         resultError = error;
         handle.kill("SIGKILL");
       }
+      options.onOutput?.(c);
     },
     onStderr: (c) => {
       output = appendBounded(output, c);

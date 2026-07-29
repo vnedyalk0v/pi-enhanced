@@ -78,7 +78,7 @@ export default function (pi: ExtensionAPI) {
     if (!fullOutputPath) return;
     const directory = dirname(fullOutputPath);
     if (shuttingDown) {
-      await rm(directory, { recursive: true, force: true });
+      await rm(directory, { recursive: true, force: true }).catch(() => {});
     } else {
       spillDirectories.add(directory);
     }
