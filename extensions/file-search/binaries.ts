@@ -10,6 +10,7 @@ import {
   mkdirSync,
   readdirSync,
   renameSync,
+  rmdirSync,
   rmSync,
   statSync,
 } from "node:fs";
@@ -31,6 +32,7 @@ type TargetKey = `${PlatformTarget["os"]}-${PlatformTarget["arch"]}`;
 
 const FD_VERSION = "10.2.0";
 const RG_VERSION = "14.1.1";
+const PUBLISH_LOCK_STALE_MS = 5_000;
 
 const DIGESTS: Record<BinaryName, Record<TargetKey, string>> = {
   fd: {
@@ -193,6 +195,17 @@ function isRegularExecutable(path: string): boolean {
   }
 }
 
+function removeStaleLock(path: string): boolean {
+  try {
+    const stat = lstatSync(path);
+    if (!stat.isDirectory() || Date.now() - stat.mtimeMs < PUBLISH_LOCK_STALE_MS) return false;
+    rmdirSync(path);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT";
+  }
+}
+
 async function publishPrepared(
   prepared: string,
   dest: string,
@@ -221,6 +234,7 @@ async function publishPrepared(
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       if (isRegularExecutable(dest)) return false;
+      if (removeStaleLock(lockDir)) continue;
       if (Date.now() >= deadline) {
         throw new Error(`Timed out waiting to install ${dest}`);
       }

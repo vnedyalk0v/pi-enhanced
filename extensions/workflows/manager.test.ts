@@ -457,7 +457,18 @@ describe("WorkflowManager", () => {
       await killed;
       const [cancelled] = await cancelling;
       assert.equal(cancelled?.status, "cancelled");
-      assert.equal(cancelled?.phases[0]?.tasks[0]?.status, "killed");
+      const tasks = cancelled?.phases[0]?.tasks ?? [];
+      assert.equal(tasks.length, 2);
+      assert.ok(tasks.every((task) => task.status === "killed"));
+      for (const task of tasks) {
+        assert.ok(task.artifactPath);
+        assert.match(await readFile(task.artifactPath, "utf8"), /- status: killed/);
+      }
+      const outputs = JSON.parse(
+        await readFile(join(snap.artifactsDir, "phases", "01-reconnaissance", "outputs.json"), "utf8"),
+      ) as Array<{ status: string }>;
+      assert.equal(outputs.length, 2);
+      assert.ok(outputs.every((output) => output.status === "killed"));
     },
   );
 

@@ -9,6 +9,7 @@ import {
   readdir,
   rm,
   stat,
+  utimes,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -186,6 +187,38 @@ describe("ensureBinary", () => {
       assert.equal(await readFile(results[0].path, "utf8"), fixture.contents);
       assert.notEqual((await stat(results[0].path)).mode & 0o111, 0);
       assert.deepEqual(await readdir(join(agentDir, "bin")), ["fd"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("recovers an abandoned fallback publication lock", async () => {
+    const root = await mkdtemp(join(tmpdir(), "pi-binary-stale-lock-"));
+    try {
+      const agentDir = join(root, "agent");
+      const binDir = join(agentDir, "bin");
+      const lockDir = join(binDir, "fd.install-lock");
+      const fixture = await createBinaryArchive(root, "fd");
+      await mkdir(lockDir, { recursive: true });
+      const stale = new Date(Date.now() - 10_000);
+      await utimes(lockDir, stale, stale);
+
+      const result = await ensureBinary(
+        "fd",
+        { agentDir, platform: { os: "darwin", arch: "arm64" } },
+        {
+          resolveExisting: async () => null,
+          downloadToFile: async (_url, dest) => copyFile(fixture.archive, dest),
+          expectedDigest: () => fixture.digest,
+          linkPrepared: () => {
+            throw Object.assign(new Error("hard links unsupported"), { code: "EOPNOTSUPP" });
+          },
+        },
+      );
+
+      assert.equal(result.installed, true);
+      assert.equal(await readFile(result.path, "utf8"), fixture.contents);
+      assert.deepEqual(await readdir(binDir), ["fd"]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

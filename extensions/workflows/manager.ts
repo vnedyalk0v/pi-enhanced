@@ -422,14 +422,16 @@ export class WorkflowManager {
       const already = spawned.find((s) => s.task.key === task.key);
       if (already) continue;
       const tr = phaseRt.tasks.get(task.key)!;
-      const errorText = tr.error ?? (entry.cancelRequested ? "cancelled before start" : "failed to start");
+      const skipped = tr.status === "pending" && entry.cancelRequested;
+      const status = skipped ? "killed" : "failed";
+      const errorText = tr.error ?? (skipped ? "cancelled before start" : "failed to start");
       const artifactPath =
         tr.artifactPath ??
         (await writeTaskArtifact({
           dir,
           taskKey: task.key,
           title: task.title,
-          status: "failed",
+          status,
           body: "",
           error: errorText,
         }));
@@ -437,11 +439,11 @@ export class WorkflowManager {
         phase: phaseName,
         taskKey: task.key,
         title: task.title,
-        subagentStatus: "failed",
+        subagentStatus: status,
         errorText,
         artifactPath,
       });
-      tr.status = entry.cancelRequested ? "killed" : "failed";
+      tr.status = status;
       tr.error = errorText;
       tr.artifactPath = artifactPath;
       outputs.push(out);
