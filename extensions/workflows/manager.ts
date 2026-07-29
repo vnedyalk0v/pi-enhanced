@@ -328,16 +328,33 @@ export class WorkflowManager {
     await mkdir(dir, { recursive: true, mode: 0o700 });
 
     if (entry.cancelRequested) {
-      return tasks.map((t) =>
-        validateStructuredOutput({
-          phase: phaseName,
-          taskKey: t.key,
-          title: t.title,
-          subagentStatus: "killed",
-          errorText: "cancelled before start",
-          artifactPath: join(dir, `${t.key}.md`),
-        }),
-      );
+      const outputs: StructuredOutput[] = [];
+      for (const task of tasks) {
+        const errorText = "cancelled before start";
+        const artifactPath = await writeTaskArtifact({
+          dir,
+          taskKey: task.key,
+          title: task.title,
+          status: "killed",
+          body: "",
+          error: errorText,
+        });
+        const tr = phaseRt.tasks.get(task.key)!;
+        tr.status = "killed";
+        tr.error = errorText;
+        tr.artifactPath = artifactPath;
+        outputs.push(
+          validateStructuredOutput({
+            phase: phaseName,
+            taskKey: task.key,
+            title: task.title,
+            subagentStatus: "killed",
+            errorText,
+            artifactPath,
+          }),
+        );
+      }
+      return outputs;
     }
 
     // Mark running and spawn all phase tasks in parallel (within subagent concurrency).

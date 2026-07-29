@@ -363,6 +363,47 @@ describe("WorkflowManager", () => {
     assert.equal(cancelled[0]?.status, "cancelled");
   });
 
+  it("persists killed tasks when cancelled before the first phase starts", async () => {
+    let resolveSettled!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      resolveSettled = resolve;
+    });
+    let starts = 0;
+    const { m } = await createManager({
+      onSettled: resolveSettled,
+      subagentOptions: {
+        starters: {
+          pi: async () => {
+            starts += 1;
+            return fakeJob({ exitCode: 0, resultText: "unexpected" });
+          },
+        },
+      },
+    });
+
+    const snap = await m.start({ goal: "cancel immediately", cwd: process.cwd() });
+    const [cancelled] = await m.cancel([snap.id]);
+    await settled;
+
+    assert.equal(starts, 0);
+    assert.equal(cancelled?.status, "cancelled");
+    const tasks = cancelled?.phases[0]?.tasks ?? [];
+    assert.ok(tasks.length > 0);
+    for (const task of tasks) {
+      assert.equal(task.status, "killed");
+      assert.equal(task.error, "cancelled before start");
+      assert.ok(task.artifactPath);
+      const artifact = await readFile(task.artifactPath, "utf8");
+      assert.match(artifact, /- status: killed/);
+      assert.match(artifact, /- error: cancelled before start/);
+    }
+
+    const persisted = JSON.parse(
+      await readFile(join(snap.artifactsDir, "status.json"), "utf8"),
+    ) as typeof cancelled;
+    assert.deepEqual(persisted, JSON.parse(JSON.stringify(cancelled)));
+  });
+
   it(
     "cancels a subagent that finishes starting after workflow cancellation",
     { timeout: 1000 },
