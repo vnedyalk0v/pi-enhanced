@@ -202,6 +202,36 @@ describe("SubagentManager", () => {
     assert.equal(cancelled[0]?.status, "killed");
   });
 
+  it("keeps cancel interest until an aborted termination settles", async () => {
+    let finish!: () => void;
+    const wait = new Promise<{ exitCode: number }>((resolve) => {
+      finish = () => resolve({ exitCode: 1 });
+    });
+    let resolveSettled!: (consumed: boolean) => void;
+    const settled = new Promise<boolean>((resolve) => {
+      resolveSettled = resolve;
+    });
+    const m = createManager({
+      starters: {
+        pi: async () => ({
+          handle: { pid: 12345, kill: () => {}, wait },
+          collect: async () => ({ ...(await wait), resultText: "", output: "" }),
+        }),
+      },
+      onSettled: ({ consumed }) => resolveSettled(consumed),
+    });
+    const snap = await m.spawn({ prompt: "long", cwd: process.cwd() });
+    const controller = new AbortController();
+    const cancelling = m.cancel([snap.id], controller.signal);
+
+    controller.abort();
+    await assert.rejects(cancelling, /aborted/i);
+    assert.equal(m.get(snap.id)?.status, "running");
+    finish();
+
+    assert.equal(await settled, true);
+  });
+
   it("enforces concurrency limit", async () => {
     const m = createManager({
       maxRunning: 1,

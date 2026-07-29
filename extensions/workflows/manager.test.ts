@@ -465,6 +465,46 @@ describe("WorkflowManager", () => {
     assert.equal(cancelled[0]?.status, "cancelled");
   });
 
+  it("keeps cancel interest until an aborted workflow settles", async () => {
+    let backendStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      backendStarted = resolve;
+    });
+    let finish!: () => void;
+    const wait = new Promise<{ exitCode: number }>((resolve) => {
+      finish = () => resolve({ exitCode: 1 });
+    });
+    let resolveSettled!: (consumed: boolean) => void;
+    const settled = new Promise<boolean>((resolve) => {
+      resolveSettled = resolve;
+    });
+    const { m } = await createManager({
+      onSettled: ({ consumed }) => resolveSettled(consumed),
+      subagentOptions: {
+        starters: {
+          pi: async () => {
+            backendStarted();
+            return {
+              handle: { pid: 99_001, kill: () => {}, wait },
+              collect: async () => ({ ...(await wait), resultText: "", output: "" }),
+            };
+          },
+        },
+      },
+    });
+    const snap = await m.start({ goal: "late cancellation", cwd: process.cwd() });
+    await started;
+    const controller = new AbortController();
+    const cancelling = m.cancel([snap.id], controller.signal);
+
+    controller.abort();
+    await assert.rejects(cancelling, /aborted/i);
+    assert.equal(m.get(snap.id)?.status, "running");
+    finish();
+
+    assert.equal(await settled, true);
+  });
+
   it("persists killed tasks when cancelled before the first phase starts", async () => {
     let resolveSettled!: () => void;
     const settled = new Promise<void>((resolve) => {

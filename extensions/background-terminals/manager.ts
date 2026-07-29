@@ -130,6 +130,16 @@ export class TerminalManager {
     }
   }
 
+  private pruneAfterInterestRelease() {
+    const size = this.entries.size;
+    pruneSettled(
+      this.entries,
+      this.maxTracked,
+      (e) => e.status === "running" || this.killInterest.has(e.id),
+    );
+    if (this.entries.size < size) this.notify();
+  }
+
   private notifyOutput() {
     if (this.disposed || this.outputNotifyTimer) return;
     this.outputNotifyTimer = setTimeout(() => {
@@ -431,7 +441,20 @@ export class TerminalManager {
         return snap ? { ...r, snapshot: snap } : r;
       });
     } finally {
-      for (const id of interested) this.killInterest.release(id);
+      for (const id of interested) {
+        const entry = this.entries.get(id);
+        if (entry?.status === "running") {
+          void entry.settlePromise
+            .then(() => {
+              this.killInterest.release(id);
+              this.pruneAfterInterestRelease();
+            })
+            .catch(() => {});
+        } else {
+          this.killInterest.release(id);
+        }
+      }
+      this.pruneAfterInterestRelease();
     }
   }
 

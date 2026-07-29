@@ -603,6 +603,19 @@ export class WorkflowManager {
     this.onChange?.();
   }
 
+  private pruneAfterInterestRelease() {
+    const size = this.entries.size;
+    pruneSettled(
+      this.entries,
+      this.maxTracked,
+      (e) => e.status === "running" || this.waitInterest.has(e.id),
+      (evicted) => {
+        void rm(evicted.artifactsDir, { recursive: true, force: true }).catch(() => {});
+      },
+    );
+    if (this.entries.size < size) this.notify();
+  }
+
   async wait(ids: readonly string[], signal?: AbortSignal): Promise<WorkflowSnapshot[]> {
     if (this.disposed) throw new Error("Workflow manager is disposed.");
     const unknown = ids.filter((id) => !this.entries.has(id));
@@ -626,6 +639,7 @@ export class WorkflowManager {
     const unknown = ids.filter((id) => !this.entries.has(id));
     if (unknown.length > 0) throw new Error(`Unknown workflow id(s): ${unknown.join(", ")}`);
 
+    let completed = false;
     for (const id of ids) this.waitInterest.add(id);
     try {
       const waiting: Promise<void>[] = [];
@@ -649,9 +663,24 @@ export class WorkflowManager {
           abortPromise(signal, "Cancel wait aborted; termination continues in the background."),
         ]);
       }
-      return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
+      const snapshots = ids.map((id) => this.snapshotOf(this.entries.get(id)!));
+      completed = true;
+      return snapshots;
     } finally {
-      for (const id of ids) this.waitInterest.release(id);
+      for (const id of ids) {
+        const entry = this.entries.get(id);
+        if (entry?.status === "running") {
+          void entry.settlePromise
+            .then(() => {
+              this.waitInterest.release(id);
+              this.pruneAfterInterestRelease();
+            })
+            .catch(() => {});
+        } else {
+          this.waitInterest.release(id);
+        }
+      }
+      if (!completed) this.pruneAfterInterestRelease();
     }
   }
 

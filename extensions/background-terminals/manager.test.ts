@@ -246,6 +246,7 @@ describe("TerminalManager", () => {
       killed.map((result) => result.snapshot.status),
       ["killed", "killed"],
     );
+    assert.equal(m.list().length, 1);
 
     const later = await m.start({
       command: "printf later",
@@ -258,6 +259,33 @@ describe("TerminalManager", () => {
       [later.id],
     );
   });
+
+  it(
+    "keeps kill interest until an aborted termination settles",
+    { skip: process.platform === "win32" },
+    async () => {
+      const settled = createSettlementTracker();
+      const m = createManager({ onSettled: settled.onSettled });
+      const snap = await m.start({
+        command: "trap '' TERM; printf ready; sleep 30",
+        title: "late kill",
+        cwd: process.cwd(),
+      });
+      await waitFor(
+        () => m.get(snap.id)?.stdout.text === "ready",
+        "terminal did not become ready",
+      );
+
+      const controller = new AbortController();
+      const killing = m.kill([snap.id], controller.signal);
+      controller.abort();
+      await assert.rejects(killing, /aborted/i);
+      assert.equal(m.get(snap.id)?.status, "running");
+
+      const info = await settled.waitFor(snap.id);
+      assert.equal(info.consumed, true);
+    },
+  );
 
   it("lists running and completed terminals", async () => {
     const settled = createSettlementTracker();

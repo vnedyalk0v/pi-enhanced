@@ -355,7 +355,19 @@ export class SubagentManager {
       }
       return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
     } finally {
-      for (const id of ids) this.waitInterest.release(id);
+      for (const id of ids) {
+        const entry = this.entries.get(id);
+        if (entry?.status === "running") {
+          void entry.settlePromise
+            .then(() => {
+              this.waitInterest.release(id);
+              this.pruneAfterInterestRelease();
+            })
+            .catch(() => {});
+        } else {
+          this.waitInterest.release(id);
+        }
+      }
       this.pruneAfterInterestRelease();
     }
   }

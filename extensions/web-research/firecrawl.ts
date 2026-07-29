@@ -158,7 +158,12 @@ async function requestJson(
     signal,
   });
 
-  const text = await readResponseText(res, FIRECRAWL_MAX_RESPONSE_BYTES, "Firecrawl", signal);
+  let text = "";
+  try {
+    text = await readResponseText(res, FIRECRAWL_MAX_RESPONSE_BYTES, "Firecrawl", signal);
+  } catch (error) {
+    if (res.ok || signal.aborted) throw error;
+  }
   if (!res.ok) {
     throwClassified({
       ...classifyHttpError(res.status, text),
