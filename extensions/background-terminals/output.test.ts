@@ -41,6 +41,30 @@ describe("OutputBuffer", () => {
     assert.equal(view.truncatedBytes, 5);
   });
 
+  it("returns metadata without joining retained text", () => {
+    const buf = new OutputBuffer(64);
+    buf.push("hello");
+    const chunks = (buf as unknown as { chunks: string[] }).chunks;
+    const join = chunks.join.bind(chunks);
+    let joined = false;
+    chunks.join = (separator) => {
+      joined = true;
+      return join(separator);
+    };
+
+    const metadata = buf.view(false);
+    assert.equal(joined, false);
+    assert.deepEqual(metadata, {
+      text: "",
+      totalBytes: 5,
+      truncatedBytes: 0,
+      spillPath: undefined,
+    });
+
+    assert.equal(buf.view().text, "hello");
+    assert.equal(joined, true);
+  });
+
   it("spills full stream to disk", async () => {
     const dir = await mkdtemp(join(tmpdir(), "pi-bt-out-"));
     const path = join(dir, "out.log");

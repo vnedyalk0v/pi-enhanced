@@ -97,9 +97,9 @@ export class OutputBuffer {
     });
   }
 
-  view(): OutputView {
+  view(includeText = true): OutputView {
     return {
-      text: this.chunks.join(""),
+      text: includeText ? this.chunks.join("") : "",
       totalBytes: this.totalBytes,
       truncatedBytes: this.truncatedBytes,
       spillPath: this.spillPath,

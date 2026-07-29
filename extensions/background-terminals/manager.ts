@@ -147,7 +147,7 @@ export class TerminalManager {
     return n;
   }
 
-  private snapshotOf(entry: Entry): TerminalSnapshot {
+  private snapshotOf(entry: Entry, includeText = true): TerminalSnapshot {
     return {
       id: entry.id,
       command: entry.command,
@@ -160,13 +160,13 @@ export class TerminalManager {
       exitCode: entry.exitCode,
       signal: entry.signal,
       errorText: entry.errorText,
-      stdout: entry.stdout.view(),
-      stderr: entry.stderr.view(),
+      stdout: entry.stdout.view(includeText),
+      stderr: entry.stderr.view(includeText),
     };
   }
 
   list(): TerminalSnapshot[] {
-    return [...this.entries.values()].map((e) => this.snapshotOf(e));
+    return [...this.entries.values()].map((e) => this.snapshotOf(e, false));
   }
 
   get(id: string): TerminalSnapshot | undefined {

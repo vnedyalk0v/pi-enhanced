@@ -3,8 +3,10 @@ import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, it } from "node:test";
+import type { Theme } from "@earendil-works/pi-coding-agent";
 import { buildStatusResult, buildTerminalResultMessage } from "./format.ts";
 import { TerminalManager, type SettledInfo, type TerminalSnapshot } from "./manager.ts";
+import { PsOverlay } from "./ps.ts";
 
 const managers: TerminalManager[] = [];
 
@@ -266,6 +268,37 @@ describe("TerminalManager", () => {
     const list = m.list();
     assert.equal(list.length, 2);
     assert.ok(list.every((s) => s.status === "done"));
+    assert.deepEqual(list.map((s) => s.stdout.text), ["", ""]);
+    assert.deepEqual(list.map((s) => s.stdout.totalBytes), [1, 1]);
+    assert.equal(m.get(a.id)?.stdout.text, "a");
+    assert.equal(m.get(b.id)?.stdout.text, "b");
+  });
+
+  it("materializes only the selected terminal in /ps detail", async () => {
+    const settled = createSettlementTracker();
+    const m = createManager({ onSettled: settled.onSettled });
+    const a = await m.start({ command: "printf a", title: "a", cwd: process.cwd() });
+    const b = await m.start({ command: "printf b", title: "b", cwd: process.cwd() });
+    await Promise.all([settled.waitFor(a.id), settled.waitFor(b.id)]);
+
+    const get = m.get.bind(m);
+    const materialized: string[] = [];
+    m.get = (id) => {
+      materialized.push(id);
+      return get(id);
+    };
+    const theme = {
+      fg: (_color: string, text: string) => text,
+    } as unknown as Theme;
+    const overlay = new PsOverlay(m, theme, () => {}, () => {});
+
+    overlay.render(100);
+    assert.deepEqual(materialized, []);
+    overlay.handleInput("\x1b[B");
+    overlay.handleInput("\r");
+    overlay.render(100);
+    assert.deepEqual(materialized, [b.id]);
+    overlay.dispose();
   });
 
   it("enforces concurrency limit", async () => {
