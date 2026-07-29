@@ -17,6 +17,9 @@ function buildPrompt(conversationText: string): string {
   ].join("\n");
 }
 
+export const SUMMARY_PROMPT_MAX_CHARS = 32_000;
+const SUMMARY_CONVERSATION_MAX_CHARS = SUMMARY_PROMPT_MAX_CHARS - buildPrompt("").length;
+
 async function showSummary(summary: string, ctx: ExtensionCommandContext) {
   if (ctx.mode !== "tui") {
     ctx.ui.notify(summary.slice(0, 200) + (summary.length > 200 ? "…" : ""), "info");
@@ -42,12 +45,13 @@ async function showSummary(summary: string, ctx: ExtensionCommandContext) {
   });
 }
 
-export default function (pi: ExtensionAPI) {
+export function registerSummaryCommand(pi: ExtensionAPI, completeSummary: typeof complete) {
   pi.registerCommand("summary", {
     description: "Summarize the current conversation with the active model",
     handler: async (_args, ctx) => {
       const conversationText = extractConversationText(ctx.sessionManager.getBranch(), {
         includeToolCalls: true,
+        maxChars: SUMMARY_CONVERSATION_MAX_CHARS,
       });
       if (!conversationText.trim()) {
         if (ctx.hasUI) ctx.ui.notify("No conversation to summarize", "warning");
@@ -71,7 +75,7 @@ export default function (pi: ExtensionAPI) {
       if (ctx.hasUI) ctx.ui.notify("Summarizing…", "info");
 
       try {
-        const response = await complete(
+        const response = await completeSummary(
           model,
           {
             messages: [
@@ -109,4 +113,8 @@ export default function (pi: ExtensionAPI) {
       }
     },
   });
+}
+
+export default function (pi: ExtensionAPI) {
+  registerSummaryCommand(pi, complete);
 }

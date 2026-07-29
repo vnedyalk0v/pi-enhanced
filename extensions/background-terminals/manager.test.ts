@@ -38,6 +38,34 @@ function sleep(ms: number) {
   return new Promise<void>((r) => setTimeout(r, ms));
 }
 
+function createSettlementTracker() {
+  const settled = new Map<string, SettledInfo>();
+  const waiters = new Map<string, (info: SettledInfo) => void>();
+
+  return {
+    onSettled(info: SettledInfo) {
+      settled.set(info.snapshot.id, info);
+      waiters.get(info.snapshot.id)?.(info);
+      waiters.delete(info.snapshot.id);
+    },
+    waitFor(id: string) {
+      const info = settled.get(id);
+      if (info) return Promise.resolve(info);
+
+      return new Promise<SettledInfo>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          waiters.delete(id);
+          reject(new Error(`terminal did not settle: ${id}`));
+        }, 2_000);
+        waiters.set(id, (settledInfo) => {
+          clearTimeout(timeout);
+          resolve(settledInfo);
+        });
+      });
+    },
+  };
+}
+
 async function waitFor(predicate: () => boolean, message: string) {
   const deadline = Date.now() + 5_000;
   while (!predicate()) {
@@ -48,8 +76,8 @@ async function waitFor(predicate: () => boolean, message: string) {
 
 describe("TerminalManager", () => {
   it("starts a short command, settles as done, and captures stdout", async () => {
-    const settled: SettledInfo[] = [];
-    const m = createManager({ onSettled: (info) => settled.push(info) });
+    const settled = createSettlementTracker();
+    const m = createManager({ onSettled: settled.onSettled });
 
     const snap = await m.start({
       command: "printf 'hello-bg\\n'",
@@ -61,16 +89,15 @@ describe("TerminalManager", () => {
     assert.match(snap.id, /^bt-\d+$/);
     assert.ok(snap.pid !== undefined);
 
-    await sleep(800);
+    const info = await settled.waitFor(snap.id);
     const after = m.get(snap.id);
     assert.ok(after);
     assert.equal(after.status, "done");
     assert.equal(m.getRunningCount(), 0);
     assert.equal(after.exitCode, 0);
     assert.match(after.stdout.text, /hello-bg/);
-    assert.equal(settled.length, 1);
-    assert.equal(settled[0]!.consumed, false);
-    assert.equal(settled[0]!.snapshot.status, "done");
+    assert.equal(info.consumed, false);
+    assert.equal(info.snapshot.status, "done");
   });
 
   it(
@@ -163,13 +190,14 @@ describe("TerminalManager", () => {
   );
 
   it("records failed status for non-zero exit", async () => {
-    const m = createManager();
+    const settled = createSettlementTracker();
+    const m = createManager({ onSettled: settled.onSettled });
     const snap = await m.start({
       command: "exit 7",
       title: "fail",
       cwd: process.cwd(),
     });
-    await sleep(800);
+    await settled.waitFor(snap.id);
     const after = m.get(snap.id)!;
     assert.equal(after.status, "failed");
     assert.equal(after.exitCode, 7);
@@ -196,10 +224,11 @@ describe("TerminalManager", () => {
   });
 
   it("lists running and completed terminals", async () => {
-    const m = createManager();
-    await m.start({ command: "printf a", title: "a", cwd: process.cwd() });
-    await m.start({ command: "printf b", title: "b", cwd: process.cwd() });
-    await sleep(800);
+    const settled = createSettlementTracker();
+    const m = createManager({ onSettled: settled.onSettled });
+    const a = await m.start({ command: "printf a", title: "a", cwd: process.cwd() });
+    const b = await m.start({ command: "printf b", title: "b", cwd: process.cwd() });
+    await Promise.all([settled.waitFor(a.id), settled.waitFor(b.id)]);
     const list = m.list();
     assert.equal(list.length, 2);
     assert.ok(list.every((s) => s.status === "done"));
@@ -277,11 +306,13 @@ describe("spill session isolation", () => {
   it("uses distinct session keys without collision", async () => {
     const dir = await mkdtemp(join(tmpdir(), "pi-bt-sess-"));
     // Managers use their own tmp spill dirs keyed by session; just ensure two managers work.
-    const a = createManager();
-    const b = createManager();
-    await a.start({ command: "printf a", title: "a", cwd: dir });
-    await b.start({ command: "printf b", title: "b", cwd: dir });
-    await sleep(600);
+    const aSettled = createSettlementTracker();
+    const bSettled = createSettlementTracker();
+    const a = createManager({ onSettled: aSettled.onSettled });
+    const b = createManager({ onSettled: bSettled.onSettled });
+    const aSnap = await a.start({ command: "printf a", title: "a", cwd: dir });
+    const bSnap = await b.start({ command: "printf b", title: "b", cwd: dir });
+    await Promise.all([aSettled.waitFor(aSnap.id), bSettled.waitFor(bSnap.id)]);
     assert.equal(a.list().length, 1);
     assert.equal(b.list().length, 1);
     await rm(dir, { recursive: true, force: true });

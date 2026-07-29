@@ -10,6 +10,7 @@ import {
 } from "./normalize.ts";
 
 const BASE_URL = "https://api.firecrawl.dev/v2";
+const CRAWL_CLEANUP_TIMEOUT_MS = 1_000;
 
 export type FirecrawlOptions = {
   apiKey: string;
@@ -118,7 +119,9 @@ export async function firecrawlCrawl(
   } catch (error) {
     if (!terminal) {
       try {
-        await requestJson(options, "DELETE", `/crawl/${encodeURIComponent(id)}`);
+        await requestJson(options, "DELETE", `/crawl/${encodeURIComponent(id)}`, {
+          signal: AbortSignal.timeout(CRAWL_CLEANUP_TIMEOUT_MS),
+        });
       } catch {
         // Preserve the original crawl error.
       }

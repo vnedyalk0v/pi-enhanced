@@ -117,8 +117,9 @@ export class SubagentManager {
     return e ? this.snapshotOf(e) : undefined;
   }
 
-  async spawn(options: SpawnOptions): Promise<SubagentSnapshot> {
+  async spawn(options: SpawnOptions & { signal?: AbortSignal }): Promise<SubagentSnapshot> {
     if (this.disposed) throw new Error("Subagent manager is disposed.");
+    options.signal?.throwIfAborted();
     if (this.runningCount() + this.startingCount >= this.maxRunning) {
       throw new Error(
         `Concurrency limit: at most ${this.maxRunning} subagents may run at once.`,
@@ -161,42 +162,46 @@ export class SubagentManager {
 
     const onOutput = (chunk: string) => {
       entry.outputTail = appendBounded(entry.outputTail, chunk, OUTPUT_TAIL_CHARS);
-      this.notify();
     };
 
     let job: BackendJob;
     try {
-      job = await this.starter({
-        prompt,
-        cwd,
-        model: options.model,
-        thinking: options.thinking,
-        tools: options.tools,
-        systemPromptAppend: options.systemPromptAppend,
-        onOutput,
-      });
-    } catch (error) {
+      try {
+        job = await this.starter({
+          prompt,
+          cwd,
+          model: options.model,
+          thinking: options.thinking,
+          tools: options.tools,
+          systemPromptAppend: options.systemPromptAppend,
+          signal: options.signal,
+          onOutput,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`Failed to start subagent: ${message}`);
+      }
+
+      if (this.disposed || options.signal?.aborted) {
+        job.handle.kill("SIGKILL");
+        await job.collect().catch(() => {});
+        if (this.disposed) throw new Error("Subagent manager is disposed.");
+        if (options.signal) options.signal.throwIfAborted();
+        throw new Error("Subagent start aborted.");
+      }
+
+      entry.job = job;
+      entry.pid = job.handle.pid;
+      this.entries.set(id, entry);
+      this.notify();
+
+      // Background collection — never await here.
+      void this.collectEntry(entry, job);
+
+      return this.snapshotOf(entry);
+    } finally {
       this.startingCount -= 1;
-      const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`Failed to start subagent: ${message}`);
     }
-
-    if (this.disposed) {
-      this.startingCount -= 1;
-      job.handle.kill("SIGKILL");
-      throw new Error("Subagent manager is disposed.");
-    }
-
-    entry.job = job;
-    entry.pid = job.handle.pid;
-    this.entries.set(id, entry);
-    this.startingCount -= 1;
-    this.notify();
-
-    // Background collection — never await here.
-    void this.collectEntry(entry, job);
-
-    return this.snapshotOf(entry);
   }
 
   private async collectEntry(entry: Entry, job: BackendJob) {

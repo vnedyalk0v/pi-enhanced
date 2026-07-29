@@ -108,8 +108,11 @@ export class WorkflowManager {
     return n;
   }
 
-  async start(options: StartWorkflowOptions): Promise<WorkflowSnapshot> {
+  async start(
+    options: StartWorkflowOptions & { signal?: AbortSignal },
+  ): Promise<WorkflowSnapshot> {
     if (this.disposed) throw new Error("Workflow manager is disposed.");
+    options.signal?.throwIfAborted();
     if (this.runningCount() + this.startingCount >= this.maxRunning) {
       throw new Error(
         `Concurrency limit: at most ${this.maxRunning} workflows may run at once.`,
@@ -131,14 +134,21 @@ export class WorkflowManager {
       options.title?.trim().slice(0, 80) ||
       `workflow: ${goal.replace(/\s+/g, " ").slice(0, 48)}`;
 
-    let artifactsDir: string;
+    let artifactsDir: string | undefined;
+    let subagents: SubagentManager | undefined;
     try {
       await mkdir(this.artifactsRoot, { recursive: true, mode: 0o700 });
+      if (this.disposed) throw new Error("Workflow manager is disposed.");
+      options.signal?.throwIfAborted();
       artifactsDir = await mkdtemp(join(this.artifactsRoot, `${id}-`));
+      if (this.disposed) throw new Error("Workflow manager is disposed.");
+      options.signal?.throwIfAborted();
       await writeFile(join(artifactsDir, "goal.txt"), `${goal.trim()}\n`, {
         encoding: "utf8",
         mode: 0o600,
       });
+      if (this.disposed) throw new Error("Workflow manager is disposed.");
+      options.signal?.throwIfAborted();
       await writeFile(
         join(artifactsDir, "meta.json"),
         `${JSON.stringify(
@@ -154,64 +164,71 @@ export class WorkflowManager {
         )}\n`,
         { encoding: "utf8", mode: 0o600 },
       );
+      if (this.disposed) throw new Error("Workflow manager is disposed.");
+      options.signal?.throwIfAborted();
+
+      let resolveSettle!: () => void;
+      const settlePromise = new Promise<void>((r) => {
+        resolveSettle = r;
+      });
+
+      const phases: PhaseRuntime[] = REPO_TASK_PHASES.map((p) => ({
+        name: p.name,
+        status: "pending" as const,
+        tasks: new Map(
+          p.tasks.map((t) => [
+            t.key,
+            {
+              key: t.key,
+              title: t.title,
+              status: "pending" as const,
+            } satisfies TaskRunSnapshot,
+          ]),
+        ),
+      }));
+
+      subagents = new SubagentManager({
+        ...this.subagentOptions,
+        onChange: () => this.notify(),
+      });
+
+      const entry: Entry = {
+        id,
+        title,
+        goal,
+        cwd,
+        model: options.model,
+        thinking: options.thinking,
+        status: "running",
+        createdAt: Date.now(),
+        artifactsDir,
+        phases,
+        priorOutputs: [],
+        failedTaskCount: 0,
+        cancelRequested: false,
+        settlePromise,
+        resolveSettle,
+        subagents,
+      };
+
+      await this.persist(entry);
+      if (this.disposed) throw new Error("Workflow manager is disposed.");
+      options.signal?.throwIfAborted();
+
+      this.entries.set(id, entry);
+      this.notify();
+
+      // Background orchestration — never await here.
+      void this.runWorkflow(entry);
+
+      return this.snapshotOf(entry);
     } catch (error) {
-      this.startingCount -= 1;
+      if (subagents) await subagents.disposeAll();
+      if (artifactsDir) await rm(artifactsDir, { recursive: true, force: true });
       throw error;
+    } finally {
+      this.startingCount -= 1;
     }
-
-    let resolveSettle!: () => void;
-    const settlePromise = new Promise<void>((r) => {
-      resolveSettle = r;
-    });
-
-    const phases: PhaseRuntime[] = REPO_TASK_PHASES.map((p) => ({
-      name: p.name,
-      status: "pending" as const,
-      tasks: new Map(
-        p.tasks.map((t) => [
-          t.key,
-          {
-            key: t.key,
-            title: t.title,
-            status: "pending" as const,
-          } satisfies TaskRunSnapshot,
-        ]),
-      ),
-    }));
-
-    const subagents = new SubagentManager({
-      ...this.subagentOptions,
-      onChange: () => this.notify(),
-    });
-
-    const entry: Entry = {
-      id,
-      title,
-      goal,
-      cwd,
-      model: options.model,
-      thinking: options.thinking,
-      status: "running",
-      createdAt: Date.now(),
-      artifactsDir,
-      phases,
-      priorOutputs: [],
-      failedTaskCount: 0,
-      cancelRequested: false,
-      settlePromise,
-      resolveSettle,
-      subagents,
-    };
-
-    this.entries.set(id, entry);
-    this.startingCount -= 1;
-    this.notify();
-    await this.persist(entry);
-
-    // Background orchestration — never await here.
-    void this.runWorkflow(entry);
-
-    return this.snapshotOf(entry);
   }
 
   private async runWorkflow(entry: Entry) {
@@ -311,16 +328,38 @@ export class WorkflowManager {
     await mkdir(dir, { recursive: true, mode: 0o700 });
 
     if (entry.cancelRequested) {
-      return tasks.map((t) =>
-        validateStructuredOutput({
-          phase: phaseName,
-          taskKey: t.key,
-          title: t.title,
-          subagentStatus: "killed",
-          errorText: "cancelled before start",
-          artifactPath: join(dir, `${t.key}.md`),
-        }),
-      );
+      const outputs: StructuredOutput[] = [];
+      for (const task of tasks) {
+        const errorText = "cancelled before start";
+        const artifactPath = await writeTaskArtifact({
+          dir,
+          taskKey: task.key,
+          title: task.title,
+          status: "killed",
+          body: "",
+          error: errorText,
+        });
+        const tr = phaseRt.tasks.get(task.key)!;
+        tr.status = "killed";
+        tr.error = errorText;
+        tr.artifactPath = artifactPath;
+        outputs.push(
+          validateStructuredOutput({
+            phase: phaseName,
+            taskKey: task.key,
+            title: task.title,
+            subagentStatus: "killed",
+            errorText,
+            artifactPath,
+          }),
+        );
+      }
+      await writeFile(join(dir, "outputs.json"), `${JSON.stringify(outputs, null, 2)}\n`, {
+        encoding: "utf8",
+        mode: 0o600,
+      });
+      this.notify();
+      return outputs;
     }
 
     // Mark running and spawn all phase tasks in parallel (within subagent concurrency).
@@ -353,17 +392,26 @@ export class WorkflowManager {
         });
         tr.subagentId = snap.id;
         spawned.push({ task, subagentId: snap.id });
+        if (entry.cancelRequested || this.disposed) {
+          await entry.subagents.cancel([snap.id]);
+        }
         this.notify();
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        tr.status = "failed";
+        const cancelled = entry.cancelRequested || this.disposed;
+        const status = cancelled ? "killed" : "failed";
+        const message = cancelled
+          ? "cancelled during start"
+          : error instanceof Error
+            ? error.message
+            : String(error);
+        tr.status = status;
         tr.error = message;
-        entry.failedTaskCount += 1;
+        if (!cancelled) entry.failedTaskCount += 1;
         const artifactPath = await writeTaskArtifact({
           dir,
           taskKey: task.key,
           title: task.title,
-          status: "failed",
+          status,
           body: "",
           error: message,
         });
@@ -385,14 +433,16 @@ export class WorkflowManager {
       const already = spawned.find((s) => s.task.key === task.key);
       if (already) continue;
       const tr = phaseRt.tasks.get(task.key)!;
-      const errorText = tr.error ?? (entry.cancelRequested ? "cancelled before start" : "failed to start");
+      const cancelled = tr.status === "killed" || (tr.status === "pending" && entry.cancelRequested);
+      const status = cancelled ? "killed" : "failed";
+      const errorText = tr.error ?? (cancelled ? "cancelled before start" : "failed to start");
       const artifactPath =
         tr.artifactPath ??
         (await writeTaskArtifact({
           dir,
           taskKey: task.key,
           title: task.title,
-          status: "failed",
+          status,
           body: "",
           error: errorText,
         }));
@@ -400,11 +450,11 @@ export class WorkflowManager {
         phase: phaseName,
         taskKey: task.key,
         title: task.title,
-        subagentStatus: "failed",
+        subagentStatus: status,
         errorText,
         artifactPath,
       });
-      tr.status = entry.cancelRequested ? "killed" : "failed";
+      tr.status = status;
       tr.error = errorText;
       tr.artifactPath = artifactPath;
       outputs.push(out);
@@ -450,7 +500,12 @@ export class WorkflowManager {
       tr.artifactPath = artifactPath;
       tr.error = out.error;
       tr.subagentId = subagentId;
-      if (out.status !== "ok") entry.failedTaskCount += 1;
+      if (
+        out.status !== "ok" &&
+        !(out.status === "killed" && (entry.cancelRequested || this.disposed))
+      ) {
+        entry.failedTaskCount += 1;
+      }
 
       outputs.push(out);
 

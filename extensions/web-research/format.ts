@@ -1,4 +1,9 @@
-import { truncateForModel } from "../shared/text.ts";
+import {
+  DEFAULT_MAX_BYTES,
+  DEFAULT_MAX_LINES,
+} from "@earendil-works/pi-coding-agent";
+import { StringDecoder } from "node:string_decoder";
+import { formatTruncationNotice, truncateForModel } from "../shared/text.ts";
 import type { ClassifiedError } from "./errors.ts";
 import type { CrawlResult, ScrapeResult, SearchResult } from "./normalize.ts";
 
@@ -40,27 +45,97 @@ export function formatScrapeResult(result: ScrapeResult): string {
 }
 
 export function formatCrawlResult(result: CrawlResult): string {
-  const lines = [
+  const state = {
+    lines: [] as string[],
+    bytes: 0,
+    truncatedTotalBytes: 0,
+  };
+  const appendLine = (line: string) => {
+    const separatorBytes = state.lines.length === 0 ? 0 : 1;
+    const remainingBytes = DEFAULT_MAX_BYTES - state.bytes - separatorBytes;
+    const lineBytes = Buffer.byteLength(line);
+    if (state.lines.length >= DEFAULT_MAX_LINES) {
+      state.truncatedTotalBytes = state.bytes + separatorBytes + lineBytes;
+      return false;
+    }
+    if (lineBytes > remainingBytes) {
+      state.truncatedTotalBytes = state.bytes + separatorBytes + lineBytes;
+      if (remainingBytes > 0) {
+        const decoder = new StringDecoder("utf8");
+        const prefix = decoder.write(Buffer.from(line).subarray(0, remainingBytes));
+        if (prefix) {
+          state.lines.push(prefix);
+          state.bytes += separatorBytes + Buffer.byteLength(prefix);
+        }
+      }
+      return false;
+    }
+    state.lines.push(line);
+    state.bytes += separatorBytes + lineBytes;
+    return true;
+  };
+  const append = (text: string, start = 0, end = text.length) => {
+    const value = text.slice(start, end);
+    let lineStart = 0;
+    while (true) {
+      const newline = value.indexOf("\n", lineStart);
+      if (newline === -1) return appendLine(value.slice(lineStart));
+      if (!appendLine(value.slice(lineStart, newline))) return false;
+      lineStart = newline + 1;
+    }
+  };
+
+  const metadata = [
     `provider: ${result.provider}`,
     `url: ${result.url}`,
     `status: ${result.status}`,
   ];
   if (result.completed !== undefined || result.total !== undefined) {
-    lines.push(`pages: ${result.completed ?? result.pages.length}/${result.total ?? "?"}`);
+    metadata.push(`pages: ${result.completed ?? result.pages.length}/${result.total ?? "?"}`);
   }
-  if (result.creditsUsed !== undefined) lines.push(`creditsUsed: ${result.creditsUsed}`);
-  if (result.warning) lines.push(`warning: ${result.warning}`);
-  lines.push("");
-
-  for (const page of result.pages) {
-    lines.push(`## ${page.title || page.url}`);
-    lines.push(page.url);
-    lines.push("");
-    lines.push(page.markdown || "(empty)");
-    lines.push("");
+  if (result.creditsUsed !== undefined) metadata.push(`creditsUsed: ${result.creditsUsed}`);
+  if (result.warning) metadata.push(`warning: ${result.warning}`);
+  metadata.push("");
+  for (const line of metadata) {
+    if (!append(line)) break;
   }
 
-  return truncateForModel(lines.join("\n").trimEnd(), { mode: "head" });
+  for (let index = 0; index < result.pages.length && !state.truncatedTotalBytes; index++) {
+    const page = result.pages[index];
+    if (!append(`## ${page.title || page.url}`) || !append(page.url) || !append("")) break;
+
+    const markdown = page.markdown || "(empty)";
+    let end = markdown.length;
+    if (index === result.pages.length - 1) {
+      while (end > 0 && markdown[end - 1].trim() === "") end--;
+    }
+    let start = 0;
+    while (start < end && !state.truncatedTotalBytes) {
+      const newline = markdown.indexOf("\n", start);
+      if (newline === -1 || newline >= end) {
+        append(markdown, start, end);
+        break;
+      }
+      if (!append(markdown, start, newline)) break;
+      start = newline + 1;
+    }
+    if (
+      !state.truncatedTotalBytes &&
+      index < result.pages.length - 1 &&
+      end > 0 &&
+      markdown[end - 1] === "\n"
+    ) {
+      append("");
+    }
+    if (!state.truncatedTotalBytes && index < result.pages.length - 1) append("");
+  }
+
+  const content = state.lines.join("\n");
+  if (!state.truncatedTotalBytes) return content.trimEnd();
+  return (
+    content +
+    `\n\n${formatTruncationNotice("head", state.bytes, state.truncatedTotalBytes, true)}`
+  );
 }
 
 export function formatProviderError(err: ClassifiedError, tool: string): string {

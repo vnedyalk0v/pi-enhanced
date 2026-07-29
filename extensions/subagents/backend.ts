@@ -48,6 +48,7 @@ export function buildBaseArgs(options: Pick<PiBackendOptions, "model" | "thinkin
  * This is pi's own native worker path — no third-party CLI dependency.
  */
 export async function startPiBackend(options: PiBackendOptions): Promise<BackendJob> {
+  options.signal?.throwIfAborted();
   const args = buildBaseArgs(options);
 
   // System guidance: child is a worker; return a clear final answer.
@@ -63,8 +64,10 @@ export async function startPiBackend(options: PiBackendOptions): Promise<Backend
   let tmpDir: string | undefined;
   try {
     tmpDir = await mkdtemp(join(tmpdir(), "pi-subagent-sys-"));
+    options.signal?.throwIfAborted();
     const promptFile = join(tmpDir, "system.md");
     await writeFile(promptFile, systemExtra, { encoding: "utf8", mode: 0o600 });
+    options.signal?.throwIfAborted();
     args.push("--append-system-prompt", promptFile);
   } catch (error) {
     // mkdtemp may have already created the directory before writeFile failed;
@@ -72,6 +75,7 @@ export async function startPiBackend(options: PiBackendOptions): Promise<Backend
     // ever reaches collect()'s own cleanup for this path.
     if (tmpDir) await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
     tmpDir = undefined;
+    if (options.signal?.aborted) throw error;
     if (options.systemPromptAppend) {
       // A named agent's defining prompt must not be silently dropped — the
       // child would still spawn and be reported as that agent, but behave as
@@ -83,6 +87,7 @@ export async function startPiBackend(options: PiBackendOptions): Promise<Backend
   }
 
   args.push(options.prompt);
+  options.signal?.throwIfAborted();
 
   let output = "";
   const resultCollector = createPiAssistantTextCollector();
@@ -90,7 +95,6 @@ export async function startPiBackend(options: PiBackendOptions): Promise<Backend
     command: "pi",
     args,
     cwd: options.cwd,
-    signal: options.signal,
     onStdout: (c) => {
       resultCollector.push(c);
       output = appendBounded(output, c);
@@ -102,22 +106,25 @@ export async function startPiBackend(options: PiBackendOptions): Promise<Backend
     },
   });
 
+  let collected: ReturnType<BackendJob["collect"]> | undefined;
+
   return {
     handle,
-    collect: async () => {
-      const { exitCode, signal } = await handle.wait;
-      if (tmpDir) await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-      const resultText = resultCollector.finish();
-      return {
-        exitCode,
-        signal,
-        resultText,
-        errorText:
-          exitCode !== 0 && !resultText
-            ? tailText(output, 1500) || `pi exited ${exitCode}`
-            : undefined,
-        output,
-      };
-    },
+    collect: () =>
+      (collected ??= (async () => {
+        const { exitCode, signal } = await handle.wait;
+        if (tmpDir) await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+        const resultText = resultCollector.finish();
+        return {
+          exitCode,
+          signal,
+          resultText,
+          errorText:
+            exitCode !== 0 && !resultText
+              ? tailText(output, 1500) || `pi exited ${exitCode}`
+              : undefined,
+          output,
+        };
+      })()),
   };
 }
