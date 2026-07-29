@@ -9,7 +9,11 @@ import {
   type ScrapeResult,
   type SearchResult,
 } from "./normalize.ts";
-import { readResponseText, withResponseTimeout } from "./response.ts";
+import {
+  getOversizedResponsePrefix,
+  readResponseText,
+  withResponseTimeout,
+} from "./response.ts";
 
 const BASE_URL = "https://api.firecrawl.dev/v2";
 const CRAWL_CLEANUP_TIMEOUT_MS = 1_000;
@@ -163,6 +167,7 @@ async function requestJson(
     text = await readResponseText(res, FIRECRAWL_MAX_RESPONSE_BYTES, "Firecrawl", signal);
   } catch (error) {
     if (res.ok || signal.aborted) throw error;
+    text = getOversizedResponsePrefix(error) ?? "";
   }
   if (!res.ok) {
     throwClassified({

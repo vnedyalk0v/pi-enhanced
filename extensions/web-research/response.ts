@@ -1,3 +1,11 @@
+const oversizedPrefixes = new WeakMap<object, string>();
+
+export function getOversizedResponsePrefix(error: unknown) {
+  return typeof error === "object" && error !== null
+    ? oversizedPrefixes.get(error)
+    : undefined;
+}
+
 export function withResponseTimeout(signal?: AbortSignal, timeoutMs = 30_000) {
   const timeout = AbortSignal.timeout(timeoutMs);
   return signal ? AbortSignal.any([signal, timeout]) : timeout;
@@ -26,12 +34,16 @@ export async function readResponseText(
       const { done, value } = await reader.read();
       signal.throwIfAborted();
       if (done) return text + decoder.decode();
-      bytes += value.byteLength;
-      if (bytes > maxBytes) {
+      const remaining = Math.max(0, maxBytes - bytes);
+      if (value.byteLength > remaining) {
+        text += decoder.decode(value.subarray(0, remaining), { stream: true });
+        text += decoder.decode();
         const error = new Error(`${label} response exceeded ${maxBytes} bytes`);
+        oversizedPrefixes.set(error, text);
         await reader.cancel(error).catch(() => {});
         throw error;
       }
+      bytes += value.byteLength;
       text += decoder.decode(value, { stream: true });
     }
   } finally {

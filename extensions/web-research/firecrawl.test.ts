@@ -95,6 +95,28 @@ describe("firecrawl", () => {
     );
   });
 
+  it("uses an oversized error prefix to classify quota responses", async () => {
+    const prefix = new TextEncoder().encode("insufficient credits");
+    const body = new Uint8Array(FIRECRAWL_MAX_RESPONSE_BYTES + 1);
+    body.set(prefix);
+    const fetchImpl = mockFetch([() => new Response(body, { status: 400 })]);
+
+    await assert.rejects(
+      () =>
+        firecrawlSearch({
+          apiKey: "fc-test",
+          query: "q",
+          fetchImpl: fetchImpl as typeof fetch,
+        }),
+      (error: unknown) => {
+        const classified = classifyThrown(error);
+        assert.equal(classified.kind, "quota");
+        assert.equal(classified.fallbackEligible, true);
+        return true;
+      },
+    );
+  });
+
   it("rejects oversized responses before buffering them", async () => {
     const fetchImpl = mockFetch([
       () => new Response(new Uint8Array(FIRECRAWL_MAX_RESPONSE_BYTES + 1)),
