@@ -1,6 +1,19 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { contentToText } from "../shared/text.ts";
 
+export const PI_RESULT_RECORD_MAX_BYTES = 4 * 1024 * 1024;
+
+export class PiResultRecordTooLargeError extends Error {
+  readonly code = "PI_RESULT_RECORD_TOO_LARGE";
+  readonly maxBytes: number;
+
+  constructor(maxBytes = PI_RESULT_RECORD_MAX_BYTES) {
+    super(`Pi result record exceeds the ${maxBytes}-byte UTF-8 limit.`);
+    this.name = "PiResultRecordTooLargeError";
+    this.maxBytes = maxBytes;
+  }
+}
+
 export type RunHandle = {
   pid?: number;
   kill: (signal?: NodeJS.Signals) => void;
@@ -117,22 +130,51 @@ export function appendBounded(current: string, chunk: string, maxChars = 80_000)
   return next.slice(next.length - maxChars);
 }
 
-export function createPiAssistantTextCollector() {
+export function createPiAssistantTextCollector(maxBytes = PI_RESULT_RECORD_MAX_BYTES) {
   let remainder = "";
   let last = "";
+  let overflow: PiResultRecordTooLargeError | undefined;
+  const fail = () => {
+    overflow ??= new PiResultRecordTooLargeError(maxBytes);
+    remainder = "";
+    last = "";
+    throw overflow;
+  };
+  const check = (text: string) => {
+    if (Buffer.byteLength(text, "utf8") > maxBytes) fail();
+  };
   const processLine = (line: string) => {
+    check(line);
     const text = parsePiAssistantText(line);
-    if (text) last = text;
+    if (text) {
+      check(text);
+      last = text;
+    }
   };
 
   return {
     push(chunk: string) {
-      const lines = (remainder + chunk).split("\n");
-      remainder = lines.pop() ?? "";
-      for (const line of lines) processLine(line);
+      if (overflow) throw overflow;
+      let offset = 0;
+      for (let newline = chunk.indexOf("\n"); newline >= 0; newline = chunk.indexOf("\n", offset)) {
+        const part = chunk.slice(offset, newline);
+        if (Buffer.byteLength(remainder, "utf8") + Buffer.byteLength(part, "utf8") > maxBytes) {
+          fail();
+        }
+        const line = remainder + part;
+        remainder = "";
+        processLine(line);
+        offset = newline + 1;
+      }
+      const tail = chunk.slice(offset);
+      if (Buffer.byteLength(remainder, "utf8") + Buffer.byteLength(tail, "utf8") > maxBytes) {
+        fail();
+      }
+      remainder += tail;
       return last;
     },
     finish() {
+      if (overflow) throw overflow;
       processLine(remainder);
       remainder = "";
       return last;

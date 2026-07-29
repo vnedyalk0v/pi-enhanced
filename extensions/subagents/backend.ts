@@ -1,7 +1,13 @@
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendBounded, createPiAssistantTextCollector, runProcess, type RunHandle } from "./run.ts";
+import {
+  appendBounded,
+  createPiAssistantTextCollector,
+  PiResultRecordTooLargeError,
+  runProcess,
+  type RunHandle,
+} from "./run.ts";
 import { tailText } from "../shared/text.ts";
 
 export type PiBackendOptions = {
@@ -91,14 +97,23 @@ export async function startPiBackend(options: PiBackendOptions): Promise<Backend
 
   let output = "";
   const resultCollector = createPiAssistantTextCollector();
-  const handle = runProcess({
+  let resultError: PiResultRecordTooLargeError | undefined;
+  let handle!: RunHandle;
+  handle = runProcess({
     command: "pi",
     args,
     cwd: options.cwd,
     onStdout: (c) => {
-      resultCollector.push(c);
       output = appendBounded(output, c);
-      options.onOutput?.(c);
+      if (resultError) return;
+      try {
+        resultCollector.push(c);
+        options.onOutput?.(c);
+      } catch (error) {
+        if (!(error instanceof PiResultRecordTooLargeError)) throw error;
+        resultError = error;
+        handle.kill("SIGKILL");
+      }
     },
     onStderr: (c) => {
       output = appendBounded(output, c);
@@ -114,6 +129,7 @@ export async function startPiBackend(options: PiBackendOptions): Promise<Backend
       (collected ??= (async () => {
         const { exitCode, signal } = await handle.wait;
         if (tmpDir) await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+        if (resultError) throw resultError;
         const resultText = resultCollector.finish();
         return {
           exitCode,

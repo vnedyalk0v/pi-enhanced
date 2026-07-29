@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { appendBounded, createPiAssistantTextCollector, runProcess } from "./run.ts";
+import {
+  appendBounded,
+  createPiAssistantTextCollector,
+  PiResultRecordTooLargeError,
+  runProcess,
+} from "./run.ts";
 
 function timeout(message: string) {
   return new Promise<never>((_, reject) => {
@@ -94,6 +99,10 @@ describe("createPiAssistantTextCollector", () => {
       type: "message_end",
       message: { role: "assistant", content: [{ type: "text", text }] },
     });
+  const assistantEventAtBytes = (bytes: number) => {
+    const empty = assistantEvent("");
+    return assistantEvent("x".repeat(bytes - Buffer.byteLength(empty, "utf8")));
+  };
 
   it("returns the last assistant text across arbitrary chunks", () => {
     const collector = createPiAssistantTextCollector();
@@ -106,13 +115,49 @@ describe("createPiAssistantTextCollector", () => {
     assert.equal(collector.finish(), "last");
   });
 
-  it("preserves assistant text larger than the diagnostic tail", () => {
-    const collector = createPiAssistantTextCollector();
-    const text = "x".repeat(100_001);
+  it("accepts complete records through the exact UTF-8 byte ceiling", () => {
+    const emptyBytes = Buffer.byteLength(assistantEvent(""), "utf8");
+    const limit = emptyBytes + 16;
 
-    collector.push(`${assistantEvent(text)}\n`);
+    for (const size of [limit - 1, limit]) {
+      const collector = createPiAssistantTextCollector(limit);
+      const event = assistantEventAtBytes(size);
 
-    assert.equal(collector.finish(), text);
+      assert.equal(Buffer.byteLength(event, "utf8"), size);
+      collector.push(`${event}\n`);
+      assert.equal(collector.finish(), "x".repeat(size - emptyBytes));
+    }
+  });
+
+  it("rejects a complete record one UTF-8 byte over the ceiling", () => {
+    const emptyBytes = Buffer.byteLength(assistantEvent(""), "utf8");
+    const limit = emptyBytes + 16;
+    const collector = createPiAssistantTextCollector(limit);
+
+    assert.throws(
+      () => collector.push(`${assistantEventAtBytes(limit + 1)}\n`),
+      PiResultRecordTooLargeError,
+    );
+  });
+
+  it("rejects an oversized unterminated record and stays failed", () => {
+    const collector = createPiAssistantTextCollector(16);
+
+    assert.equal(collector.push("x".repeat(16)), "");
+    assert.throws(() => collector.push("é"), {
+      name: "PiResultRecordTooLargeError",
+      code: "PI_RESULT_RECORD_TOO_LARGE",
+    });
+    assert.throws(() => collector.finish(), PiResultRecordTooLargeError);
+  });
+
+  it("measures the ceiling in UTF-8 bytes, not characters", () => {
+    const event = assistantEvent("é");
+    const collector = createPiAssistantTextCollector(
+      Buffer.byteLength(event, "utf8") - 1,
+    );
+
+    assert.throws(() => collector.push(`${event}\n`), PiResultRecordTooLargeError);
   });
 
   it("ignores malformed lines", () => {

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 import type { BackendJob } from "./backend.ts";
 import { SubagentManager, type ManagerOptions } from "./manager.ts";
+import { PiResultRecordTooLargeError } from "./run.ts";
 
 const managers: SubagentManager[] = [];
 
@@ -437,5 +438,39 @@ describe("SubagentManager", () => {
     await m.wait([snap.id]);
     assert.equal(m.get(snap.id)?.status, "failed");
     assert.equal(m.get(snap.id)?.exitCode, 2);
+  });
+
+  it("fails an oversized result and releases capacity for the next spawn", async () => {
+    let calls = 0;
+    const m = createManager({
+      maxRunning: 1,
+      starters: {
+        pi: async () => {
+          calls += 1;
+          if (calls > 1) {
+            return fakeJob({ exitCode: 0, resultText: "recovered", delayMs: 10 });
+          }
+          const job = fakeJob({ exitCode: 0, delayMs: 10 });
+          job.collect = async () => {
+            await job.handle.wait;
+            throw new PiResultRecordTooLargeError();
+          };
+          return job;
+        },
+      },
+    });
+
+    const oversized = await m.spawn({ prompt: "oversized", cwd: process.cwd() });
+    await m.wait([oversized.id]);
+    const failed = m.get(oversized.id);
+    assert.equal(failed?.status, "failed");
+    assert.equal(failed?.resultText, undefined);
+    assert.match(failed?.errorText ?? "", /result record exceeds.*UTF-8 limit/);
+    assert.ok((failed?.errorText?.length ?? Infinity) < 100);
+
+    const next = await m.spawn({ prompt: "next", cwd: process.cwd() });
+    await m.wait([next.id]);
+    assert.equal(m.get(next.id)?.status, "done");
+    assert.equal(m.get(next.id)?.resultText, "recovered");
   });
 });

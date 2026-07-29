@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import type { BackendJob } from "../subagents/backend.ts";
+import { PiResultRecordTooLargeError } from "../subagents/run.ts";
 import { WorkflowManager } from "./manager.ts";
 
 const managers: WorkflowManager[] = [];
@@ -627,6 +628,63 @@ describe("WorkflowManager", () => {
       () => m.start({ goal: "  ", cwd: process.cwd() }),
       /goal must not be empty/,
     );
+  });
+
+  it("preserves a large valid synthesis artifact exactly", async () => {
+    const largeResult = `large valid result\n${"é".repeat(512_000)}`;
+    const { m } = await createManager({
+      subagentOptions: {
+        starters: {
+          pi: async (opts: { prompt: string }) =>
+            fakeJob({
+              exitCode: 0,
+              resultText: opts.prompt.includes("task key: synthesize")
+                ? largeResult
+                : "phase ok",
+              delayMs: 5,
+            }),
+        },
+      },
+    });
+
+    const snap = await m.start({ goal: "preserve output", cwd: process.cwd() });
+    const [done] = await m.wait([snap.id]);
+
+    assert.equal(done?.status, "done");
+    assert.ok(done?.finalArtifactPath);
+    assert.equal(await readFile(done!.finalArtifactPath!, "utf8"), `${largeResult}\n`);
+  });
+
+  it("records an oversized synthesis as failed without a complete artifact", async () => {
+    const { m } = await createManager({
+      subagentOptions: {
+        starters: {
+          pi: async (opts: { prompt: string }) => {
+            const job = fakeJob({ exitCode: 0, resultText: "phase ok", delayMs: 5 });
+            if (opts.prompt.includes("task key: synthesize")) {
+              job.collect = async () => {
+                await job.handle.wait;
+                throw new PiResultRecordTooLargeError();
+              };
+            }
+            return job;
+          },
+        },
+      },
+    });
+
+    const snap = await m.start({ goal: "reject oversized output", cwd: process.cwd() });
+    const [done] = await m.wait([snap.id]);
+    const synthesis = done?.phases.find((phase) => phase.name === "synthesis");
+    const task = synthesis?.tasks.find((candidate) => candidate.key === "synthesize");
+
+    assert.equal(done?.status, "partial");
+    assert.equal(task?.status, "failed");
+    assert.match(task?.error ?? "", /result record exceeds.*UTF-8 limit/);
+    assert.ok(task?.artifactPath);
+    assert.match(await readFile(task!.artifactPath!, "utf8"), /- status: failed/);
+    assert.ok(done?.finalArtifactPath);
+    assert.match(await readFile(done!.finalArtifactPath!, "utf8"), /fallback/i);
   });
 
   it("fallback synthesis when synthesis agent fails", async () => {
