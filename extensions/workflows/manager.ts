@@ -370,6 +370,9 @@ export class WorkflowManager {
         });
         tr.subagentId = snap.id;
         spawned.push({ task, subagentId: snap.id });
+        if (entry.cancelRequested || this.disposed) {
+          await entry.subagents.cancel([snap.id]);
+        }
         this.notify();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

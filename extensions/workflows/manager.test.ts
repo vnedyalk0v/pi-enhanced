@@ -363,6 +363,63 @@ describe("WorkflowManager", () => {
     assert.equal(cancelled[0]?.status, "cancelled");
   });
 
+  it(
+    "cancels a subagent that finishes starting after workflow cancellation",
+    { timeout: 1000 },
+    async () => {
+      let starterEntered!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        starterEntered = resolve;
+      });
+      let releaseStarter!: () => void;
+      const release = new Promise<void>((resolve) => {
+        releaseStarter = resolve;
+      });
+      let jobKilled!: () => void;
+      const killed = new Promise<void>((resolve) => {
+        jobKilled = resolve;
+      });
+      let finishJob!: () => void;
+      const wait = new Promise<{ exitCode: number }>((resolve) => {
+        finishJob = () => resolve({ exitCode: 1 });
+      });
+      const { m } = await createManager({
+        subagentOptions: {
+          starters: {
+            pi: async () => {
+              starterEntered();
+              await release;
+              return {
+                handle: {
+                  pid: 99_002,
+                  kill: () => {
+                    jobKilled();
+                    finishJob();
+                  },
+                  wait,
+                },
+                collect: async () => {
+                  const result = await wait;
+                  return { ...result, resultText: "", output: "" };
+                },
+              };
+            },
+          },
+        },
+      });
+
+      const snap = await m.start({ goal: "cancel during startup", cwd: process.cwd() });
+      await entered;
+      const cancelling = m.cancel([snap.id]);
+      releaseStarter();
+
+      await killed;
+      const [cancelled] = await cancelling;
+      assert.equal(cancelled?.status, "cancelled");
+      assert.equal(cancelled?.phases[0]?.tasks[0]?.status, "killed");
+    },
+  );
+
   it("rejects empty goal", async () => {
     const { m } = await createManager({
       subagentOptions: {
