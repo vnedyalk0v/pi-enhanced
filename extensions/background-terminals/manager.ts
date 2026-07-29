@@ -210,15 +210,14 @@ export class TerminalManager {
     } finally {
       this.spillOpenings.delete(spillOpening);
     }
-    if (this.disposed) {
-      this.startingCount -= 1;
-      spill.stdout.stream.end();
-      spill.stderr.stream.end();
-      await removeSpillFiles(spill);
-      throw new Error("Background terminal manager is disposed.");
-    }
     const stdout = new OutputBuffer(undefined, spill.stdout);
     const stderr = new OutputBuffer(undefined, spill.stderr);
+    if (this.disposed) {
+      this.startingCount -= 1;
+      await Promise.all([stdout.close(), stderr.close()]);
+      await removeSpillDir(spill.dir);
+      throw new Error("Background terminal manager is disposed.");
+    }
 
     let resolveSettle!: () => void;
     const settlePromise = new Promise<void>((resolveSettleFn) => {

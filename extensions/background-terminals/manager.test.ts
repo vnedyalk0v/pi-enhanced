@@ -342,10 +342,16 @@ describe("TerminalManager", () => {
       title: "startup-dispose",
       cwd: process.cwd(),
     });
+    const spillDirPromise = (
+      m as unknown as { spillDirPromise?: Promise<string> }
+    ).spillDirPromise;
+    assert.ok(spillDirPromise);
     const rejected = assert.rejects(starting, /disposed/);
 
     await m.disposeAll();
     await rejected;
+    const spillDir = await spillDirPromise;
+    await assert.rejects(() => access(spillDir));
     assert.deepEqual(m.list(), []);
   });
 });
