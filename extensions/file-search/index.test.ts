@@ -33,6 +33,45 @@ function captureExtension() {
 }
 
 describe("file-search lifecycle", () => {
+  it("passes tool cancellation through first-time binary installation", async () => {
+    const agentDir = await mkdtemp(join(tmpdir(), "pi-file-search-agent-"));
+    const pathDir = await mkdtemp(join(tmpdir(), "pi-file-search-path-"));
+    const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+    const originalPath = process.env.PATH;
+    const originalFetch = globalThis.fetch;
+    let downloadAborted = false;
+    process.env.PI_CODING_AGENT_DIR = agentDir;
+    process.env.PATH = pathDir;
+    globalThis.fetch = (async (_input, init) => {
+      downloadAborted = init?.signal?.aborted ?? false;
+      throw init?.signal?.reason ?? new Error("download was not aborted");
+    }) as typeof fetch;
+
+    try {
+      const controller = new AbortController();
+      controller.abort(new Error("tool cancelled"));
+      const { tools } = captureExtension();
+      const result = (await tools
+        .get("fd")!
+        .execute("test", { pattern: "*" }, controller.signal, undefined, {
+          cwd: tmpdir(),
+          hasUI: false,
+        })) as { content: Array<{ text: string }> };
+
+      assert.equal(downloadAborted, true);
+      assert.match(result.content[0]?.text ?? "", /tool cancelled/);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+      else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+      process.env.PATH = originalPath;
+      await Promise.all([
+        rm(agentDir, { recursive: true, force: true }),
+        rm(pathDir, { recursive: true, force: true }),
+      ]);
+    }
+  });
+
   it("keeps truncated output until session shutdown", async () => {
     const binDir = await mkdtemp(join(tmpdir(), "pi-file-search-bin-"));
     const binary = join(binDir, "fd");

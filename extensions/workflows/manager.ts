@@ -547,16 +547,7 @@ export class WorkflowManager {
 
     await this.persist(entry);
     entry.resolveSettle();
-    pruneSettled(
-      this.entries,
-      this.maxTracked,
-      (e) => e.status === "running" || this.waitInterest.has(e.id),
-      (evicted) => {
-        // Once evicted, wf_status can never surface this path again — nothing
-        // else will ever remove these files (unlike per-session spill dirs).
-        void rm(evicted.artifactsDir, { recursive: true, force: true }).catch(() => {});
-      },
-    );
+    this.prune();
     this.notify();
 
     if (!this.disposed) {
@@ -603,8 +594,7 @@ export class WorkflowManager {
     this.onChange?.();
   }
 
-  private pruneAfterInterestRelease() {
-    const size = this.entries.size;
+  private prune() {
     pruneSettled(
       this.entries,
       this.maxTracked,
@@ -613,6 +603,11 @@ export class WorkflowManager {
         void rm(evicted.artifactsDir, { recursive: true, force: true }).catch(() => {});
       },
     );
+  }
+
+  private pruneAfterInterestRelease() {
+    const size = this.entries.size;
+    this.prune();
     if (this.entries.size < size) this.notify();
   }
 

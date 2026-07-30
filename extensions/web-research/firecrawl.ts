@@ -167,7 +167,9 @@ async function requestJson(
     text = await readResponseText(res, FIRECRAWL_MAX_RESPONSE_BYTES, "Firecrawl", signal);
   } catch (error) {
     if (res.ok || signal.aborted) throw error;
-    text = getOversizedResponsePrefix(error) ?? "";
+    const prefix = getOversizedResponsePrefix(error);
+    if (prefix === undefined) throw error;
+    text = prefix;
   }
   if (!res.ok) {
     throwClassified({

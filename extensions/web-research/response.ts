@@ -17,7 +17,10 @@ export async function readResponseText(
   label: string,
   signal: AbortSignal,
 ) {
-  signal.throwIfAborted();
+  if (signal.aborted) {
+    await response.body?.cancel(signal.reason).catch(() => {});
+    signal.throwIfAborted();
+  }
   if (!response.body) return "";
 
   const reader = response.body.getReader();

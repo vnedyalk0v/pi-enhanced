@@ -39,10 +39,11 @@ const binaryCache = new Map<BinaryName, string>();
 async function getBinary(
   name: BinaryName,
   notify?: (message: string) => void,
+  signal?: AbortSignal,
 ): Promise<string> {
   const cached = binaryCache.get(name);
   if (cached) return cached;
-  const result = await ensureBinary(name);
+  const result = await ensureBinary(name, { signal });
   if (result.installed) {
     notify?.(`Installed ${name} to local Pi bin directory`);
   }
@@ -135,7 +136,7 @@ export default function (pi: ExtensionAPI) {
       try {
         const binary = await getBinary("fd", (msg) => {
           if (ctx.hasUI) ctx.ui.notify(msg, "info");
-        });
+        }, signal);
         const args = buildFdArgs(params);
         const result = await trackSpill(
           await runBinary(binary, args, ctx.cwd, "pi-fd", signal),
@@ -190,7 +191,7 @@ export default function (pi: ExtensionAPI) {
       try {
         const binary = await getBinary("rg", (msg) => {
           if (ctx.hasUI) ctx.ui.notify(msg, "info");
-        });
+        }, signal);
         const args = buildRgArgs(params);
         const result = await trackSpill(
           await runBinary(binary, args, ctx.cwd, "pi-rg", signal),

@@ -237,7 +237,7 @@ describe("workflow result formatting", () => {
   it("keeps automatic completion metadata-only", () => {
     const message = buildCompletionMessage(snapshot);
 
-    assert.doesNotMatch(message, new RegExp(sentinel));
+    assert.ok(!message.includes(sentinel));
     assert.match(message, /wf-1/);
     assert.match(message, /failed/);
     assert.ok(message.includes('wf_status(id: "wf-1")'));

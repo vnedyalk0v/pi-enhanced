@@ -155,6 +155,31 @@ describe("firecrawl", () => {
     );
   });
 
+  it("preserves non-oversized response read failures", async () => {
+    const readError = new Error("stream failed");
+    const fetchImpl = mockFetch([
+      () =>
+        new Response(
+          new ReadableStream({
+            pull(controller) {
+              controller.error(readError);
+            },
+          }),
+          { status: 500 },
+        ),
+    ]);
+
+    await assert.rejects(
+      () =>
+        firecrawlSearch({
+          apiKey: "fc-test",
+          query: "q",
+          fetchImpl: fetchImpl as typeof fetch,
+        }),
+      (error) => error === readError,
+    );
+  });
+
   it("scrape posts markdown format", async () => {
     let body = "";
     const fetchImpl = mockFetch([

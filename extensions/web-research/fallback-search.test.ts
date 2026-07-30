@@ -99,4 +99,24 @@ describe("duckDuckGoSearch", () => {
       { name: "TimeoutError" },
     );
   });
+
+  it("cancels the response body when already aborted", async () => {
+    const reason = new Error("already aborted");
+    const controller = new AbortController();
+    controller.abort(reason);
+    let cancelledWith: unknown;
+    const response = new Response(
+      new ReadableStream({
+        cancel(value) {
+          cancelledWith = value;
+        },
+      }),
+    );
+
+    await assert.rejects(
+      () => readResponseText(response, 1, "test", controller.signal),
+      (error) => error === reason,
+    );
+    assert.equal(cancelledWith, reason);
+  });
 });
