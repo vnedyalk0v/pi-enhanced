@@ -110,7 +110,7 @@ describe("OutputBuffer", () => {
 
   it("stops spilling at per-stream and shared session quotas", async () => {
     const dir = await mkdtemp(join(tmpdir(), "pi-bt-quota-"));
-    const budget = { remainingBytes: 6 };
+    const budget = { remainingBytes: 7 };
     const firstPath = join(dir, "first.log");
     const secondPath = join(dir, "second.log");
     const first = new OutputBuffer(8, {
@@ -127,18 +127,17 @@ describe("OutputBuffer", () => {
     });
 
     try {
-      first.push("abcd");
-      first.push("é");
-      second.push("xy");
-      second.push("z");
+      first.push("abcdef");
+      first.push("g");
+      second.push("éxy");
       await Promise.all([first.close(), second.close()]);
 
       assert.equal(await readFile(firstPath, "utf8"), "abcd");
-      assert.equal(await readFile(secondPath, "utf8"), "xy");
-      assert.equal(first.view().spillTruncatedBytes, 2);
+      assert.equal(await readFile(secondPath, "utf8"), "éx");
+      assert.equal(first.view().spillTruncatedBytes, 3);
       assert.equal(second.view().spillTruncatedBytes, 1);
-      assert.equal(first.view().text, "abcdé");
-      assert.equal(second.view().text, "xyz");
+      assert.equal(first.view().text, "abcdefg");
+      assert.equal(second.view().text, "éxy");
       assert.equal(budget.remainingBytes, 0);
     } finally {
       await Promise.all([first.close(), second.close()]);

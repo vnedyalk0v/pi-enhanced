@@ -71,15 +71,32 @@ export class OutputBuffer {
 
     let accepted = true;
     if (this.spillStream && !this.spillError) {
-      const budgetBytes = this.spillBudget?.remainingBytes ?? Infinity;
-      if (
-        !this.spillStopped &&
-        chunkBytes <= this.maxSpillBytes - this.spillBytes &&
-        chunkBytes <= budgetBytes
-      ) {
-        accepted = this.spillStream.write(chunk);
-        this.spillBytes += chunkBytes;
-        if (this.spillBudget) this.spillBudget.remainingBytes -= chunkBytes;
+      const capacity = Math.min(
+        this.maxSpillBytes - this.spillBytes,
+        this.spillBudget?.remainingBytes ?? Infinity,
+      );
+      if (!this.spillStopped && capacity > 0) {
+        let spillChunk: string | Buffer = chunk;
+        let spillChunkBytes = chunkBytes;
+        if (chunkBytes > capacity) {
+          const encoded = Buffer.from(chunk, "utf8");
+          spillChunkBytes = capacity;
+          while (
+            spillChunkBytes > 0 &&
+            encoded[spillChunkBytes] !== undefined &&
+            (encoded[spillChunkBytes]! & 0xc0) === 0x80
+          ) {
+            spillChunkBytes -= 1;
+          }
+          spillChunk = encoded.subarray(0, spillChunkBytes);
+        }
+        if (spillChunkBytes > 0) {
+          accepted = this.spillStream.write(spillChunk);
+          this.spillBytes += spillChunkBytes;
+          if (this.spillBudget) this.spillBudget.remainingBytes -= spillChunkBytes;
+        }
+        this.spillStopped = spillChunkBytes < chunkBytes;
+        this.spillTruncatedBytes += chunkBytes - spillChunkBytes;
       } else {
         this.spillStopped = true;
         this.spillTruncatedBytes += chunkBytes;
