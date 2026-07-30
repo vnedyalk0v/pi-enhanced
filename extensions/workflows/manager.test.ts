@@ -368,6 +368,32 @@ describe("WorkflowManager", () => {
     assert.deepEqual(m.list(), []);
   });
 
+  it("limits read-only workflow phases to read-only tools", async () => {
+    const calls: Array<{ key: string; tools?: string[] }> = [];
+    const { m } = await createManager({
+      subagentOptions: {
+        starters: {
+          pi: async ({ prompt, tools }) => {
+            const key = prompt.match(/task key: (\w+)/)?.[1] ?? "";
+            calls.push({ key, tools });
+            return fakeJob({ exitCode: 0, resultText: `${key} complete` });
+          },
+        },
+      },
+    });
+
+    const started = await m.start({ goal: "verify tool policy", cwd: process.cwd() });
+    await m.wait([started.id]);
+
+    assert.deepEqual(calls, [
+      { key: "structure", tools: ["read", "fd", "rg"] },
+      { key: "relevant", tools: ["read", "fd", "rg"] },
+      { key: "implement", tools: undefined },
+      { key: "review", tools: undefined },
+      { key: "synthesize", tools: ["read"] },
+    ]);
+  });
+
   it("runs four phases, preserves artifacts, synthesizes after partial failure", async () => {
     const settled: Array<{ status: string; consumed: boolean }> = [];
     const { m, artifactsRoot } = await createManager({

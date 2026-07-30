@@ -15,7 +15,7 @@ The package follows three boundaries:
 
 | Dependency | Requirement |
 | --- | --- |
-| Pi | `0.82.1` |
+| Pi | `0.83.0` |
 | Node.js | `24.12.0` or newer |
 | npm and Git | Available on `PATH` |
 
@@ -58,7 +58,7 @@ before installation and use it only in trusted working directories.
 | Conversation | `ask_user`, `/copy-all`, `/summary` | Structured choices, clipboard export, and model-generated session summaries |
 | File search | `fd`, `rg` | Fast filename and content search with bounded model output |
 | Git and UI | `/git-info`, `github-dark-default` | Footer branch status and an automatically selected GitHub-style theme |
-| Background terminals | `bg_start`, `bg_status`, `bg_list`, `bg_kill`, `/ps` | Long-running non-interactive commands with completion delivery and full spill logs |
+| Background terminals | `bg_start`, `bg_status`, `bg_list`, `bg_kill`, `/ps` | Long-running non-interactive commands with completion delivery and bounded spill logs |
 | Web research | `fc_search`, `fc_scrape`, `fc_crawl` | Firecrawl search/scrape/crawl with DuckDuckGo fallback for no-key or quota-exhausted search |
 | Subagents | `sa_spawn`, `sa_agents`, `sa_status`, `sa_list`, `sa_wait`, `sa_cancel`, `/btw` | Isolated native pi workers (ad-hoc or named agent definitions) with bounded concurrency |
 | Workflows | `wf_start`, `wf_status`, `wf_list`, `wf_wait`, `wf_cancel`, `/workflow` | Reconnaissance, implementation, review, and synthesis with validated handoffs and artifacts |
@@ -136,8 +136,9 @@ manager and expose them on `PATH`.
 Each workflow owns a separate four-child subagent pool. Starting jobs reserve
 capacity immediately.
 
-Background streams retain a 2 MiB in-memory tail while full logs spill to a
-private OS-temporary directory. Those logs are removed at Pi session shutdown.
+Background streams retain a 2 MiB in-memory tail and spill up to 16 MiB per
+stream, capped at 64 MiB per Pi session, to a private OS-temporary directory.
+Partial spill logs are labeled, and all logs are removed at Pi session shutdown.
 Native subagent JSON result records have a 4 MiB UTF-8 ceiling. An oversized
 record fails the worker instead of returning a truncated successful result.
 Workflow artifacts use private OS-temporary directories reported by

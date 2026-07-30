@@ -325,7 +325,7 @@ setTimeout(() => process.stdout.end(line.slice(23)), 20);
       assertArg(explicit.capture.args, "--model", "override/model");
       assertArg(explicit.capture.args, "--thinking", "high");
       assertArg(explicit.capture.args, "--tools", "read,grep");
-      assert.equal(explicit.capture.args.at(-1), "inspect the project");
+      assert.equal(explicit.capture.args.at(-1), "Task: inspect the project");
       assert.equal(explicit.capture.systemPrompt.match(/PROJECT SCOUT PROMPT/g)?.length, 1);
       assert.doesNotMatch(explicit.capture.systemPrompt, /USER SCOUT PROMPT/);
 
@@ -342,7 +342,7 @@ setTimeout(() => process.stdout.end(line.slice(23)), 20);
       assertArg(agentDefaults.capture.args, "--model", "project/model");
       assertArg(agentDefaults.capture.args, "--thinking", "medium");
       assertArg(agentDefaults.capture.args, "--tools", "read,grep");
-      assert.equal(agentDefaults.capture.args.at(-1), "use named agent defaults");
+      assert.equal(agentDefaults.capture.args.at(-1), "Task: use named agent defaults");
       assert.equal(
         agentDefaults.capture.systemPrompt.match(/PROJECT SCOUT PROMPT/g)?.length,
         1,
@@ -360,7 +360,7 @@ setTimeout(() => process.stdout.end(line.slice(23)), 20);
       assertArg(parentDefaults.capture.args, "--model", "parent/parent-model");
       assertArg(parentDefaults.capture.args, "--thinking", "low");
       assert.equal(parentDefaults.capture.args.includes("--tools"), false);
-      assert.equal(parentDefaults.capture.args.at(-1), "use parent defaults");
+      assert.equal(parentDefaults.capture.args.at(-1), "Task: use parent defaults");
       assert.doesNotMatch(parentDefaults.capture.systemPrompt, /PROJECT SCOUT PROMPT/);
 
       assert.equal(confirmations.length, 3);

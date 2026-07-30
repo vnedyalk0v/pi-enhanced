@@ -395,6 +395,7 @@ export class WorkflowManager {
           cwd: entry.cwd,
           model,
           thinking,
+          tools: task.tools,
         });
         tr.subagentId = snap.id;
         spawned.push({ task, subagentId: snap.id });
