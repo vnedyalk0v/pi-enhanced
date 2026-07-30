@@ -360,7 +360,7 @@ describe("TerminalManager", () => {
     async () => {
       const settled = createSettlementTracker();
       const m = createManager({ onSettled: settled.onSettled });
-      const output = "plain\x1b]52;c;SGVsbG8=\x07red\x1b[31mX\x1b[0m\x1b_Ppayload\x1b\\☃safe";
+      const output = "plain\x1b]52;c;SGVsbG8=\x07red\x1b[31mX\x1b[0m\x1b_Ppayload\x1b\\☃safe\tleft\tright\rnext";
       const script = `process.stdout.write(${JSON.stringify(output)})`;
       const snap = await m.start({
         command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
@@ -381,7 +381,7 @@ describe("TerminalManager", () => {
         overlay.handleInput("\r");
         const detail = overlay.render(120);
         const contentLine = detail.find((line) => line.includes("plainredX")) ?? "";
-        assert.ok(contentLine.includes("☃safe"));
+        assert.ok(contentLine.includes("☃safe left right next"));
         const rendered = detail.join("");
         assert.doesNotMatch(rendered, /\x1b\]|\x1b_|\x1b\[31m|\x07/);
         assert.doesNotMatch(rendered, /owned/);

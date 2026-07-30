@@ -268,7 +268,9 @@ export class PsOverlay {
 }
 
 function terminalText(value: string) {
-  return stripVTControlCharacters(value).replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
+  return stripVTControlCharacters(value)
+    .replace(/[\t\r\n]+/g, " ")
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
 }
 
 function statusColor(th: Theme, snap: TerminalSnapshot) {
