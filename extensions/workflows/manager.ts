@@ -631,6 +631,7 @@ export class WorkflowManager {
       return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
     } finally {
       for (const id of ids) this.waitInterest.release(id);
+      this.pruneAfterInterestRelease();
     }
   }
 
@@ -639,7 +640,6 @@ export class WorkflowManager {
     const unknown = ids.filter((id) => !this.entries.has(id));
     if (unknown.length > 0) throw new Error(`Unknown workflow id(s): ${unknown.join(", ")}`);
 
-    let completed = false;
     for (const id of ids) this.waitInterest.add(id);
     try {
       const waiting: Promise<void>[] = [];
@@ -663,9 +663,7 @@ export class WorkflowManager {
           abortPromise(signal, "Cancel wait aborted; termination continues in the background."),
         ]);
       }
-      const snapshots = ids.map((id) => this.snapshotOf(this.entries.get(id)!));
-      completed = true;
-      return snapshots;
+      return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
     } finally {
       for (const id of ids) {
         const entry = this.entries.get(id);
@@ -680,7 +678,7 @@ export class WorkflowManager {
           this.waitInterest.release(id);
         }
       }
-      if (!completed) this.pruneAfterInterestRelease();
+      this.pruneAfterInterestRelease();
     }
   }
 
@@ -705,6 +703,8 @@ export class WorkflowManager {
       Promise.all(running.map((e) => e.settlePromise)),
       sleep(5000),
     ]);
+    // Completed artifacts intentionally outlive disposal. History eviction
+    // removes older tracked directories; callers or the OS own any survivors.
     this.entries.clear();
     this.waitInterest.clear();
     this.notify();

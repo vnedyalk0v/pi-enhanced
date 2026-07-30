@@ -31,6 +31,7 @@ export async function duckDuckGoSearch(
   });
 
   if (!res.ok) {
+    await res.body?.cancel().catch(() => {});
     throw new Error(`DuckDuckGo search failed: HTTP ${res.status}`);
   }
 

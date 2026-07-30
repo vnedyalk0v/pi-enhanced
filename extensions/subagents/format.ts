@@ -52,12 +52,11 @@ export function buildListResult(snaps: SubagentSnapshot[]) {
 export function buildWaitResult(snaps: SubagentSnapshot[]) {
   return snaps
     .map((s) => {
-      const head = describeSubagent(s);
-      if (s.resultText) {
-        return `${head}\n${UNTRUSTED_CONTENT_NOTICE}\n${truncateForModel(s.resultText)}`;
-      }
-      if (s.errorText) return `${head}\n${UNTRUSTED_CONTENT_NOTICE}\nerror: ${s.errorText}`;
-      return head;
+      const lines = [describeSubagent(s)];
+      if (s.errorText || s.resultText) lines.push(UNTRUSTED_CONTENT_NOTICE);
+      if (s.errorText) lines.push(`error: ${s.errorText}`);
+      if (s.resultText) lines.push(truncateForModel(s.resultText));
+      return lines.join("\n");
     })
     .join("\n\n");
 }

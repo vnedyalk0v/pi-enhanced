@@ -225,7 +225,6 @@ export class TerminalManager {
     if (this.disposed) {
       this.startingCount -= 1;
       await Promise.all([stdout.close(), stderr.close()]);
-      await removeSpillDir(spill.dir);
       throw new Error("Background terminal manager is disposed.");
     }
 

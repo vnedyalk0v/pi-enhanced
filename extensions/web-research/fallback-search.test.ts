@@ -41,6 +41,25 @@ describe("duckDuckGoSearch", () => {
     assert.equal(result.results[0]?.url, "https://example.com/");
   });
 
+  it("cancels a non-OK response body before throwing", async () => {
+    let cancelled = false;
+    const fetchImpl = async () =>
+      new Response(
+        new ReadableStream({
+          cancel() {
+            cancelled = true;
+          },
+        }),
+        { status: 500 },
+      );
+
+    await assert.rejects(
+      () => duckDuckGoSearch("pi", { fetchImpl: fetchImpl as typeof fetch }),
+      /DuckDuckGo search failed: HTTP 500/,
+    );
+    assert.equal(cancelled, true);
+  });
+
   it("rejects oversized responses before buffering them", async () => {
     const fetchImpl = async () =>
       new Response(new Uint8Array(DUCKDUCKGO_MAX_RESPONSE_BYTES + 1));

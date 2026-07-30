@@ -121,6 +121,19 @@ async function createManager(
   return { m, artifactsRoot };
 }
 
+async function waitForMissing(path: string) {
+  for (let i = 0; i < 100; i++) {
+    try {
+      await access(path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.fail(`path was not removed: ${path}`);
+}
+
 describe("WorkflowManager", () => {
   it("creates distinct private default directories that survive disposal", async () => {
     const starters = {
@@ -233,7 +246,7 @@ describe("WorkflowManager", () => {
     assert.equal(m.get(third.id)?.status, "done");
   });
 
-  it("keeps actively awaited workflow artifacts until final snapshots are returned", async () => {
+  it("prunes workflows after successful waits and cancellations", async () => {
     let releaseFirst!: () => void;
     const firstGate = new Promise<void>((resolve) => {
       releaseFirst = resolve;
@@ -286,17 +299,20 @@ describe("WorkflowManager", () => {
       snapshots.map((snapshot) => snapshot.status),
       ["done", "done"],
     );
-    await stat(first.artifactsDir);
+    assert.deepEqual(m.list().map((snapshot) => snapshot.id), [second.id]);
+    await waitForMissing(first.artifactsDir);
 
     const third = await m.start({
       goal: "third cancelled workflow",
       cwd: process.cwd(),
     });
-    const cancelled = await m.cancel([first.id, third.id]);
+    const cancelled = await m.cancel([second.id, third.id]);
     assert.deepEqual(
       cancelled.map((snapshot) => snapshot.status),
       ["done", "cancelled"],
     );
+    assert.deepEqual(m.list().map((snapshot) => snapshot.id), [third.id]);
+    await waitForMissing(second.artifactsDir);
   });
 
   it("rolls back artifacts when startup aborts before registration", async () => {
