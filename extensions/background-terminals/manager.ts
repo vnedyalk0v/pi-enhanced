@@ -435,6 +435,9 @@ export class TerminalManager {
         Promise.all(waiting),
         abortPromise(signal, "Kill wait aborted; termination continues in the background."),
       ]);
+      if (this.disposed) {
+        throw new Error("Background terminal manager was disposed during kill.");
+      }
 
       // Refresh snapshots after settle when wait completed.
       return results.map((r) => {

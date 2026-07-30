@@ -287,6 +287,31 @@ describe("TerminalManager", () => {
     },
   );
 
+  it(
+    "rejects an active kill when disposal takes ownership",
+    { skip: process.platform === "win32" },
+    async () => {
+      const m = createManager();
+      const snap = await m.start({
+        command: "trap '' TERM; printf ready; sleep 30",
+        title: "dispose during kill",
+        cwd: process.cwd(),
+      });
+      await waitFor(
+        () => m.get(snap.id)?.stdout.text === "ready",
+        "terminal did not become ready",
+      );
+
+      const rejected = assert.rejects(
+        m.kill([snap.id]),
+        /disposed during kill/,
+      );
+      await m.disposeAll();
+      await rejected;
+      assert.deepEqual(m.list(), []);
+    },
+  );
+
   it("lists running and completed terminals", async () => {
     const settled = createSettlementTracker();
     const m = createManager({ onSettled: settled.onSettled });
