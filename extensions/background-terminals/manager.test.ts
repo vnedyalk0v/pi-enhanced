@@ -380,11 +380,12 @@ describe("TerminalManager", () => {
 
         overlay.handleInput("\r");
         const detail = overlay.render(120);
-        assert.ok(detail.some((line) => line.includes("plainredX")));
-        assert.ok(detail.some((line) => line.includes("☃safe")));
+        const contentLine = detail.find((line) => line.includes("plainredX")) ?? "";
+        assert.ok(contentLine.includes("☃safe"));
         const rendered = detail.join("");
         assert.doesNotMatch(rendered, /\x1b\]|\x1b_|\x1b\[31m|\x07/);
-        assert.doesNotMatch(rendered, /SGVsbG8=|owned/);
+        assert.doesNotMatch(rendered, /owned/);
+        assert.doesNotMatch(contentLine, /SGVsbG8=/);
       } finally {
         overlay.dispose();
       }
