@@ -94,6 +94,8 @@ export class TerminalManager {
   private outputNotifyTimer?: ReturnType<typeof setTimeout>;
   private spillDirPromise?: Promise<string>;
   private spillOpenings = new Set<Promise<Awaited<ReturnType<typeof openSpillStreams>>>>();
+  private readonly isRetained = (entry: Entry) =>
+    entry.status === "running" || this.killInterest.has(entry.id);
   private readonly maxRunning: number;
   private readonly maxTracked: number;
   private readonly killGraceMs: number;
@@ -135,7 +137,7 @@ export class TerminalManager {
     pruneSettled(
       this.entries,
       this.maxTracked,
-      (e) => e.status === "running" || this.killInterest.has(e.id),
+      this.isRetained,
     );
     if (this.entries.size < size) this.notify();
   }
@@ -209,7 +211,7 @@ export class TerminalManager {
     this.counter += 1;
     const id = `bt-${this.counter}`;
 
-    const spillOpening = this.openSpillStreams(id);
+    const spillOpening = this.acquireSpillStreams(id);
     this.spillOpenings.add(spillOpening);
     let spill: Awaited<typeof spillOpening>;
     try {
@@ -374,7 +376,7 @@ export class TerminalManager {
     pruneSettled(
       this.entries,
       this.maxTracked,
-      (e) => e.status === "running" || this.killInterest.has(e.id),
+      this.isRetained,
     );
     this.notify();
 
@@ -541,7 +543,7 @@ export class TerminalManager {
     this.notify();
   }
 
-  private async openSpillStreams(id: string) {
+  private async acquireSpillStreams(id: string) {
     this.spillDirPromise ??= createSpillDir().catch((error) => {
       this.spillDirPromise = undefined;
       throw error;
