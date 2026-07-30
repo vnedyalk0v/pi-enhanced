@@ -64,7 +64,8 @@ describe("file-search lifecycle", () => {
       globalThis.fetch = originalFetch;
       if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
       else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
-      process.env.PATH = originalPath;
+      if (originalPath === undefined) delete process.env.PATH;
+      else process.env.PATH = originalPath;
       await Promise.all([
         rm(agentDir, { recursive: true, force: true }),
         rm(pathDir, { recursive: true, force: true }),
