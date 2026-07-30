@@ -79,6 +79,16 @@ export class SubagentManager {
     this.onChange?.();
   }
 
+  private pruneAfterInterestRelease() {
+    const size = this.entries.size;
+    pruneSettled(
+      this.entries,
+      this.maxTracked,
+      (e) => e.status === "running" || this.waitInterest.has(e.id),
+    );
+    if (this.entries.size < size) this.notify();
+  }
+
   private runningCount() {
     let n = 0;
     for (const e of this.entries.values()) {
@@ -287,7 +297,11 @@ export class SubagentManager {
 
     const consumed = this.waitInterest.has(entry.id);
     entry.resolveSettle();
-    pruneSettled(this.entries, this.maxTracked, (e) => e.status === "running");
+    pruneSettled(
+      this.entries,
+      this.maxTracked,
+      (e) => e.status === "running" || this.waitInterest.has(e.id),
+    );
     this.notify();
 
     if (!this.disposed) {
@@ -307,10 +321,11 @@ export class SubagentManager {
         Promise.all(waits),
         abortPromise(signal, "Wait aborted; subagents continue in the background."),
       ]);
+      return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
     } finally {
       for (const id of ids) this.waitInterest.release(id);
+      this.pruneAfterInterestRelease();
     }
-    return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
   }
 
   async cancel(ids: readonly string[], signal?: AbortSignal): Promise<SubagentSnapshot[]> {
@@ -318,31 +333,43 @@ export class SubagentManager {
     const unknown = ids.filter((id) => !this.entries.has(id));
     if (unknown.length > 0) throw new Error(`Unknown subagent id(s): ${unknown.join(", ")}`);
 
-    const waiting: Promise<void>[] = [];
-    for (const id of ids) {
-      const entry = this.entries.get(id)!;
-      if (entry.status !== "running") continue;
-      this.waitInterest.add(id);
-      entry.killSignaled = true;
-      entry.job?.handle.kill("SIGTERM");
-      setTimeout(() => {
-        if (entry.status === "running") entry.job?.handle.kill("SIGKILL");
-      }, this.killGraceMs).unref?.();
-      waiting.push(
-        entry.settlePromise.finally(() => {
+    for (const id of ids) this.waitInterest.add(id);
+    try {
+      const waiting: Promise<void>[] = [];
+      for (const id of ids) {
+        const entry = this.entries.get(id)!;
+        if (entry.status !== "running") continue;
+        entry.killSignaled = true;
+        entry.job?.handle.kill("SIGTERM");
+        setTimeout(() => {
+          if (entry.status === "running") entry.job?.handle.kill("SIGKILL");
+        }, this.killGraceMs).unref?.();
+        waiting.push(entry.settlePromise);
+      }
+
+      if (waiting.length > 0) {
+        await Promise.race([
+          Promise.all(waiting),
+          abortPromise(signal, "Cancel wait aborted; termination continues in the background."),
+        ]);
+      }
+      return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
+    } finally {
+      for (const id of ids) {
+        const entry = this.entries.get(id);
+        if (entry?.status === "running") {
+          void entry.settlePromise
+            .then(() => {
+              this.waitInterest.release(id);
+              this.pruneAfterInterestRelease();
+            })
+            .catch(() => {});
+        } else {
           this.waitInterest.release(id);
-        }),
-      );
+        }
+      }
+      this.pruneAfterInterestRelease();
     }
-
-    if (waiting.length > 0) {
-      await Promise.race([
-        Promise.all(waiting),
-        abortPromise(signal, "Cancel wait aborted; termination continues in the background."),
-      ]);
-    }
-
-    return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
   }
 
   async disposeAll() {

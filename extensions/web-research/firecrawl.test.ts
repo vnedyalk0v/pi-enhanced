@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { classifyThrown } from "./errors.ts";
-import { firecrawlCrawl, firecrawlScrape, firecrawlSearch } from "./firecrawl.ts";
+import {
+  FIRECRAWL_MAX_RESPONSE_BYTES,
+  firecrawlCrawl,
+  firecrawlScrape,
+  firecrawlSearch,
+} from "./firecrawl.ts";
 
 type RequestRecord = { method: string; url: string };
 
@@ -63,6 +68,115 @@ describe("firecrawl", () => {
         assert.equal(c.fallbackEligible, true);
         return true;
       },
+    );
+  });
+
+  it("preserves quota classification for oversized 402 responses", async () => {
+    const fetchImpl = mockFetch([
+      () =>
+        new Response(new Uint8Array(FIRECRAWL_MAX_RESPONSE_BYTES + 1), {
+          status: 402,
+        }),
+    ]);
+
+    await assert.rejects(
+      () =>
+        firecrawlSearch({
+          apiKey: "fc-test",
+          query: "q",
+          fetchImpl: fetchImpl as typeof fetch,
+        }),
+      (error: unknown) => {
+        const classified = classifyThrown(error);
+        assert.equal(classified.kind, "quota");
+        assert.equal(classified.fallbackEligible, true);
+        return true;
+      },
+    );
+  });
+
+  it("uses an oversized error prefix to classify quota responses", async () => {
+    const prefix = new TextEncoder().encode("insufficient credits");
+    const body = new Uint8Array(FIRECRAWL_MAX_RESPONSE_BYTES + 1);
+    body.set(prefix);
+    const fetchImpl = mockFetch([() => new Response(body, { status: 400 })]);
+
+    await assert.rejects(
+      () =>
+        firecrawlSearch({
+          apiKey: "fc-test",
+          query: "q",
+          fetchImpl: fetchImpl as typeof fetch,
+        }),
+      (error: unknown) => {
+        const classified = classifyThrown(error);
+        assert.equal(classified.kind, "quota");
+        assert.equal(classified.fallbackEligible, true);
+        return true;
+      },
+    );
+  });
+
+  it("rejects oversized responses before buffering them", async () => {
+    const fetchImpl = mockFetch([
+      () => new Response(new Uint8Array(FIRECRAWL_MAX_RESPONSE_BYTES + 1)),
+    ]);
+
+    await assert.rejects(
+      () =>
+        firecrawlSearch({
+          apiKey: "fc-test",
+          query: "q",
+          fetchImpl: fetchImpl as typeof fetch,
+        }),
+      new RegExp(`Firecrawl response exceeded ${FIRECRAWL_MAX_RESPONSE_BYTES} bytes`),
+    );
+  });
+
+  it("preserves HTTP classification without exposing provider bodies", async () => {
+    const fetchImpl = mockFetch([
+      () => new Response("provider-secret-details", { status: 500 }),
+    ]);
+
+    await assert.rejects(
+      () =>
+        firecrawlSearch({
+          apiKey: "fc-test",
+          query: "q",
+          fetchImpl: fetchImpl as typeof fetch,
+        }),
+      (error: unknown) => {
+        const classified = classifyThrown(error);
+        assert.equal(classified.kind, "transient");
+        assert.equal(classified.message, "Firecrawl request failed: HTTP 500");
+        assert.doesNotMatch(classified.message, /provider-secret-details/);
+        return true;
+      },
+    );
+  });
+
+  it("preserves non-oversized response read failures", async () => {
+    const readError = new Error("stream failed");
+    const fetchImpl = mockFetch([
+      () =>
+        new Response(
+          new ReadableStream({
+            pull(controller) {
+              controller.error(readError);
+            },
+          }),
+          { status: 500 },
+        ),
+    ]);
+
+    await assert.rejects(
+      () =>
+        firecrawlSearch({
+          apiKey: "fc-test",
+          query: "q",
+          fetchImpl: fetchImpl as typeof fetch,
+        }),
+      (error) => error === readError,
     );
   });
 

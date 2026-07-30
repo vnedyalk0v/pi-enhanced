@@ -1,3 +1,4 @@
+import { DEFAULT_MAX_BYTES } from "@earendil-works/pi-coding-agent";
 import { sleep } from "../shared/time.ts";
 import { classifyHttpError, throwClassified } from "./errors.ts";
 import {
@@ -8,9 +9,15 @@ import {
   type ScrapeResult,
   type SearchResult,
 } from "./normalize.ts";
+import {
+  getOversizedResponsePrefix,
+  readResponseText,
+  withResponseTimeout,
+} from "./response.ts";
 
 const BASE_URL = "https://api.firecrawl.dev/v2";
 const CRAWL_CLEANUP_TIMEOUT_MS = 1_000;
+export const FIRECRAWL_MAX_RESPONSE_BYTES = DEFAULT_MAX_BYTES * 100;
 
 export type FirecrawlOptions = {
   apiKey: string;
@@ -143,6 +150,7 @@ async function requestJson(
 ): Promise<unknown> {
   const baseUrl = (options.baseUrl ?? BASE_URL).replace(/\/$/, "");
   const fetchImpl = options.fetchImpl ?? fetch;
+  const signal = withResponseTimeout(req.signal);
   const res = await fetchImpl(`${baseUrl}${path}`, {
     method,
     headers: {
@@ -151,12 +159,23 @@ async function requestJson(
       Accept: "application/json",
     },
     body: req.body !== undefined ? JSON.stringify(req.body) : undefined,
-    signal: req.signal,
+    signal,
   });
 
-  const text = await res.text();
+  let text = "";
+  try {
+    text = await readResponseText(res, FIRECRAWL_MAX_RESPONSE_BYTES, "Firecrawl", signal);
+  } catch (error) {
+    if (res.ok || signal.aborted) throw error;
+    const prefix = getOversizedResponsePrefix(error);
+    if (prefix === undefined) throw error;
+    text = prefix;
+  }
   if (!res.ok) {
-    throwClassified(classifyHttpError(res.status, text));
+    throwClassified({
+      ...classifyHttpError(res.status, text),
+      message: `Firecrawl request failed: HTTP ${res.status}`,
+    });
   }
 
   if (!text.trim()) return {};

@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import { createWriteStream } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { MAX_RETAINED_BYTES, OutputBuffer } from "./output.ts";
+import {
+  createSpillDir,
+  MAX_RETAINED_BYTES,
+  openSpillStreams,
+  OutputBuffer,
+} from "./output.ts";
 
 describe("OutputBuffer", () => {
   it("retains small output fully", () => {
@@ -34,6 +39,30 @@ describe("OutputBuffer", () => {
     assert.equal(view.text, "56789");
     assert.equal(view.totalBytes, 10);
     assert.equal(view.truncatedBytes, 5);
+  });
+
+  it("returns metadata without joining retained text", () => {
+    const buf = new OutputBuffer(64);
+    buf.push("hello");
+    const chunks = (buf as unknown as { chunks: string[] }).chunks;
+    const join = chunks.join.bind(chunks);
+    let joined = false;
+    chunks.join = (separator) => {
+      joined = true;
+      return join(separator);
+    };
+
+    const metadata = buf.view(false);
+    assert.equal(joined, false);
+    assert.deepEqual(metadata, {
+      text: "",
+      totalBytes: 5,
+      truncatedBytes: 0,
+      spillPath: undefined,
+    });
+
+    assert.equal(buf.view().text, "hello");
+    assert.equal(joined, true);
   });
 
   it("spills full stream to disk", async () => {
@@ -71,5 +100,48 @@ describe("OutputBuffer", () => {
 
   it("uses default max retained size", () => {
     assert.equal(MAX_RETAINED_BYTES, 2 * 1024 * 1024);
+  });
+
+  it("creates distinct private spill directories and files", async () => {
+    const firstDir = await createSpillDir();
+    const secondDir = await createSpillDir();
+    try {
+      assert.notEqual(firstDir, secondDir);
+      const spill = await openSpillStreams(firstDir, "bt-1");
+      const stdout = new OutputBuffer(8, spill.stdout);
+      const stderr = new OutputBuffer(8, spill.stderr);
+      stdout.push("out");
+      stderr.push("err");
+      await Promise.all([stdout.close(), stderr.close()]);
+
+      if (process.platform !== "win32") {
+        assert.equal((await stat(firstDir)).mode & 0o077, 0);
+        assert.equal((await stat(spill.stdout.path)).mode & 0o077, 0);
+        assert.equal((await stat(spill.stderr.path)).mode & 0o077, 0);
+      }
+    } finally {
+      await Promise.all([
+        rm(firstDir, { recursive: true, force: true }),
+        rm(secondDir, { recursive: true, force: true }),
+      ]);
+    }
+  });
+
+  it("refuses to replace a preclaimed spill file", async () => {
+    const dir = await createSpillDir();
+    const stdoutPath = join(dir, "bt-1.stdout.log");
+    const stderrPath = join(dir, "bt-1.stderr.log");
+    try {
+      await writeFile(stderrPath, "claimed", { mode: 0o600 });
+
+      await assert.rejects(
+        () => openSpillStreams(dir, "bt-1"),
+        (error: NodeJS.ErrnoException) => error.code === "EEXIST",
+      );
+      await assert.rejects(() => access(stdoutPath));
+      assert.equal(await readFile(stderrPath, "utf8"), "claimed");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

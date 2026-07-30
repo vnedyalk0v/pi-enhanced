@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { buildBaseArgs, startPiBackend, type BackendJob } from "./backend.ts";
+import { PI_RESULT_RECORD_MAX_BYTES } from "./run.ts";
 
 describe("buildBaseArgs", () => {
   it("omits --tools when no allowlist is given", () => {
@@ -89,20 +90,33 @@ fs.writeFileSync(process.env.PI_ENHANCED_BACKEND_CAPTURE, JSON.stringify({
   promptFileExists: fs.existsSync(promptFile),
   systemPrompt: fs.readFileSync(promptFile, "utf8"),
 }));
-process.stderr.write("x".repeat(90000));
-const first = JSON.stringify({
-  type: "message_end",
-  message: { role: "assistant", content: [{ type: "text", text: "first answer" }] },
-}) + "\\n";
-const last = JSON.stringify({
-  type: "message_end",
-  message: { role: "assistant", content: [{ type: "text", text: "final answer" }] },
-}) + "\\n";
-process.stdout.write(first.slice(0, 19));
-setTimeout(() => {
-  process.stdout.write(first.slice(19) + last.slice(0, 31));
-  setTimeout(() => process.stdout.end(last.slice(31)), 10);
-}, 10);
+const mode = args.at(-1);
+if (mode === "oversized complete") {
+  process.stdout.end(JSON.stringify({
+    type: "message_end",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "x".repeat(${PI_RESULT_RECORD_MAX_BYTES + 1}) }],
+    },
+  }) + "\\n");
+} else if (mode === "oversized partial") {
+  process.stdout.end("x".repeat(${PI_RESULT_RECORD_MAX_BYTES + 1}));
+} else {
+  process.stderr.write("x".repeat(90000));
+  const first = JSON.stringify({
+    type: "message_end",
+    message: { role: "assistant", content: [{ type: "text", text: "first answer" }] },
+  }) + "\\n";
+  const last = JSON.stringify({
+    type: "message_end",
+    message: { role: "assistant", content: [{ type: "text", text: "final answer" }] },
+  }) + "\\n";
+  process.stdout.write(first.slice(0, 19));
+  setTimeout(() => {
+    process.stdout.write(first.slice(19) + last.slice(0, 31));
+    setTimeout(() => process.stdout.end(last.slice(31)), 10);
+  }, 10);
+}
 `,
     );
     await chmod(shimPath, 0o755);
@@ -147,6 +161,15 @@ setTimeout(() => {
       assert.equal(result.resultText, "final answer");
       assert.ok(result.output.length <= 80_000);
       await assert.rejects(stat(dirname(capture.promptFile)), { code: "ENOENT" });
+
+      for (const prompt of ["oversized complete", "oversized partial"]) {
+        const oversized = await startPiBackend({ prompt, cwd });
+        await assert.rejects(oversized.collect(), {
+          name: "PiResultRecordTooLargeError",
+          code: "PI_RESULT_RECORD_TOO_LARGE",
+          message: `Pi result record exceeds the ${PI_RESULT_RECORD_MAX_BYTES}-byte UTF-8 limit.`,
+        });
+      }
     } finally {
       await job?.collect().catch(() => {});
       if (previousPath === undefined) delete process.env.PATH;

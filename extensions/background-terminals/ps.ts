@@ -17,13 +17,21 @@ export class PsOverlay {
   private unsub?: () => void;
   private cachedWidth?: number;
   private cachedLines?: string[];
+  private manager: TerminalManager;
+  private theme: Theme;
+  private onClose: () => void;
+  private requestRender: () => void;
 
   constructor(
-    private manager: TerminalManager,
-    private theme: Theme,
-    private onClose: () => void,
-    private requestRender: () => void,
+    manager: TerminalManager,
+    theme: Theme,
+    onClose: () => void,
+    requestRender: () => void,
   ) {
+    this.manager = manager;
+    this.theme = theme;
+    this.onClose = onClose;
+    this.requestRender = requestRender;
     this.refresh();
     this.unsub = manager.subscribe(() => {
       this.refresh();
