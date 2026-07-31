@@ -26,7 +26,7 @@ export function selectReconTools(availableTools: Iterable<string>) {
   const available = new Set(availableTools);
   return available.has("fd") && available.has("rg")
     ? ["read", "fd", "rg"]
-    : ["read", "find", "grep", "ls"];
+    : ["read", "find", "grep", "ls"].filter((tool) => available.has(tool));
 }
 
 type PhaseRuntime = {

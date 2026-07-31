@@ -373,6 +373,7 @@ describe("WorkflowManager", () => {
       selectReconTools(["read", "fd", "rg", "find", "grep", "ls"]),
       ["read", "fd", "rg"],
     );
+    assert.deepEqual(selectReconTools(["read", "grep"]), ["read", "grep"]);
     const reconTools = selectReconTools(["read", "find", "grep", "ls"]);
     const calls: Array<{ key: string; tools?: string[] }> = [];
     const { m } = await createManager({
