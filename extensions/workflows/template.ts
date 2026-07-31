@@ -8,7 +8,7 @@ export const REPO_TASK_PHASES: Array<{ name: string; tasks: WorkflowTaskDef[] }>
       {
         key: "structure",
         title: "Map repository structure",
-        tools: ["read", "fd", "rg"],
+        tools: ["read", "find", "grep", "ls"],
         role: [
           "You are a reconnaissance scout.",
           "Map the repository layout: entry points, packages, key modules, and how the project is built/tested.",
@@ -19,7 +19,7 @@ export const REPO_TASK_PHASES: Array<{ name: string; tasks: WorkflowTaskDef[] }>
       {
         key: "relevant",
         title: "Find goal-relevant code",
-        tools: ["read", "fd", "rg"],
+        tools: ["read", "find", "grep", "ls"],
         role: [
           "You are a reconnaissance scout focused on the goal.",
           "Find files, symbols, and existing patterns relevant to the goal.",
