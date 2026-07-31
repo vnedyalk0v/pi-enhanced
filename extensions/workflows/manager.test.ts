@@ -374,15 +374,17 @@ describe("WorkflowManager", () => {
       ["read", "fd", "rg"],
     );
     assert.deepEqual(selectReconTools(["read", "grep"]), ["read", "grep"]);
-    const reconTools = selectReconTools(["read", "find", "grep", "ls"]);
-    const calls: Array<{ key: string; tools?: string[] }> = [];
+    assert.deepEqual(selectReconTools(["fd", "rg"]), []);
+    const reconTools = selectReconTools(["read", "fd", "rg"]);
+    const calls: Array<{ key: string; tools?: string[]; extensionPath?: string }> = [];
     const { m } = await createManager({
       reconTools,
+      reconExtensionPath: "/package/extensions/file-search/index.ts",
       subagentOptions: {
         starters: {
-          pi: async ({ prompt, tools }) => {
+          pi: async ({ prompt, tools, extensionPath }) => {
             const key = prompt.match(/task key: (\w+)/)?.[1] ?? "";
-            calls.push({ key, tools });
+            calls.push({ key, tools, extensionPath });
             return fakeJob({ exitCode: 0, resultText: `${key} complete` });
           },
         },
@@ -393,11 +395,19 @@ describe("WorkflowManager", () => {
     await m.wait([started.id]);
 
     assert.deepEqual(calls, [
-      { key: "structure", tools: ["read", "find", "grep", "ls"] },
-      { key: "relevant", tools: ["read", "find", "grep", "ls"] },
-      { key: "implement", tools: undefined },
-      { key: "review", tools: undefined },
-      { key: "synthesize", tools: ["read"] },
+      {
+        key: "structure",
+        tools: ["read", "fd", "rg"],
+        extensionPath: "/package/extensions/file-search/index.ts",
+      },
+      {
+        key: "relevant",
+        tools: ["read", "fd", "rg"],
+        extensionPath: "/package/extensions/file-search/index.ts",
+      },
+      { key: "implement", tools: undefined, extensionPath: undefined },
+      { key: "review", tools: undefined, extensionPath: undefined },
+      { key: "synthesize", tools: ["read"], extensionPath: undefined },
     ]);
   });
 

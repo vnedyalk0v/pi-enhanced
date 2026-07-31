@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { ResultDelivery } from "../shared/delivery.ts";
@@ -15,6 +16,7 @@ import {
 import { selectReconTools, WorkflowManager } from "./manager.ts";
 
 const WIDGET_ID = "workflows";
+const FILE_SEARCH_EXTENSION = fileURLToPath(new URL("../file-search/index.ts", import.meta.url));
 
 const StartParams = Type.Object({
   goal: Type.String({
@@ -46,8 +48,10 @@ export default function (pi: ExtensionAPI) {
   const getManager = () => {
     if (disposed) throw new Error("Workflow manager is shutting down.");
     if (manager) return manager;
+    const reconTools = selectReconTools(pi.getAllTools().map((tool) => tool.name));
     manager = new WorkflowManager({
-      reconTools: selectReconTools(pi.getAllTools().map((tool) => tool.name)),
+      reconTools,
+      reconExtensionPath: reconTools.includes("fd") ? FILE_SEARCH_EXTENSION : undefined,
       onSettled: ({ snapshot, consumed }) => {
         if (disposed || consumed) return;
         delivery.enqueue(snapshot.id, snapshot);

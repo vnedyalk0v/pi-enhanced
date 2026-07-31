@@ -5,6 +5,9 @@ import { formatExit } from "../shared/text.ts";
 import { formatElapsed } from "../shared/time.ts";
 import type { TerminalManager, TerminalSnapshot } from "./manager.ts";
 
+const VT_CONTROL_STRING_PATTERN =
+  /(?:(?:\x1b\]|\u009d)[\s\S]*?(?:\x07|\x1b\\|\u009c)|(?:\x1b(?:P|X|\^|_)|[\u0090\u0098\u009e\u009f])[\s\S]*?(?:\x1b\\|\u009c))/g;
+
 type Mode = { kind: "list" } | { kind: "detail"; id: string; scroll: number; stream: "stdout" | "stderr" };
 
 /**
@@ -230,18 +233,22 @@ export class PsOverlay {
     }
 
     const streamLabel = this.mode.stream.toUpperCase();
-    const spillPath = stream.spillPath ? terminalText(stream.spillPath) : "n/a";
+    const spill = stream.spillPath
+      ? `${stream.spillTruncatedBytes > 0 ? "partial" : "full"}: ${terminalText(stream.spillPath)}`
+      : stream.spillTruncatedBytes > 0
+        ? "partial spill unavailable"
+        : "spill unavailable";
     const sizeNote =
       stream.truncatedBytes > 0
-        ? ` (viewing tail; ${formatSize(stream.truncatedBytes)} dropped; ${stream.spillTruncatedBytes > 0 ? "partial" : "full"}: ${spillPath})`
+        ? ` (viewing tail; ${formatSize(stream.truncatedBytes)} dropped; ${spill})`
         : stream.spillTruncatedBytes > 0
-          ? ` (${formatSize(stream.totalBytes)}; partial: ${spillPath})`
+          ? ` (${formatSize(stream.totalBytes)}; ${spill})`
           : ` (${formatSize(stream.totalBytes)})`;
     lines.push("");
     lines.push(truncateToWidth(`  ${th.fg("accent", streamLabel)}${th.fg("dim", sizeNote)}`, width));
     lines.push(th.fg("borderMuted", "─".repeat(Math.min(width, 40))));
 
-    const content = stream.text || "(empty)";
+    const content = stripTerminalControlStrings(stream.text || "(empty)");
     const contentLines = content.split("\n");
     const headerLines = 10;
     const maxBody = Math.max(5, 30 - headerLines);
@@ -267,8 +274,12 @@ export class PsOverlay {
   }
 }
 
+function stripTerminalControlStrings(value: string) {
+  return stripVTControlCharacters(value.replace(VT_CONTROL_STRING_PATTERN, ""));
+}
+
 function terminalText(value: string) {
-  return stripVTControlCharacters(value)
+  return stripTerminalControlStrings(value)
     .replace(/[\t\r\n]+/g, " ")
     .replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
 }

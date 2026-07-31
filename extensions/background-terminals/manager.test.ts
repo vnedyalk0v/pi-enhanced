@@ -354,13 +354,56 @@ describe("TerminalManager", () => {
     overlay.dispose();
   });
 
+  it("labels unavailable spill output in /ps detail", async () => {
+    const settled = createSettlementTracker();
+    const m = createManager({ onSettled: settled.onSettled });
+    const snap = await m.start({ command: "printf output", title: "spill", cwd: process.cwd() });
+    await settled.waitFor(snap.id);
+
+    const get = m.get.bind(m);
+    let spillTruncatedBytes = 0;
+    m.get = (id) => {
+      const current = get(id);
+      return current
+        ? {
+            ...current,
+            stdout: {
+              ...current.stdout,
+              truncatedBytes: 5,
+              spillTruncatedBytes,
+              spillPath: undefined,
+            },
+          }
+        : undefined;
+    };
+    const theme = {
+      fg: (_color: string, text: string) => text,
+    } as unknown as Theme;
+    const overlay = new PsOverlay(m, theme, () => {}, () => {});
+    try {
+      overlay.handleInput("\r");
+      let detail = overlay.render(120).join("\n");
+      assert.match(detail, /spill unavailable/);
+      assert.doesNotMatch(detail, /full: n\/a/);
+
+      spillTruncatedBytes = 2;
+      overlay.handleInput("k");
+      detail = overlay.render(120).join("\n");
+      assert.match(detail, /partial spill unavailable/);
+    } finally {
+      overlay.dispose();
+    }
+  });
+
   it(
     "strips terminal control sequences from /ps fields and output",
     { skip: process.platform === "win32" },
     async () => {
       const settled = createSettlementTracker();
       const m = createManager({ onSettled: settled.onSettled });
-      const output = "plain\x1b]52;c;SGVsbG8=\x07red\x1b[31mX\x1b[0m\x1b_Ppayload\x1b\\☃safe\tleft\tright\rnext";
+      const output =
+        "plain\x1b]52;c;SGVsbG8=\x07red\x1b[31mX\x1b[0m" +
+        "\x1b_Ppayload\x07\nstillpayload\x1b\\\x9d0;hidden\x9c☃safe\tleft\tright\rnext";
       const script = `process.stdout.write(${JSON.stringify(output)})`;
       const snap = await m.start({
         command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
@@ -386,6 +429,7 @@ describe("TerminalManager", () => {
         assert.doesNotMatch(rendered, /\x1b\]|\x1b_|\x1b\[31m|\x07/);
         assert.doesNotMatch(rendered, /owned/);
         assert.doesNotMatch(contentLine, /SGVsbG8=/);
+        assert.doesNotMatch(rendered, /Ppayload|stillpayload|0;hidden/);
       } finally {
         overlay.dispose();
       }
@@ -560,5 +604,20 @@ describe("terminal result formatting", () => {
 
     assert.match(message, /Partial log: \/tmp\/partial\.log \(5B not written\)/);
     assert.doesNotMatch(message, /Full log: \/tmp\/partial\.log/);
+  });
+
+  it("reports a partial spill when its file is unavailable", () => {
+    const message = buildStatusResult({
+      ...snapshot,
+      stdout: {
+        ...snapshot.stdout,
+        totalBytes: 10,
+        truncatedBytes: 5,
+        spillTruncatedBytes: 2,
+      },
+    });
+
+    assert.match(message, /Partial log unavailable \(2B not written\)/);
+    assert.doesNotMatch(message, /Log available in \/ps viewer/);
   });
 });

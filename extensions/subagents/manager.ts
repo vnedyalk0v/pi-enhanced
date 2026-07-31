@@ -183,6 +183,7 @@ export class SubagentManager {
           model: options.model,
           thinking: options.thinking,
           tools: options.tools,
+          extensionPath: options.extensionPath,
           systemPromptAppend: options.systemPromptAppend,
           signal: options.signal,
           onOutput,

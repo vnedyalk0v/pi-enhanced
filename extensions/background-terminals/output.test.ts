@@ -93,11 +93,12 @@ describe("OutputBuffer", () => {
     const dir = await mkdtemp(join(tmpdir(), "pi-bt-out-"));
     const path = join(dir, "missing", "out.log");
     const stream = createWriteStream(path, { highWaterMark: 1 });
-    const buf = new OutputBuffer(8, { path, stream });
+    const buf = new OutputBuffer(8, { path, stream, maxBytes: 2 });
 
     assert.equal(buf.push("data"), false);
     await buf.waitForDrain();
     assert.equal(buf.view().spillPath, undefined);
+    assert.equal(buf.view().spillTruncatedBytes, 2);
     await buf.close();
     await rm(dir, { recursive: true, force: true });
   });

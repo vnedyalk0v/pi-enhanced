@@ -17,6 +17,8 @@ export type PiBackendOptions = {
   thinking?: string;
   /** Tool allowlist from an agent definition; omitted = pi's full default set. */
   tools?: string[];
+  /** Extension required by an explicitly allowed worker tool. */
+  extensionPath?: string;
   /** Agent definition's system prompt body, appended after the base worker guidance. */
   systemPromptAppend?: string;
   signal?: AbortSignal;
@@ -41,10 +43,13 @@ export type BackendJob = {
  * `--tools ""` (zero tools), not be treated the same as "omitted" (pi's full
  * default set) — is directly unit-testable.
  */
-export function buildBaseArgs(options: Pick<PiBackendOptions, "model" | "thinking" | "tools">) {
+export function buildBaseArgs(
+  options: Pick<PiBackendOptions, "model" | "thinking" | "tools" | "extensionPath">,
+) {
   const args = ["--mode", "json", "-p", "--no-session"];
   if (options.model) args.push("--model", options.model);
   if (options.thinking) args.push("--thinking", options.thinking);
+  if (options.extensionPath) args.push("--extension", options.extensionPath);
   if (options.tools !== undefined) args.push("--tools", options.tools.join(","));
   return args;
 }

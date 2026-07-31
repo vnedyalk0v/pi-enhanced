@@ -32,6 +32,17 @@ describe("buildBaseArgs", () => {
       ["--mode", "json", "-p", "--no-session", "--model", "anthropic/claude-haiku-4-5", "--thinking", "low"],
     );
   });
+
+  it("loads an extension required by an allowed worker tool", () => {
+    const args = buildBaseArgs({
+      tools: ["read", "fd", "rg"],
+      extensionPath: "/package/extensions/file-search/index.ts",
+    });
+    assert.deepEqual(
+      args.slice(args.indexOf("--extension"), args.indexOf("--extension") + 2),
+      ["--extension", "/package/extensions/file-search/index.ts"],
+    );
+  });
 });
 
 describe("named agent prompt failure", () => {

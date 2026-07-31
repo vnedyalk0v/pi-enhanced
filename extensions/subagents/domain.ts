@@ -32,6 +32,8 @@ export type SpawnOptions = {
   thinking?: string;
   /** Tool allowlist from the agent definition, if restricted. */
   tools?: string[];
+  /** Extension required by an explicitly allowed worker tool. */
+  extensionPath?: string;
   /** Agent definition's system prompt body, appended to the worker guidance. */
   systemPromptAppend?: string;
 };
