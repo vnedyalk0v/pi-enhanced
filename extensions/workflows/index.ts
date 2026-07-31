@@ -12,7 +12,7 @@ import {
   buildStatusResult,
   buildWaitResult,
 } from "./format.ts";
-import { WorkflowManager } from "./manager.ts";
+import { selectReconTools, WorkflowManager } from "./manager.ts";
 
 const WIDGET_ID = "workflows";
 
@@ -47,6 +47,7 @@ export default function (pi: ExtensionAPI) {
     if (disposed) throw new Error("Workflow manager is shutting down.");
     if (manager) return manager;
     manager = new WorkflowManager({
+      reconTools: selectReconTools(pi.getAllTools().map((tool) => tool.name)),
       onSettled: ({ snapshot, consumed }) => {
         if (disposed || consumed) return;
         delivery.enqueue(snapshot.id, snapshot);

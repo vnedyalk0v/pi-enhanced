@@ -5,7 +5,7 @@ import { dirname, isAbsolute, join, relative } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import type { BackendJob } from "../subagents/backend.ts";
 import { PiResultRecordTooLargeError } from "../subagents/run.ts";
-import { WorkflowManager } from "./manager.ts";
+import { selectReconTools, WorkflowManager } from "./manager.ts";
 
 const managers: WorkflowManager[] = [];
 const tempDirs: string[] = [];
@@ -368,9 +368,15 @@ describe("WorkflowManager", () => {
     assert.deepEqual(m.list(), []);
   });
 
-  it("limits read-only workflow phases to read-only tools", async () => {
+  it("prefers file-search tools and falls back to native read-only tools", async () => {
+    assert.deepEqual(
+      selectReconTools(["read", "fd", "rg", "find", "grep", "ls"]),
+      ["read", "fd", "rg"],
+    );
+    const reconTools = selectReconTools(["read", "find", "grep", "ls"]);
     const calls: Array<{ key: string; tools?: string[] }> = [];
     const { m } = await createManager({
+      reconTools,
       subagentOptions: {
         starters: {
           pi: async ({ prompt, tools }) => {
@@ -386,8 +392,8 @@ describe("WorkflowManager", () => {
     await m.wait([started.id]);
 
     assert.deepEqual(calls, [
-      { key: "structure", tools: ["read", "fd", "rg", "find", "grep", "ls"] },
-      { key: "relevant", tools: ["read", "fd", "rg", "find", "grep", "ls"] },
+      { key: "structure", tools: ["read", "find", "grep", "ls"] },
+      { key: "relevant", tools: ["read", "find", "grep", "ls"] },
       { key: "implement", tools: undefined },
       { key: "review", tools: undefined },
       { key: "synthesize", tools: ["read"] },

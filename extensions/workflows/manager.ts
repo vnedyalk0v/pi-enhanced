@@ -22,6 +22,13 @@ import { REPO_TASK_PHASES } from "./template.ts";
 const DEFAULT_MAX_RUNNING = 1;
 const DEFAULT_MAX_TRACKED = 16;
 
+export function selectReconTools(availableTools: Iterable<string>) {
+  const available = new Set(availableTools);
+  return available.has("fd") && available.has("rg")
+    ? ["read", "fd", "rg"]
+    : ["read", "find", "grep", "ls"];
+}
+
 type PhaseRuntime = {
   name: string;
   status: PhaseRunSnapshot["status"];
@@ -67,6 +74,7 @@ export type WorkflowManagerOptions = {
   onChange?: () => void;
   /** Injected into each workflow's SubagentManager (tests). */
   subagentOptions?: Omit<SubagentManagerOptions, "onSettled" | "onChange">;
+  reconTools?: string[];
 };
 
 export class WorkflowManager {
@@ -81,6 +89,7 @@ export class WorkflowManager {
   private onSettled?: (info: WorkflowSettledInfo) => void;
   private onChange?: () => void;
   private subagentOptions?: Omit<SubagentManagerOptions, "onSettled" | "onChange">;
+  private reconTools?: string[];
 
   constructor(options: WorkflowManagerOptions = {}) {
     this.maxRunning = options.maxRunning ?? DEFAULT_MAX_RUNNING;
@@ -89,6 +98,7 @@ export class WorkflowManager {
     this.onSettled = options.onSettled;
     this.onChange = options.onChange;
     this.subagentOptions = options.subagentOptions;
+    this.reconTools = options.reconTools;
   }
 
   list(): WorkflowSnapshot[] {
@@ -395,7 +405,7 @@ export class WorkflowManager {
           cwd: entry.cwd,
           model,
           thinking,
-          tools: task.tools,
+          tools: phaseName === "reconnaissance" ? (this.reconTools ?? task.tools) : task.tools,
         });
         tr.subagentId = snap.id;
         spawned.push({ task, subagentId: snap.id });
