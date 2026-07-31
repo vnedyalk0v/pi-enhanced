@@ -1,6 +1,6 @@
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import { stripVTControlCharacters } from "node:util";
+import { formatSize, type Theme } from "@earendil-works/pi-coding-agent";
 import { matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
-import { formatSize } from "@earendil-works/pi-coding-agent";
 import { formatExit } from "../shared/text.ts";
 import { formatElapsed } from "../shared/time.ts";
 import type { TerminalManager, TerminalSnapshot } from "./manager.ts";
@@ -184,7 +184,7 @@ export class PsOverlay {
         const status = statusColor(th, snap);
         const elapsed = formatElapsed(snap.createdAt, snap.settledAt);
         const exit = formatExit(snap);
-        const body = `${snap.id} ${status} "${snap.title}" ${th.fg("dim", `(${exit}, ${elapsed})`)}`;
+        const body = `${snap.id} ${status} "${terminalText(snap.title)}" ${th.fg("dim", `(${exit}, ${elapsed})`)}`;
         lines.push(truncateToWidth(`  ${marker} ${body}`, width));
       });
     }
@@ -209,7 +209,7 @@ export class PsOverlay {
     const stream = this.mode.stream === "stdout" ? snap.stdout : snap.stderr;
     const lines: string[] = [];
     lines.push("");
-    const title = th.fg("accent", ` ${snap.id} "${snap.title}" `);
+    const title = th.fg("accent", ` ${snap.id} "${terminalText(snap.title)}" `);
     lines.push(
       truncateToWidth(
         th.fg("borderMuted", "─".repeat(3)) + title + th.fg("borderMuted", "─".repeat(Math.max(0, width - title.length))),
@@ -223,17 +223,20 @@ export class PsOverlay {
         width,
       ),
     );
-    lines.push(truncateToWidth(`  ${th.fg("dim", snap.command)}`, width));
-    lines.push(truncateToWidth(`  ${th.fg("dim", snap.cwd)}`, width));
+    lines.push(truncateToWidth(`  ${th.fg("dim", terminalText(snap.command))}`, width));
+    lines.push(truncateToWidth(`  ${th.fg("dim", terminalText(snap.cwd))}`, width));
     if (snap.errorText) {
-      lines.push(truncateToWidth(`  ${th.fg("error", snap.errorText)}`, width));
+      lines.push(truncateToWidth(`  ${th.fg("error", terminalText(snap.errorText))}`, width));
     }
 
     const streamLabel = this.mode.stream.toUpperCase();
+    const spillPath = stream.spillPath ? terminalText(stream.spillPath) : "n/a";
     const sizeNote =
       stream.truncatedBytes > 0
-        ? ` (viewing tail; ${formatSize(stream.truncatedBytes)} dropped; full: ${stream.spillPath ?? "n/a"})`
-        : ` (${formatSize(stream.totalBytes)})`;
+        ? ` (viewing tail; ${formatSize(stream.truncatedBytes)} dropped; ${stream.spillTruncatedBytes > 0 ? "partial" : "full"}: ${spillPath})`
+        : stream.spillTruncatedBytes > 0
+          ? ` (${formatSize(stream.totalBytes)}; partial: ${spillPath})`
+          : ` (${formatSize(stream.totalBytes)})`;
     lines.push("");
     lines.push(truncateToWidth(`  ${th.fg("accent", streamLabel)}${th.fg("dim", sizeNote)}`, width));
     lines.push(th.fg("borderMuted", "─".repeat(Math.min(width, 40))));
@@ -249,7 +252,7 @@ export class PsOverlay {
     }
     const slice = contentLines.slice(scroll, scroll + maxBody);
     for (const line of slice) {
-      lines.push(truncateToWidth(`  ${line}`, width));
+      lines.push(truncateToWidth(`  ${terminalText(line)}`, width));
     }
 
     lines.push("");
@@ -262,6 +265,12 @@ export class PsOverlay {
     lines.push("");
     return lines;
   }
+}
+
+function terminalText(value: string) {
+  return stripVTControlCharacters(value)
+    .replace(/[\t\r\n]+/g, " ")
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
 }
 
 function statusColor(th: Theme, snap: TerminalSnapshot) {

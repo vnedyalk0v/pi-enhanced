@@ -8,6 +8,7 @@ import { InterestTracker, pruneSettled } from "../shared/lifecycle.ts";
 import { abortPromise, sleep } from "../shared/time.ts";
 import {
   createSpillDir,
+  MAX_SESSION_SPILL_BYTES,
   OutputBuffer,
   openSpillStreams,
   removeSpillDir,
@@ -94,6 +95,7 @@ export class TerminalManager {
   private outputNotifyTimer?: ReturnType<typeof setTimeout>;
   private spillDirPromise?: Promise<string>;
   private spillOpenings = new Set<Promise<Awaited<ReturnType<typeof openSpillStreams>>>>();
+  private readonly spillBudget = { remainingBytes: MAX_SESSION_SPILL_BYTES };
   private readonly isRetained = (entry: Entry) =>
     entry.status === "running" || this.killInterest.has(entry.id);
   private readonly maxRunning: number;
@@ -222,8 +224,8 @@ export class TerminalManager {
     } finally {
       this.spillOpenings.delete(spillOpening);
     }
-    const stdout = new OutputBuffer(undefined, spill.stdout);
-    const stderr = new OutputBuffer(undefined, spill.stderr);
+    const stdout = new OutputBuffer(undefined, { ...spill.stdout, budget: this.spillBudget });
+    const stderr = new OutputBuffer(undefined, { ...spill.stderr, budget: this.spillBudget });
     if (this.disposed) {
       this.startingCount -= 1;
       await Promise.all([stdout.close(), stderr.close()]);

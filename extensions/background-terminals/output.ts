@@ -5,37 +5,56 @@ import { tmpdir } from "node:os";
 
 /** Newest-bytes retained per stream in memory (for /ps and tool peeks). */
 export const MAX_RETAINED_BYTES = 2 * 1024 * 1024;
+export const MAX_SPILL_BYTES = 16 * 1024 * 1024;
+export const MAX_SESSION_SPILL_BYTES = 64 * 1024 * 1024;
+
+export type SpillBudget = {
+  remainingBytes: number;
+};
 
 export type OutputView = {
   text: string;
   totalBytes: number;
   truncatedBytes: number;
+  spillTruncatedBytes: number;
   spillPath?: string;
 };
 
 /**
  * Bounded decoded text buffer: keeps the newest bytes, drops the head, and
- * optionally appends every byte to a spill file for full capture.
+ * optionally appends output to a bounded spill file.
  */
 export class OutputBuffer {
   private chunks: string[] = [];
   private retainedBytes = 0;
   totalBytes = 0;
   truncatedBytes = 0;
+  spillTruncatedBytes = 0;
   spillPath?: string;
   private spillStream?: WriteStream;
   private spillError?: string;
+  private spillBytes = 0;
+  private spillStopped = false;
+  private spillBudget?: SpillBudget;
+  private maxSpillBytes = MAX_SPILL_BYTES;
   private closed = false;
   private maxRetainedBytes: number;
 
   constructor(
     maxRetainedBytes: number = MAX_RETAINED_BYTES,
-    spill?: { path: string; stream: WriteStream },
+    spill?: {
+      path: string;
+      stream: WriteStream;
+      budget?: SpillBudget;
+      maxBytes?: number;
+    },
   ) {
     this.maxRetainedBytes = maxRetainedBytes;
     if (spill) {
       this.spillPath = spill.path;
       this.spillStream = spill.stream;
+      this.spillBudget = spill.budget;
+      this.maxSpillBytes = spill.maxBytes ?? MAX_SPILL_BYTES;
       this.spillStream.on("error", (err) => {
         this.spillError = err instanceof Error ? err.message : String(err);
         this.spillPath = undefined;
@@ -52,7 +71,36 @@ export class OutputBuffer {
 
     let accepted = true;
     if (this.spillStream && !this.spillError) {
-      accepted = this.spillStream.write(chunk);
+      const capacity = Math.min(
+        this.maxSpillBytes - this.spillBytes,
+        this.spillBudget?.remainingBytes ?? Infinity,
+      );
+      if (!this.spillStopped && capacity > 0) {
+        let spillChunk: string | Buffer = chunk;
+        let spillChunkBytes = chunkBytes;
+        if (chunkBytes > capacity) {
+          const encoded = Buffer.from(chunk, "utf8");
+          spillChunkBytes = capacity;
+          while (
+            spillChunkBytes > 0 &&
+            encoded[spillChunkBytes] !== undefined &&
+            (encoded[spillChunkBytes]! & 0xc0) === 0x80
+          ) {
+            spillChunkBytes -= 1;
+          }
+          spillChunk = encoded.subarray(0, spillChunkBytes);
+        }
+        if (spillChunkBytes > 0) {
+          accepted = this.spillStream.write(spillChunk);
+          this.spillBytes += spillChunkBytes;
+          if (this.spillBudget) this.spillBudget.remainingBytes -= spillChunkBytes;
+        }
+        this.spillStopped = spillChunkBytes < chunkBytes;
+        this.spillTruncatedBytes += chunkBytes - spillChunkBytes;
+      } else {
+        this.spillStopped = true;
+        this.spillTruncatedBytes += chunkBytes;
+      }
     }
 
     if (chunkBytes >= this.maxRetainedBytes) {
@@ -102,6 +150,7 @@ export class OutputBuffer {
       text: includeText ? this.chunks.join("") : "",
       totalBytes: this.totalBytes,
       truncatedBytes: this.truncatedBytes,
+      spillTruncatedBytes: this.spillTruncatedBytes,
       spillPath: this.spillPath,
     };
   }

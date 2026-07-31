@@ -92,7 +92,7 @@ export async function startPiBackend(options: PiBackendOptions): Promise<Backend
     // Ad-hoc worker: the generic guidance above is a nice-to-have, not load-bearing.
   }
 
-  args.push(options.prompt);
+  args.push(`Task: ${options.prompt}`);
   options.signal?.throwIfAborted();
 
   let output = "";
