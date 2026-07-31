@@ -386,8 +386,8 @@ describe("WorkflowManager", () => {
     await m.wait([started.id]);
 
     assert.deepEqual(calls, [
-      { key: "structure", tools: ["read", "find", "grep", "ls"] },
-      { key: "relevant", tools: ["read", "find", "grep", "ls"] },
+      { key: "structure", tools: ["read", "fd", "rg", "find", "grep", "ls"] },
+      { key: "relevant", tools: ["read", "fd", "rg", "find", "grep", "ls"] },
       { key: "implement", tools: undefined },
       { key: "review", tools: undefined },
       { key: "synthesize", tools: ["read"] },
