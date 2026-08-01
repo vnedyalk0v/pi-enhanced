@@ -43,6 +43,39 @@ describe("OutputBuffer", () => {
     assert.equal(view.truncatedBytes, 5);
   });
 
+  it("keeps a valid character boundary when the cap splits a multi-byte char", () => {
+    const buf = new OutputBuffer(10);
+    buf.push("😀😀😀");
+    const view = buf.view();
+    const retainedBytes = Buffer.byteLength(view.text, "utf8");
+    assert.equal(view.text.includes("�"), false);
+    assert.equal(retainedBytes <= 10, true);
+    assert.equal(view.truncatedBytes, view.totalBytes - retainedBytes);
+  });
+
+  it("never reports negative truncation", () => {
+    const buf = new OutputBuffer(10);
+    buf.push("😀😀😀");
+    assert.equal(buf.view().truncatedBytes >= 0, true);
+  });
+
+  it("retains the whole chunk when it lands exactly on the cap", () => {
+    const buf = new OutputBuffer(6);
+    buf.push("a😀b");
+    const view = buf.view();
+    assert.equal(view.text, "a😀b");
+    assert.equal(view.truncatedBytes, 0);
+  });
+
+  it("handles a cap smaller than one character", () => {
+    const buf = new OutputBuffer(2);
+    buf.push("😀");
+    const view = buf.view();
+    assert.equal(view.text, "");
+    assert.equal(view.text.includes("�"), false);
+    assert.equal(view.truncatedBytes >= 0, true);
+  });
+
   it("returns metadata without joining retained text", () => {
     const buf = new OutputBuffer(64);
     buf.push("hello");
