@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import { contentToText } from "../shared/text.ts";
 
 export const PI_RESULT_RECORD_MAX_BYTES = 4 * 1024 * 1024;
@@ -57,11 +58,24 @@ export function runProcess(options: RunOptions): RunHandle {
     resolveWait(result);
   };
 
+  const stdoutDecoder = new StringDecoder("utf8");
+  const stderrDecoder = new StringDecoder("utf8");
+
   child.stdout?.on("data", (buf: Buffer) => {
-    options.onStdout?.(buf.toString("utf8"));
+    const text = stdoutDecoder.write(buf);
+    if (text) options.onStdout?.(text);
   });
   child.stderr?.on("data", (buf: Buffer) => {
-    options.onStderr?.(buf.toString("utf8"));
+    const text = stderrDecoder.write(buf);
+    if (text) options.onStderr?.(text);
+  });
+  child.stdout?.once("end", () => {
+    const text = stdoutDecoder.end();
+    if (text) options.onStdout?.(text);
+  });
+  child.stderr?.once("end", () => {
+    const text = stderrDecoder.end();
+    if (text) options.onStderr?.(text);
   });
 
   child.once("error", (err) => {
@@ -133,6 +147,7 @@ export function appendBounded(current: string, chunk: string, maxChars = 80_000)
 export function createPiAssistantTextCollector(maxBytes = PI_RESULT_RECORD_MAX_BYTES) {
   let remainder = "";
   let last = "";
+  let droppedLines = 0;
   let overflow: PiResultRecordTooLargeError | undefined;
   const fail = () => {
     overflow ??= new PiResultRecordTooLargeError(maxBytes);
@@ -147,7 +162,7 @@ export function createPiAssistantTextCollector(maxBytes = PI_RESULT_RECORD_MAX_B
   const processLine = (rawLine: string) => {
     const line = normalizeLine(rawLine);
     check(line);
-    const text = parsePiAssistantText(line);
+    const text = parsePiAssistantText(line, () => droppedLines++);
     if (text) {
       check(text);
       last = text;
@@ -155,6 +170,9 @@ export function createPiAssistantTextCollector(maxBytes = PI_RESULT_RECORD_MAX_B
   };
 
   return {
+    get droppedLines() {
+      return droppedLines;
+    },
     push(chunk: string) {
       if (overflow) throw overflow;
       let offset = 0;
@@ -177,7 +195,7 @@ export function createPiAssistantTextCollector(maxBytes = PI_RESULT_RECORD_MAX_B
   };
 }
 
-function parsePiAssistantText(line: string) {
+function parsePiAssistantText(line: string, onParseFailure?: () => void) {
   if (!line.trim()) return "";
   try {
     const event = JSON.parse(line) as {
@@ -188,6 +206,7 @@ function parsePiAssistantText(line: string) {
       ? contentToText(event.message.content)
       : "";
   } catch {
+    onParseFailure?.();
     return "";
   }
 }

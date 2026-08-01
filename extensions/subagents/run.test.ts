@@ -13,6 +13,21 @@ function timeout(message: string) {
   });
 }
 
+async function collectNodeStdout(chunks: Buffer[]) {
+  const encoded = chunks.map((chunk) => chunk.toString("base64"));
+  const script = `const chunks = ${JSON.stringify(encoded)}; let index = 0; const writeNext = () => { if (index === chunks.length) return; process.stdout.write(Buffer.from(chunks[index++], "base64")); setTimeout(writeNext, 25); }; writeNext();`;
+  const output: string[] = [];
+  const handle = runProcess({
+    command: process.execPath,
+    args: ["-e", script],
+    cwd: process.cwd(),
+    onStdout: (chunk) => output.push(chunk),
+  });
+
+  await Promise.race([handle.wait, timeout("child did not exit")]);
+  return output;
+}
+
 it(
   "escalates SIGTERM to SIGKILL",
   { skip: process.platform === "win32" },
@@ -84,6 +99,44 @@ it(
     }
   },
 );
+
+it("reassembles a JSONL record split mid-character", async () => {
+  const record = `${JSON.stringify({
+    type: "message_end",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "café ☕ done" }],
+    },
+  })}\n`;
+  const bytes = Buffer.from(record, "utf8");
+  const splitAt = bytes.indexOf(Buffer.from("é")) + 1;
+  const collector = createPiAssistantTextCollector();
+
+  assert.equal(bytes[splitAt]! & 0xc0, 0x80);
+  for (const chunk of await collectNodeStdout([
+    bytes.subarray(0, splitAt),
+    bytes.subarray(splitAt),
+  ])) {
+    collector.push(chunk);
+  }
+
+  const result = collector.finish();
+  assert.equal(result, "café ☕ done");
+  assert.doesNotMatch(result, /�/);
+});
+
+it("emits nothing for a chunk that ends mid-character", async () => {
+  const bytes = Buffer.from("é", "utf8");
+
+  assert.deepEqual(
+    await collectNodeStdout([bytes.subarray(0, 1), bytes.subarray(1)]),
+    ["é"],
+  );
+});
+
+it("flushes trailing bytes when the stream ends", async () => {
+  assert.deepEqual(await collectNodeStdout([Buffer.from([0xc3])]), ["�"]);
+});
 
 describe("appendBounded", () => {
   it("keeps a tail when over max", () => {
@@ -181,12 +234,13 @@ describe("createPiAssistantTextCollector", () => {
     assert.throws(() => collector.push(`${event}\n`), PiResultRecordTooLargeError);
   });
 
-  it("ignores malformed lines", () => {
+  it("counts corrupt JSONL lines instead of silently dropping them", () => {
     const collector = createPiAssistantTextCollector();
 
     collector.push(`not-json\n${assistantEvent("valid")}\n{broken}\n`);
 
     assert.equal(collector.finish(), "valid");
+    assert.equal(collector.droppedLines, 2);
   });
 
   it("processes an unterminated final record only on finish", () => {
