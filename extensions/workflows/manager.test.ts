@@ -246,6 +246,73 @@ describe("WorkflowManager", () => {
     assert.equal(m.get(third.id)?.status, "done");
   });
 
+  it("a throwing onChange does not reject the start promise", async () => {
+    const { m } = await createManager({
+      onChange: () => {
+        throw new Error("stale");
+      },
+      subagentOptions: {
+        starters: {
+          pi: async () => fakeJob({ exitCode: 0, resultText: "ok", delayMs: 1 }),
+        },
+      },
+    });
+
+    const started = await m.start({ goal: "survive stale UI", cwd: process.cwd() });
+    assert.equal(started.status, "running");
+    await m.wait([started.id]);
+  });
+
+  it("a throwing onChange does not strand the concurrency slot", async () => {
+    const { m } = await createManager({
+      maxRunning: 1,
+      onChange: () => {
+        throw new Error("stale");
+      },
+      subagentOptions: {
+        starters: {
+          pi: async () => fakeJob({ exitCode: 0, resultText: "ok", delayMs: 1 }),
+        },
+      },
+    });
+
+    const first = await m.start({ goal: "first workflow", cwd: process.cwd() });
+    await m.wait([first.id]);
+    const second = await m.start({ goal: "second workflow", cwd: process.cwd() });
+    await m.wait([second.id]);
+  });
+
+  it("a throwing onSettled does not produce an unhandled rejection", async () => {
+    let markSettled!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      markSettled = resolve;
+    });
+    const unhandled: unknown[] = [];
+    const recordUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.once("unhandledRejection", recordUnhandled);
+    const { m } = await createManager({
+      onSettled: () => {
+        markSettled();
+        throw new Error("stale");
+      },
+      subagentOptions: {
+        starters: {
+          pi: async () => fakeJob({ exitCode: 0, resultText: "ok", delayMs: 1 }),
+        },
+      },
+    });
+
+    try {
+      const started = await m.start({ goal: "finish safely", cwd: process.cwd() });
+      await settled;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.deepEqual(unhandled, []);
+      await m.wait([started.id]);
+    } finally {
+      process.off("unhandledRejection", recordUnhandled);
+    }
+  });
+
   it("prunes workflows after successful waits and cancellations", async () => {
     let releaseFirst!: () => void;
     const firstGate = new Promise<void>((resolve) => {

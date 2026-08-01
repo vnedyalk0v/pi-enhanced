@@ -3,6 +3,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import { ResultDelivery } from "../shared/delivery.ts";
 import { TOOL_LIMITS_NOTE } from "../shared/text.ts";
+import { withUI } from "../shared/ui.ts";
 import {
   buildKillResult,
   buildListResult,
@@ -64,17 +65,21 @@ export default function (pi: ExtensionAPI) {
   };
 
   const updateWidget = () => {
-    if (!uiCtx?.hasUI || !manager) return;
-    const running = manager.getRunningCount();
-    if (running === 0) {
-      uiCtx.ui.setWidget(WIDGET_ID, undefined);
-      return;
-    }
-    const label =
-      running === 1
-        ? "1 background terminal running • /ps to view"
-        : `${running} background terminals running • /ps to view`;
-    uiCtx.ui.setWidget(WIDGET_ID, [label]);
+    const m = manager;
+    if (!m) return;
+    const ok = withUI(uiCtx, (ctx) => {
+      const running = m.getRunningCount();
+      if (running === 0) {
+        ctx.ui.setWidget(WIDGET_ID, undefined);
+        return;
+      }
+      const label =
+        running === 1
+          ? "1 background terminal running • /ps to view"
+          : `${running} background terminals running • /ps to view`;
+      ctx.ui.setWidget(WIDGET_ID, [label]);
+    });
+    if (!ok) uiCtx = undefined;
   };
 
   const flushDelivery = () => {
@@ -111,9 +116,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_shutdown", async () => {
     disposed = true;
     delivery.clear();
-    if (uiCtx?.hasUI) {
-      uiCtx.ui.setWidget(WIDGET_ID, undefined);
-    }
+    withUI(uiCtx, (ctx) => ctx.ui.setWidget(WIDGET_ID, undefined));
     const m = manager;
     manager = undefined;
     uiCtx = undefined;
