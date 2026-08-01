@@ -75,29 +75,32 @@ semantics.
 
 ## 6. Extraction sketch
 
-For the production implementation, extract a private helper from the wait-only
-parts of `kill()`:
+Do not extract a shared helper in the first production change. Plan 002 made the
+interest-release policies intentionally different: an aborted `kill()` must
+retain interest until termination settles, while an aborted or timed-out
+`wait()` must release interest immediately so later completion is delivered.
+Hiding that difference behind a policy flag would be more code than the small
+duplicated wait sequence.
+
+The overlap is the `settlePromise` collection and `Promise.race` in `kill()`.
+If a third caller appears or the release policies later converge, only that race
+is a useful extraction:
 
 ```ts
-private async awaitSettled(
-  ids: readonly string[],
+private async awaitSettlements(
+  waiting: readonly Promise<void>[],
   timeoutMs: number | undefined,
   signal: AbortSignal | undefined,
   abortMessage: string,
-): Promise<TerminalSnapshot[]>
+): Promise<void>
 ```
 
-The helper owns the current unknown-ID check (`manager.ts:404-407`), interest
-registration and `settlePromise` collection (`manager.ts:409-425,429`), the
-`Promise.race`/disposal check/snapshot refresh (`manager.ts:439-452`), and the
-release/prune `finally` block (`manager.ts:453-468`). Rename `killInterest` to
-`settleInterest` when both callers use it.
-
-`kill()` keeps `KillResult`, `alreadySettled`, `killSignaled`,
-`terminateChild()`, and the abort rule that retains interest until termination
-settles. `wait()` adds only the timeout race and never mutates the child. The PoC
-intentionally duplicates the small wait sequence rather than refactoring
-`kill()` before the public behavior is approved.
+The helper would own only `kill()`'s current `Promise.race` block and add the
+optional timeout promise. Validation, interest registration/release, disposal
+errors, snapshot refresh, `KillResult`, `alreadySettled`, `killSignaled`, and
+`terminateChild()` stay in their callers. Rename `killInterest` to
+`settleInterest` when a public `wait()` becomes its second caller; the PoC keeps
+the existing name to avoid a throwaway refactor.
 
 ## 7. Test list for the eventual build
 
