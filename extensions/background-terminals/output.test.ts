@@ -45,7 +45,7 @@ describe("OutputBuffer", () => {
 
   it("keeps a valid character boundary when the cap splits a multi-byte char", () => {
     const buf = new OutputBuffer(10);
-    buf.push("😀😀😀");
+    buf.push("\u{1F600}\u{1F600}\u{1F600}");
     const view = buf.view();
     const retainedBytes = Buffer.byteLength(view.text, "utf8");
     assert.equal(view.text.includes("�"), false);
@@ -55,21 +55,21 @@ describe("OutputBuffer", () => {
 
   it("never reports negative truncation", () => {
     const buf = new OutputBuffer(10);
-    buf.push("😀😀😀");
+    buf.push("\u{1F600}\u{1F600}\u{1F600}");
     assert.equal(buf.view().truncatedBytes >= 0, true);
   });
 
   it("retains the whole chunk when it lands exactly on the cap", () => {
     const buf = new OutputBuffer(6);
-    buf.push("a😀b");
+    buf.push("a\u{1F600}b");
     const view = buf.view();
-    assert.equal(view.text, "a😀b");
+    assert.equal(view.text, "a\u{1F600}b");
     assert.equal(view.truncatedBytes, 0);
   });
 
   it("handles a cap smaller than one character", () => {
     const buf = new OutputBuffer(2);
-    buf.push("😀");
+    buf.push("\u{1F600}");
     const view = buf.view();
     assert.equal(view.text, "");
     assert.equal(view.text.includes("�"), false);

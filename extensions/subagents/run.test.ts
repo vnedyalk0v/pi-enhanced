@@ -105,7 +105,7 @@ it("reassembles a JSONL record split mid-character", async () => {
     type: "message_end",
     message: {
       role: "assistant",
-      content: [{ type: "text", text: "café ☕ done" }],
+      content: [{ type: "text", text: "café \u{2615} done" }],
     },
   })}\n`;
   const bytes = Buffer.from(record, "utf8");
@@ -121,7 +121,7 @@ it("reassembles a JSONL record split mid-character", async () => {
   }
 
   const result = collector.finish();
-  assert.equal(result, "café ☕ done");
+  assert.equal(result, "café \u{2615} done");
   assert.doesNotMatch(result, /�/);
 });
 
@@ -183,14 +183,14 @@ describe("createPiAssistantTextCollector", () => {
   });
 
   it("accepts an exact-limit record split inside a surrogate pair", () => {
-    const event = assistantEvent("😀");
-    const split = event.indexOf("😀") + 1;
+    const event = assistantEvent("\u{1F600}");
+    const split = event.indexOf("\u{1F600}") + 1;
     const collector = createPiAssistantTextCollector(Buffer.byteLength(event, "utf8"));
 
     collector.push(event.slice(0, split));
     collector.push(`${event.slice(split)}\n`);
 
-    assert.equal(collector.finish(), "😀");
+    assert.equal(collector.finish(), "\u{1F600}");
   });
 
   it("accepts an exact-limit CRLF record", () => {

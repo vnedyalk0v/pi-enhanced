@@ -1,8 +1,8 @@
 # Design spike: `bg_wait`
 
-This document designs a blocking wait for background terminals. The accompanying
-manager method and two focused tests are a throwaway proof of concept; this spike
-does not register a public tool.
+This document designs a blocking wait for background terminals. A throwaway
+manager method and two focused tests validated the design, then were removed
+before merge; this spike does not register a public tool.
 
 ## 1. Tool signature
 
@@ -99,8 +99,8 @@ The helper would own only `kill()`'s current `Promise.race` block and add the
 optional timeout promise. Validation, interest registration/release, disposal
 errors, snapshot refresh, `KillResult`, `alreadySettled`, `killSignaled`, and
 `terminateChild()` stay in their callers. Rename `killInterest` to
-`settleInterest` when a public `wait()` becomes its second caller; the PoC keeps
-the existing name to avoid a throwaway refactor.
+`settleInterest` when a public `wait()` becomes its second caller; the historical
+PoC kept the existing name to avoid a throwaway refactor.
 
 ## 7. Test list for the eventual build
 
@@ -118,8 +118,8 @@ the existing name to avoid a throwaway refactor.
 - Dispose during a wait; reject with a disposal error rather than reading entries
   after `disposeAll()` clears them.
 
-The PoC implements the two load-bearing combined cases: multi-terminal ordering
-plus completed-wait dedup, and timeout plus later-delivery behavior.
+The removed PoC covered the two load-bearing combined cases: multi-terminal
+ordering plus completed-wait dedup, and timeout plus later-delivery behavior.
 
 ## 8. Open questions
 
