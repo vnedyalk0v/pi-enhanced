@@ -13,6 +13,17 @@ import {
   truncateHead,
 } from "@earendil-works/pi-coding-agent";
 
+/** Spill files mirror the background-terminal per-stream cap. */
+export const SPILL_MAX_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Remove the spill-path clause (Full or Partial variant) from a truncation
+ * notice. Lives next to the notice format below so the two cannot drift.
+ */
+export function stripSpillPathClause(text: string) {
+  return text.replace(/ (?:Full|Partial) output[^:\]]*: [^\]]+(?=\])/, "");
+}
+
 export type RunResult = {
   text: string;
   exitCode: number;
@@ -130,11 +141,27 @@ export async function runBinary(
       if (start < text.length) lineHasContent = true;
     };
 
+    let spillBytes = 0;
+    let spillTruncated = false;
     const stdoutTask = pipeline(
       child.stdout,
       new Transform({
         transform(chunk: Buffer, _encoding, callback) {
           consumeStdout(stdoutDecoder.write(chunk));
+          // Count/stat everything, but cap what reaches the spill file.
+          const remaining = SPILL_MAX_BYTES - spillBytes;
+          if (remaining <= 0) {
+            spillTruncated = true;
+            callback();
+            return;
+          }
+          if (chunk.length > remaining) {
+            spillTruncated = true;
+            spillBytes = SPILL_MAX_BYTES;
+            callback(null, chunk.subarray(0, remaining));
+            return;
+          }
+          spillBytes += chunk.length;
           callback(null, chunk);
         },
         flush(callback) {
@@ -191,7 +218,9 @@ export async function runBinary(
     const notice =
       `\n\n[Output truncated: showing ${truncation.outputLines} of ${totalLines} lines` +
       ` (${formatSize(truncation.outputBytes)} of ${formatSize(totalBytes)}).` +
-      ` Full output: ${tempFile}]`;
+      (spillTruncated
+        ? ` Partial output (first ${formatSize(SPILL_MAX_BYTES)}): ${tempFile}]`
+        : ` Full output: ${tempFile}]`);
 
     return {
       text: stdoutHead.text + notice,

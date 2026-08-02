@@ -23,6 +23,7 @@ type ToolResult = {
 type SpawnCapture = {
   args: string[];
   cwd: string;
+  stdin: string;
   systemPrompt: string;
 };
 
@@ -207,11 +208,13 @@ it(
       `#!/usr/bin/env node
 const fs = require("node:fs");
 const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
 const promptIndex = args.indexOf("--append-system-prompt");
 const promptFile = promptIndex === -1 ? undefined : args[promptIndex + 1];
 fs.writeFileSync(process.env.PI_ENHANCED_CAPTURE, JSON.stringify({
   args,
   cwd: process.cwd(),
+  stdin,
   promptFile,
   systemPrompt: promptFile ? fs.readFileSync(promptFile, "utf8") : undefined,
 }));
@@ -325,7 +328,8 @@ setTimeout(() => process.stdout.end(line.slice(23)), 20);
       assertArg(explicit.capture.args, "--model", "override/model");
       assertArg(explicit.capture.args, "--thinking", "high");
       assertArg(explicit.capture.args, "--tools", "read,grep");
-      assert.equal(explicit.capture.args.at(-1), "Task: inspect the project");
+      assert.equal(explicit.capture.stdin, "Task: inspect the project");
+      assert.ok(!explicit.capture.args.some((arg) => arg.startsWith("Task:")));
       assert.equal(explicit.capture.systemPrompt.match(/PROJECT SCOUT PROMPT/g)?.length, 1);
       assert.doesNotMatch(explicit.capture.systemPrompt, /USER SCOUT PROMPT/);
 
@@ -342,7 +346,7 @@ setTimeout(() => process.stdout.end(line.slice(23)), 20);
       assertArg(agentDefaults.capture.args, "--model", "project/model");
       assertArg(agentDefaults.capture.args, "--thinking", "medium");
       assertArg(agentDefaults.capture.args, "--tools", "read,grep");
-      assert.equal(agentDefaults.capture.args.at(-1), "Task: use named agent defaults");
+      assert.equal(agentDefaults.capture.stdin, "Task: use named agent defaults");
       assert.equal(
         agentDefaults.capture.systemPrompt.match(/PROJECT SCOUT PROMPT/g)?.length,
         1,
@@ -360,7 +364,7 @@ setTimeout(() => process.stdout.end(line.slice(23)), 20);
       assertArg(parentDefaults.capture.args, "--model", "parent/parent-model");
       assertArg(parentDefaults.capture.args, "--thinking", "low");
       assert.equal(parentDefaults.capture.args.includes("--tools"), false);
-      assert.equal(parentDefaults.capture.args.at(-1), "Task: use parent defaults");
+      assert.equal(parentDefaults.capture.stdin, "Task: use parent defaults");
       assert.doesNotMatch(parentDefaults.capture.systemPrompt, /PROJECT SCOUT PROMPT/);
 
       assert.equal(confirmations.length, 3);

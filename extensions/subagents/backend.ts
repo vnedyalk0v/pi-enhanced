@@ -97,17 +97,19 @@ export async function startPiBackend(options: PiBackendOptions): Promise<Backend
     // Ad-hoc worker: the generic guidance above is a nice-to-have, not load-bearing.
   }
 
-  args.push(`Task: ${options.prompt}`);
   options.signal?.throwIfAborted();
 
   let output = "";
   const resultCollector = createPiAssistantTextCollector();
   let resultError: PiResultRecordTooLargeError | undefined;
   let handle!: RunHandle;
+  // Prompt goes over stdin (pi -p merges piped stdin into the initial
+  // prompt): immune to ARG_MAX and to argv @file/flag interpretation.
   handle = runProcess({
     command: "pi",
     args,
     cwd: options.cwd,
+    stdinData: `Task: ${options.prompt}`,
     onStdout: (c) => {
       output = appendBounded(output, c);
       if (resultError) return;

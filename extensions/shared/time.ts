@@ -16,10 +16,18 @@ export function sleep(ms: number, signal?: AbortSignal) {
   return delay(ms, undefined, { ref: false, signal });
 }
 
+/** A wait/cancel/kill wait was aborted; the underlying work continues in the background. */
+export class WaitAbortedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WaitAbortedError";
+  }
+}
+
 export function abortPromise(signal: AbortSignal | undefined, message: string) {
   if (!signal) return new Promise<never>(() => {});
-  if (signal.aborted) return Promise.reject(new Error(message));
+  if (signal.aborted) return Promise.reject(new WaitAbortedError(message));
   return new Promise<never>((_, reject) => {
-    signal.addEventListener("abort", () => reject(new Error(message)), { once: true });
+    signal.addEventListener("abort", () => reject(new WaitAbortedError(message)), { once: true });
   });
 }

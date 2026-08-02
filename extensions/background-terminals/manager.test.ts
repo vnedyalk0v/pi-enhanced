@@ -207,6 +207,31 @@ describe("TerminalManager", () => {
     assert.equal(after.exitCode, 7);
   });
 
+  it("a throwing onSettled does not produce an unhandled rejection", async () => {
+    let markSettled!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      markSettled = resolve;
+    });
+    const unhandled: unknown[] = [];
+    const recordUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.once("unhandledRejection", recordUnhandled);
+    const m = createManager({
+      onSettled: () => {
+        markSettled();
+        throw new Error("stale sendMessage");
+      },
+    });
+
+    try {
+      await m.start({ command: "exit 0", title: "quick", cwd: process.cwd() });
+      await settled;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.deepEqual(unhandled, []);
+    } finally {
+      process.off("unhandledRejection", recordUnhandled);
+    }
+  });
+
   it("kills a long-running process and marks consumed", async () => {
     const settled: SettledInfo[] = [];
     const m = createManager({ onSettled: (info) => settled.push(info) });

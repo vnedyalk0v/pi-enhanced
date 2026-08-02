@@ -282,6 +282,21 @@ describe("WorkflowManager", () => {
     await m.wait([second.id]);
   });
 
+  it("wait fails cleanly when the manager is disposed mid-wait", async () => {
+    const { m } = await createManager({
+      subagentOptions: {
+        starters: {
+          pi: async () => fakeJob({ exitCode: 0, resultText: "ok", delayMs: 30 }),
+        },
+      },
+    });
+
+    const started = await m.start({ goal: "dispose mid wait", cwd: process.cwd() });
+    const waiting = m.wait([started.id]);
+    await m.disposeAll();
+    await assert.rejects(waiting, /disposed during wait/);
+  });
+
   it("a throwing onSettled does not produce an unhandled rejection", async () => {
     let markSettled!: () => void;
     const settled = new Promise<void>((resolve) => {

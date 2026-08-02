@@ -387,7 +387,13 @@ export class TerminalManager {
     this.notify();
 
     if (!this.disposed) {
-      this.onSettled?.({ snapshot: this.snapshotOf(entry), consumed });
+      try {
+        this.onSettled?.({ snapshot: this.snapshotOf(entry), consumed });
+      } catch {
+        // Completion listeners must not break settle bookkeeping; settle is
+        // fired from stream close handlers where a throw would surface as an
+        // unhandled rejection.
+      }
     }
   }
 

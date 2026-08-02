@@ -139,8 +139,11 @@ capacity immediately.
 Background streams retain a 2 MiB in-memory tail and spill up to 16 MiB per
 stream, capped at 64 MiB per Pi session, to a private OS-temporary directory.
 Partial spill logs are labeled, and all logs are removed at Pi session shutdown.
-Native subagent JSON result records have a 4 MiB UTF-8 ceiling. An oversized
-record fails the worker instead of returning a truncated successful result.
+Truncated `fd`/`rg` results spill full output to a private temporary file with
+the same 16 MiB cap; larger spills are labeled partial. Native subagent JSON
+result records have a 4 MiB UTF-8 ceiling. An oversized record fails the worker
+instead of returning a truncated successful result. Subagents (standalone and
+workflow children) are force-killed after 30 minutes of runtime.
 Workflow artifacts use private OS-temporary directories reported by
 `wf_status`; completed artifacts survive the session but are not durable or
 cross-machine storage.

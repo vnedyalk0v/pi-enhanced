@@ -111,11 +111,16 @@ export class PsOverlay {
     if (data === "x" || data === "X") {
       const snap = this.snapshots[this.selected];
       if (!snap || snap.status !== "running") return;
-      void this.manager.kill([snap.id]).then(() => {
-        this.refresh();
-        this.invalidate();
-        this.requestRender();
-      });
+      void this.manager
+        .kill([snap.id])
+        .then(() => {
+          this.refresh();
+          this.invalidate();
+          this.requestRender();
+        })
+        .catch(() => {
+          // Manager disposed mid-shutdown; the overlay is going away anyway.
+        });
     }
   }
 
@@ -147,11 +152,16 @@ export class PsOverlay {
       const id = this.mode.id;
       const snap = this.manager.get(id);
       if (!snap || snap.status !== "running") return;
-      void this.manager.kill([id]).then(() => {
-        this.refresh();
-        this.invalidate();
-        this.requestRender();
-      });
+      void this.manager
+        .kill([id])
+        .then(() => {
+          this.refresh();
+          this.invalidate();
+          this.requestRender();
+        })
+        .catch(() => {
+          // Manager disposed mid-shutdown; the overlay is going away anyway.
+        });
     }
   }
 
@@ -170,10 +180,14 @@ export class PsOverlay {
     const th = this.theme;
     const lines: string[] = [];
     lines.push("");
-    const title = th.fg("accent", " Background terminals ");
+    const titleText = " Background terminals ";
+    const title = th.fg("accent", titleText);
     lines.push(
       truncateToWidth(
-        th.fg("borderMuted", "─".repeat(3)) + title + th.fg("borderMuted", "─".repeat(Math.max(0, width - 28))),
+        th.fg("borderMuted", "─".repeat(3)) +
+          title +
+          // Rule length uses the plain text, not the ANSI-styled string.
+          th.fg("borderMuted", "─".repeat(Math.max(0, width - 3 - titleText.length))),
         width,
       ),
     );
@@ -212,10 +226,14 @@ export class PsOverlay {
     const stream = this.mode.stream === "stdout" ? snap.stdout : snap.stderr;
     const lines: string[] = [];
     lines.push("");
-    const title = th.fg("accent", ` ${snap.id} "${terminalText(snap.title)}" `);
+    const titleText = ` ${snap.id} "${terminalText(snap.title)}" `;
+    const title = th.fg("accent", titleText);
     lines.push(
       truncateToWidth(
-        th.fg("borderMuted", "─".repeat(3)) + title + th.fg("borderMuted", "─".repeat(Math.max(0, width - title.length))),
+        th.fg("borderMuted", "─".repeat(3)) +
+          title +
+          // Rule length uses the plain text, not the ANSI-styled string.
+          th.fg("borderMuted", "─".repeat(Math.max(0, width - 3 - titleText.length))),
         width,
       ),
     );
