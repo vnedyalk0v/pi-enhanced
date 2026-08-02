@@ -186,7 +186,7 @@ revisit generalization under the triggers above.
 
 ## Revisit record
 
-Considered and deferred on 2026-08-01 at `1de8f9b`: no demand signal; the repo
-previously removed an unused template selector; direct `sa_spawn` composition or
-one additional package-owned fixed pipeline should be tried before a user-defined
-configuration layer.
+Considered and deferred in this design review on 2026-08-01: no demand signal;
+the repo previously removed an unused template selector; direct `sa_spawn`
+composition or one additional package-owned fixed pipeline should be tried
+before a user-defined configuration layer.

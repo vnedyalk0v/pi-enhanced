@@ -167,8 +167,9 @@ which point its id cannot resume and its artifacts may be removed.
    reservation path with resume, and document that normal `maxTracked`
    eviction ends resumability.
 
-The stale-context crash-chain fix at commit `5bae0a8` is already present and
-keeps workflow settlement from being stranded by throwing UI callbacks.
+The stale-context guards in `extensions/shared/ui.ts` and
+`extensions/workflows/manager.ts` are already present and keep workflow
+settlement from being stranded by throwing UI callbacks.
 
 ## Accepted failure modes
 

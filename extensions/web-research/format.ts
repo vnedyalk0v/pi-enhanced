@@ -40,13 +40,10 @@ export function formatSearchResult(result: SearchResult): string {
 }
 
 export function formatScrapeResult(result: ScrapeResult): string {
-  const lines = [
-    `provider: ${result.provider}`,
-    `url: ${result.url}`,
-  ];
+  const lines = [`provider: ${result.provider}`, UNTRUSTED_CONTENT_NOTICE];
+  lines.push(`url: ${result.url}`);
   if (result.title) lines.push(`title: ${result.title}`);
   if (result.warning) lines.push(`warning: ${result.warning}`);
-  lines.push(UNTRUSTED_CONTENT_NOTICE);
   lines.push("", result.markdown || "(empty)");
   return truncateForModel(lines.join("\n"), { mode: "head" });
 }

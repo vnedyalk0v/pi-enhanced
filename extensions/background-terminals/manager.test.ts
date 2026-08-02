@@ -207,56 +207,6 @@ describe("TerminalManager", () => {
     assert.equal(after.exitCode, 7);
   });
 
-  it("waits for every terminal in input order and marks completions consumed", async () => {
-    const settled = createSettlementTracker();
-    const m = createManager({ onSettled: settled.onSettled });
-    const first = await m.start({
-      command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify("setTimeout(() => {}, 100)")}`,
-      title: "first",
-      cwd: process.cwd(),
-    });
-    const second = await m.start({
-      command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify("setTimeout(() => {}, 400)")}`,
-      title: "second",
-      cwd: process.cwd(),
-    });
-
-    let resolved = false;
-    const waiting = m.wait([second.id, first.id], 2_000).then((snapshots) => {
-      resolved = true;
-      return snapshots;
-    });
-    const firstInfo = await settled.waitFor(first.id);
-    assert.equal(firstInfo.consumed, true);
-    assert.equal(resolved, false);
-
-    const snapshots = await waiting;
-    const secondInfo = await settled.waitFor(second.id);
-    assert.deepEqual(
-      snapshots.map((snapshot) => snapshot.id),
-      [second.id, first.id],
-    );
-    assert.ok(snapshots.every((snapshot) => snapshot.status === "done"));
-    assert.equal(secondInfo.consumed, true);
-  });
-
-  it("returns a running snapshot on timeout and delivers later completion", async () => {
-    const settled = createSettlementTracker();
-    const m = createManager({ onSettled: settled.onSettled });
-    const snap = await m.start({
-      command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify("setTimeout(() => {}, 300)")}`,
-      title: "timeout",
-      cwd: process.cwd(),
-    });
-
-    const snapshots = await m.wait([snap.id], 20);
-    assert.equal(snapshots[0]?.status, "running");
-
-    const info = await settled.waitFor(snap.id);
-    assert.equal(info.snapshot.status, "done");
-    assert.equal(info.consumed, false);
-  });
-
   it("kills a long-running process and marks consumed", async () => {
     const settled: SettledInfo[] = [];
     const m = createManager({ onSettled: (info) => settled.push(info) });

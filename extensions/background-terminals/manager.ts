@@ -83,7 +83,6 @@ type Entry = {
 const DEFAULT_MAX_RUNNING = 8;
 const DEFAULT_MAX_TRACKED = 32;
 const DEFAULT_KILL_GRACE_MS = 2000;
-const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
 const OUTPUT_NOTIFY_INTERVAL_MS = 100;
 
 export class TerminalManager {
@@ -389,37 +388,6 @@ export class TerminalManager {
 
     if (!this.disposed) {
       this.onSettled?.({ snapshot: this.snapshotOf(entry), consumed });
-    }
-  }
-
-  async wait(
-    ids: readonly string[],
-    timeoutMs = DEFAULT_WAIT_TIMEOUT_MS,
-    signal?: AbortSignal,
-  ): Promise<TerminalSnapshot[]> {
-    if (this.disposed) {
-      throw new Error("Background terminal manager is disposed.");
-    }
-
-    const unknown = ids.filter((id) => !this.entries.has(id));
-    if (unknown.length > 0) {
-      throw new Error(`Unknown terminal id(s): ${unknown.join(", ")}`);
-    }
-
-    for (const id of ids) this.killInterest.add(id);
-    try {
-      await Promise.race([
-        Promise.all(ids.map((id) => this.entries.get(id)!.settlePromise)),
-        sleep(timeoutMs),
-        abortPromise(signal, "Wait aborted; terminals continue in the background."),
-      ]);
-      if (this.disposed) {
-        throw new Error("Background terminal manager was disposed during wait.");
-      }
-      return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
-    } finally {
-      for (const id of ids) this.killInterest.release(id);
-      this.pruneAfterInterestRelease();
     }
   }
 

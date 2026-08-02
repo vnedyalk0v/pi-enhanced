@@ -234,15 +234,6 @@ describe("createPiAssistantTextCollector", () => {
     assert.throws(() => collector.push(`${event}\n`), PiResultRecordTooLargeError);
   });
 
-  it("counts corrupt JSONL lines instead of silently dropping them", () => {
-    const collector = createPiAssistantTextCollector();
-
-    collector.push(`not-json\n${assistantEvent("valid")}\n{broken}\n`);
-
-    assert.equal(collector.finish(), "valid");
-    assert.equal(collector.droppedLines, 2);
-  });
-
   it("processes an unterminated final record only on finish", () => {
     const collector = createPiAssistantTextCollector();
 

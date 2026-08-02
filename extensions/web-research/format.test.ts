@@ -216,10 +216,10 @@ describe("web research formatting", () => {
       }),
       [
         "provider: firecrawl",
+        UNTRUSTED_CONTENT_NOTICE,
         "url: https://example.com",
         "title: T",
         "warning: w",
-        UNTRUSTED_CONTENT_NOTICE,
         "",
         "body",
       ].join("\n"),
@@ -234,6 +234,10 @@ describe("web research formatting", () => {
     });
 
     assert.ok(output.includes(UNTRUSTED_CONTENT_NOTICE));
+    assert.ok(
+      output.indexOf(UNTRUSTED_CONTENT_NOTICE) <
+        output.indexOf("url: https://example.com"),
+    );
     assert.ok(output.indexOf(UNTRUSTED_CONTENT_NOTICE) < output.indexOf("remote body"));
   });
 
