@@ -1,6 +1,20 @@
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
+import { matchesKey, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { terminalText } from "./terminal-text.ts";
+
+/**
+ * Visible slice of `count` rows that keeps `selected` on screen: the list can
+ * hold far more jobs (32 tracked) than a terminal has rows, and selection
+ * moves through all of them. Returns the slice bounds plus hidden counts so
+ * the caller can show "N more" affordances.
+ */
+export function windowAround(count: number, selected: number, maxRows: number) {
+  if (count <= maxRows) return { start: 0, end: count, before: 0, after: 0 };
+  const half = Math.floor(maxRows / 2);
+  const start = Math.min(Math.max(0, selected - half), count - maxRows);
+  const end = start + maxRows;
+  return { start, end, before: start, after: count - end };
+}
 
 export type JobsOverlayConfig<S extends { id: string }> = {
   /** Overlay title, e.g. "Subagents". */
@@ -21,6 +35,7 @@ export type JobsOverlayConfig<S extends { id: string }> = {
 type Mode = { kind: "list" } | { kind: "detail"; id: string; scroll: number };
 
 const MIN_BODY_LINES = 5;
+const MIN_LIST_ROWS = 3;
 const FALLBACK_ROWS = 30;
 
 /**
@@ -34,6 +49,7 @@ export class JobsOverlay<S extends { id: string }> {
   private unsub?: () => void;
   private cachedWidth?: number;
   private cachedLines?: string[];
+  private disposed = false;
   private config: JobsOverlayConfig<S>;
   private theme: Theme;
   private onClose: () => void;
@@ -62,7 +78,11 @@ export class JobsOverlay<S extends { id: string }> {
   }
 
   dispose() {
-    this.unsub?.();
+    this.disposed = true;
+    // Both the Esc path and TUI teardown call this; unsubscribe exactly once.
+    const unsub = this.unsub;
+    this.unsub = undefined;
+    unsub?.();
   }
 
   private refresh() {
@@ -85,6 +105,7 @@ export class JobsOverlay<S extends { id: string }> {
   }
 
   private rerender() {
+    if (this.disposed) return;
     this.invalidate();
     this.requestRender();
   }
@@ -110,6 +131,8 @@ export class JobsOverlay<S extends { id: string }> {
     void this.config
       .cancel(id)
       .then(() => {
+        // Cancellation can settle after the overlay closed.
+        if (this.disposed) return;
         this.refresh();
         this.rerender();
       })
@@ -188,10 +211,22 @@ export class JobsOverlay<S extends { id: string }> {
     if (this.snapshots.length === 0) {
       lines.push(truncateToWidth(`  ${th.fg("dim", `No ${this.config.title.toLowerCase()}.`)}`, width));
     } else {
-      this.snapshots.forEach((snap, i) => {
+      // Chrome: blank, rule, blank above; blank, hint, blank below, plus the
+      // two "N more" markers the window itself may add.
+      const rows = this.getRows?.() ?? FALLBACK_ROWS;
+      const maxRows = Math.max(MIN_LIST_ROWS, rows - 8);
+      const win = windowAround(this.snapshots.length, this.selected, maxRows);
+      if (win.before > 0) {
+        lines.push(truncateToWidth(`  ${th.fg("dim", `↑ ${win.before} more`)}`, width));
+      }
+      for (let i = win.start; i < win.end; i++) {
+        const snap = this.snapshots[i]!;
         const marker = i === this.selected ? th.fg("accent", "›") : " ";
         lines.push(truncateToWidth(`  ${marker} ${this.config.renderRow(snap, th)}`, width));
-      });
+      }
+      if (win.after > 0) {
+        lines.push(truncateToWidth(`  ${th.fg("dim", `↓ ${win.after} more`)}`, width));
+      }
     }
 
     lines.push("");
@@ -216,7 +251,19 @@ export class JobsOverlay<S extends { id: string }> {
     }
     lines.push(th.fg("borderMuted", "─".repeat(Math.min(width, 40))));
 
-    const contentLines = this.config.detailBody(snap).split("\n");
+    // Results are prose: a long paragraph is one logical line, so wrap to the
+    // body width instead of truncating everything past the right edge away.
+    const bodyWidth = Math.max(1, width - 2);
+    const contentLines: string[] = [];
+    for (const raw of this.config.detailBody(snap).split("\n")) {
+      const line = terminalText(raw);
+      if (!line) {
+        contentLines.push("");
+        continue;
+      }
+      contentLines.push(...wrapTextWithAnsi(line, bodyWidth));
+    }
+
     const headerLines = lines.length + 3;
     const rows = this.getRows?.() ?? FALLBACK_ROWS;
     const maxBody = Math.max(MIN_BODY_LINES, rows - headerLines);
@@ -224,7 +271,7 @@ export class JobsOverlay<S extends { id: string }> {
     const scroll = Math.min(mode.scroll, maxScroll);
     if (scroll !== mode.scroll) this.mode = { ...mode, scroll };
     for (const line of contentLines.slice(scroll, scroll + maxBody)) {
-      lines.push(truncateToWidth(`  ${terminalText(line)}`, width));
+      lines.push(truncateToWidth(`  ${line}`, width));
     }
 
     lines.push("");

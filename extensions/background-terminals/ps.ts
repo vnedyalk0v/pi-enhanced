@@ -1,5 +1,6 @@
 import { formatSize, type Theme } from "@earendil-works/pi-coding-agent";
 import { matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
+import { windowAround } from "../shared/jobs-overlay.ts";
 import { stripTerminalControlStrings, terminalText } from "../shared/terminal-text.ts";
 import { formatExit } from "../shared/text.ts";
 import { formatElapsed } from "../shared/time.ts";
@@ -17,6 +18,7 @@ export class PsOverlay {
   private unsub?: () => void;
   private cachedWidth?: number;
   private cachedLines?: string[];
+  private disposed = false;
   private manager: TerminalManager;
   private theme: Theme;
   private onClose: () => void;
@@ -51,7 +53,11 @@ export class PsOverlay {
   }
 
   dispose() {
-    this.unsub?.();
+    this.disposed = true;
+    // Both the Esc path and TUI teardown call this; unsubscribe exactly once.
+    const unsub = this.unsub;
+    this.unsub = undefined;
+    unsub?.();
   }
 
   private refresh() {
@@ -82,6 +88,8 @@ export class PsOverlay {
       .then(() => {
         const settled = this.manager.get(id);
         if (settled) this.onKilled?.(settled);
+        // Termination can settle after the overlay closed.
+        if (this.disposed) return;
         this.refresh();
         this.invalidate();
         this.requestRender();
@@ -198,7 +206,14 @@ export class PsOverlay {
     if (this.snapshots.length === 0) {
       lines.push(truncateToWidth(`  ${th.fg("dim", "No background terminals.")}`, width));
     } else {
-      this.snapshots.forEach((snap, i) => {
+      // Up to 32 terminals are tracked; keep the selected row on screen.
+      const rows = this.getRows?.() ?? 30;
+      const win = windowAround(this.snapshots.length, this.selected, Math.max(3, rows - 8));
+      if (win.before > 0) {
+        lines.push(truncateToWidth(`  ${th.fg("dim", `↑ ${win.before} more`)}`, width));
+      }
+      for (let i = win.start; i < win.end; i++) {
+        const snap = this.snapshots[i]!;
         const marker = i === this.selected ? th.fg("accent", "›") : " ";
         const status = statusColor(th, snap);
         const elapsed = formatElapsed(snap.createdAt, snap.settledAt);
@@ -206,7 +221,10 @@ export class PsOverlay {
         const detail = snap.status === "running" ? elapsed : `${formatExit(snap)}, ${elapsed}`;
         const body = `${snap.id} ${status} "${terminalText(snap.title)}" ${th.fg("dim", `(${detail})`)}`;
         lines.push(truncateToWidth(`  ${marker} ${body}`, width));
-      });
+      }
+      if (win.after > 0) {
+        lines.push(truncateToWidth(`  ${th.fg("dim", `↓ ${win.after} more`)}`, width));
+      }
     }
 
     lines.push("");

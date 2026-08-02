@@ -27,6 +27,7 @@ import {
   buildSpawnResult,
   buildStatusResult,
   buildWaitResult,
+  summarizeOutputTail,
   truncateAtWord,
 } from "./format.ts";
 import { SubagentManager } from "./manager.ts";
@@ -409,7 +410,8 @@ export default function (pi: ExtensionAPI) {
               const elapsed = formatElapsed(snap.createdAt, snap.settledAt);
               const detail =
                 snap.status === "running" ? elapsed : `${formatExit(snap)}, ${elapsed}`;
-              const agent = snap.agent ? ` ${th.fg("muted", snap.agent)}` : "";
+              // Agent names come from repo-controlled frontmatter.
+              const agent = snap.agent ? ` ${th.fg("muted", terminalText(snap.agent))}` : "";
               return `${snap.id} ${subagentStatusColor(th, snap)} "${terminalText(snap.title)}"${agent} ${th.fg("dim", `(${detail})`)}`;
             },
             detailHeader: (snap, th) => {
@@ -434,7 +436,8 @@ export default function (pi: ExtensionAPI) {
               }
               return lines.filter((l) => l.trim() !== "");
             },
-            detailBody: (snap) => snap.resultText || snap.outputTail || "(no output)",
+            detailBody: (snap) =>
+              snap.resultText || summarizeOutputTail(snap.outputTail) || "(no output yet)",
             canCancel: (snap) => snap.status === "running",
             cancel: (id) =>
               m.cancel([id]).then((snaps) => {
@@ -447,7 +450,8 @@ export default function (pi: ExtensionAPI) {
                   pi.sendMessage(
                     {
                       customType: "subagent-user-cancel",
-                      content: `User cancelled subagent ${snap.id} "${snap.title}" from /sa.`,
+                      // Titles default to a repo-controlled agent description.
+                      content: `User cancelled subagent ${snap.id} "${truncateOneLine(snap.title, 120)}" from /sa.`,
                       display: false,
                       details: { id: snap.id, status: snap.status },
                     },

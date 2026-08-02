@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createManagerHost } from "../shared/host.ts";
-import { TOOL_LIMITS_NOTE } from "../shared/text.ts";
+import { TOOL_LIMITS_NOTE, truncateOneLine } from "../shared/text.ts";
 import {
   buildKillResult,
   buildListResult,
@@ -216,7 +216,7 @@ export default function (pi: ExtensionAPI) {
               pi.sendMessage(
                 {
                   customType: "background-terminal-user-kill",
-                  content: `User killed background terminal ${snap.id} "${snap.title}" from /ps.`,
+                  content: `User killed background terminal ${snap.id} "${truncateOneLine(snap.title, 120)}" from /ps.`,
                   display: false,
                   details: { id: snap.id, status: snap.status },
                 },

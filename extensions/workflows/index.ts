@@ -292,7 +292,7 @@ export default function (pi: ExtensionAPI) {
                   pi.sendMessage(
                     {
                       customType: "workflow-user-cancel",
-                      content: `User cancelled workflow ${snap.id} "${snap.title}" from /wf.`,
+                      content: `User cancelled workflow ${snap.id} "${truncateOneLine(snap.title, 120)}" from /wf.`,
                       display: false,
                       details: { id: snap.id, status: snap.status },
                     },

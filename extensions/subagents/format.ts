@@ -1,12 +1,62 @@
+import { truncateTail } from "@earendil-works/pi-coding-agent";
 import { formatElapsed } from "../shared/time.ts";
 import {
-  completionTail,
+  contentToText,
   formatExit,
+  formatTruncationNotice,
   truncateForModel,
   truncateOneLine,
   UNTRUSTED_CONTENT_NOTICE,
 } from "../shared/text.ts";
 import type { SubagentSnapshot } from "./domain.ts";
+
+const BTW_TAIL_MAX_BYTES = 2048;
+const BTW_TAIL_MAX_LINES = 24;
+
+/**
+ * Small bounded tail for the /btw answer: enough to act on without a
+ * follow-up status call, small enough to inject freely.
+ */
+function completionTail(text: string) {
+  const truncation = truncateTail(text, {
+    maxLines: BTW_TAIL_MAX_LINES,
+    maxBytes: BTW_TAIL_MAX_BYTES,
+  });
+  if (!truncation.truncated) return truncation.content || "(empty)";
+  return (
+    truncation.content +
+    `\n${formatTruncationNotice("tail", truncation.outputBytes, truncation.totalBytes)}`
+  );
+}
+
+/**
+ * Readable progress from a running worker's raw output tail. The child speaks
+ * `--mode json` JSONL, so the tail is protocol noise; pull out the assistant
+ * text and tool activity a human watching /sa actually wants. The leading
+ * line is usually a partial record (the tail is cut from the front) and just
+ * fails to parse.
+ */
+export function summarizeOutputTail(tail: string) {
+  const lines: string[] = [];
+  for (const raw of tail.split("\n")) {
+    if (!raw.trim()) continue;
+    let event: { type?: string; toolName?: string; message?: { role?: string; content?: unknown } };
+    try {
+      event = JSON.parse(raw);
+    } catch {
+      continue;
+    }
+    if (event.type === "tool_execution_start" && typeof event.toolName === "string") {
+      lines.push(`[${event.toolName}]`);
+      continue;
+    }
+    if (event.type === "message_end" && event.message?.role === "assistant") {
+      const text = contentToText(event.message.content);
+      if (text) lines.push(text);
+    }
+  }
+  return lines.join("\n");
+}
 
 /** One-line truncation that breaks at a word boundary instead of mid-word. */
 export function truncateAtWord(s: string, max: number) {

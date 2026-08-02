@@ -47,24 +47,6 @@ export function tailText(s: string, n: number) {
   return s.length <= n ? s : s.slice(s.length - n);
 }
 
-export const COMPLETION_TAIL_MAX_BYTES = 2048;
-export const COMPLETION_TAIL_MAX_LINES = 24;
-
-/**
- * Small bounded tail for async completion messages: enough to act on the
- * result without a follow-up status call, small enough to inject freely.
- */
-export function completionTail(text: string) {
-  const truncation = truncateTail(text, {
-    maxLines: COMPLETION_TAIL_MAX_LINES,
-    maxBytes: COMPLETION_TAIL_MAX_BYTES,
-  });
-  if (!truncation.truncated) return truncation.content || "(empty)";
-  return (
-    truncation.content +
-    `\n${formatTruncationNotice("tail", truncation.outputBytes, truncation.totalBytes)}`
-  );
-}
 
 export function formatExit(snap: {
   status: string;

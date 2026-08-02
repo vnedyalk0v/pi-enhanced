@@ -134,7 +134,11 @@ function findNearestProjectAgentsDir(cwd: string, boundary: string) {
   }
 }
 
-function loadAgentsFromDir(dir: string, source: AgentSource): AgentDefinition[] {
+function loadAgentsFromDir(
+  dir: string,
+  source: AgentSource,
+  maxFileBytes?: number,
+): AgentDefinition[] {
   if (!isDirectory(dir)) return [];
   let entries: Dirent[];
   try {
@@ -156,6 +160,12 @@ function loadAgentsFromDir(dir: string, source: AgentSource): AgentDefinition[] 
 
     const filePath = join(dir, entry.name);
     try {
+      if (maxFileBytes !== undefined) {
+        // Diagnostic reads happen before the project is trusted, so never pull
+        // a repo-controlled file of arbitrary size into memory.
+        const { size } = statSync(filePath);
+        if (size > maxFileBytes) continue;
+      }
       const content = readFileSync(filePath, "utf8");
       const { frontmatter, body } = parseFrontmatter<Record<string, unknown>>(content);
 
@@ -228,11 +238,15 @@ export function discoverAgents(
   projectTrusted: boolean,
   agentDir: string = getAgentDir(),
   discoveryBoundary: string = cwd,
+  /** Skip definition files larger than this (diagnostic reads of untrusted repos). */
+  maxFileBytes?: number,
 ): AgentDiscovery {
-  const userAgents = loadAgentsFromDir(join(agentDir, "agents"), "user");
+  const userAgents = loadAgentsFromDir(join(agentDir, "agents"), "user", maxFileBytes);
   const projectAgentsDir = findNearestProjectAgentsDir(cwd, discoveryBoundary);
   const projectAgents =
-    projectTrusted && projectAgentsDir ? loadAgentsFromDir(projectAgentsDir, "project") : [];
+    projectTrusted && projectAgentsDir
+      ? loadAgentsFromDir(projectAgentsDir, "project", maxFileBytes)
+      : [];
 
   const byName = new Map<string, AgentDefinition>();
   for (const agent of userAgents) byName.set(agent.name, agent);
@@ -240,6 +254,9 @@ export function discoverAgents(
 
   return { agents: [...byName.values()], projectAgentsDir };
 }
+
+/** An agent definition is frontmatter plus a prompt; 256 KiB is already absurd. */
+const DIAGNOSTIC_MAX_FILE_BYTES = 256 * 1024;
 
 export type HiddenAgentInfo = {
   filePath: string;
@@ -249,7 +266,8 @@ export type HiddenAgentInfo = {
 /**
  * Explain why a named agent was not discoverable: it may exist as a project
  * definition that trust rules excluded. Diagnostic only — reads frontmatter to
- * match the name, never executes the definition.
+ * match the name, never executes the definition. The read is size-bounded
+ * because it inspects a repository that has not been trusted.
  */
 export function findHiddenAgent(
   name: string,
@@ -258,18 +276,26 @@ export function findHiddenAgent(
   sessionTrusted: boolean,
   agentDir: string = getAgentDir(),
 ): HiddenAgentInfo | undefined {
-  const inSession = discoverAgents(sessionCwd, true, agentDir, sessionCwd).agents.find(
-    (a) => a.name === name && a.source === "project",
-  );
+  const inSession = discoverAgents(
+    sessionCwd,
+    true,
+    agentDir,
+    sessionCwd,
+    DIAGNOSTIC_MAX_FILE_BYTES,
+  ).agents.find((a) => a.name === name && a.source === "project");
   if (inSession) {
     return {
       filePath: inSession.filePath,
       reason: sessionTrusted ? "working-dir-outside-project" : "project-untrusted",
     };
   }
-  const nearWorker = discoverAgents(workerCwd, true, agentDir, workerCwd).agents.find(
-    (a) => a.name === name && a.source === "project",
-  );
+  const nearWorker = discoverAgents(
+    workerCwd,
+    true,
+    agentDir,
+    workerCwd,
+    DIAGNOSTIC_MAX_FILE_BYTES,
+  ).agents.find((a) => a.name === name && a.source === "project");
   if (nearWorker) {
     return { filePath: nearWorker.filePath, reason: "working-dir-outside-project" };
   }

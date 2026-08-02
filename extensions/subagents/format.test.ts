@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { SubagentSnapshot } from "./domain.ts";
-import { buildBtwAnswer, truncateAtWord } from "./format.ts";
+import { buildBtwAnswer, summarizeOutputTail, truncateAtWord } from "./format.ts";
 import { modelPatternMatchesRegistry } from "./index.ts";
 
 function snapshot(overrides: Partial<SubagentSnapshot>): SubagentSnapshot {
@@ -32,6 +32,35 @@ describe("truncateAtWord", () => {
   it("falls back to a hard cut when there is no usable space", () => {
     const result = truncateAtWord("a".repeat(60), 40);
     assert.equal(result, `${"a".repeat(40)}…`);
+  });
+});
+
+describe("summarizeOutputTail", () => {
+  const assistant = (text: string) =>
+    JSON.stringify({
+      type: "message_end",
+      message: { role: "assistant", content: [{ type: "text", text }] },
+    });
+
+  it("keeps assistant text and tool activity, dropping protocol noise", () => {
+    const tail = [
+      assistant("Looking at the repo."),
+      JSON.stringify({ type: "tool_execution_start", toolName: "bash", args: { command: "ls" } }),
+      JSON.stringify({ type: "message_update", assistantMessageEvent: { type: "text_delta" } }),
+      assistant("Found it."),
+    ].join("\n");
+
+    assert.equal(summarizeOutputTail(tail), "Looking at the repo.\n[bash]\nFound it.");
+  });
+
+  it("skips the partial leading record a front-cut tail starts with", () => {
+    const tail = `age":{"role":"assistant"}}\n${assistant("Second line survives.")}`;
+    assert.equal(summarizeOutputTail(tail), "Second line survives.");
+  });
+
+  it("returns empty for a tail with nothing readable yet", () => {
+    assert.equal(summarizeOutputTail(""), "");
+    assert.equal(summarizeOutputTail('{"type":"message_start"}'), "");
   });
 });
 
