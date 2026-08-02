@@ -238,10 +238,11 @@ export class WorkflowManager {
       this.notify();
 
       // Background orchestration — never await here.
-      void this.runWorkflow(entry);
+      void this.runWorkflow(entry).catch(() => {});
 
       return this.snapshotOf(entry);
     } catch (error) {
+      this.entries.delete(id);
       if (subagents) await subagents.disposeAll();
       if (artifactsDir) await rm(artifactsDir, { recursive: true, force: true });
       throw error;
@@ -563,10 +564,18 @@ export class WorkflowManager {
     await this.persist(entry);
     entry.resolveSettle();
     this.prune();
-    this.notify();
+    try {
+      this.notify();
+    } catch {
+      // ignore
+    }
 
     if (!this.disposed) {
-      this.onSettled?.({ snapshot: this.snapshotOf(entry), consumed });
+      try {
+        this.onSettled?.({ snapshot: this.snapshotOf(entry), consumed });
+      } catch {
+        // ignore
+      }
     }
   }
 
@@ -606,7 +615,11 @@ export class WorkflowManager {
   }
 
   private notify() {
-    this.onChange?.();
+    try {
+      this.onChange?.();
+    } catch {
+      // UI listeners must not break process bookkeeping.
+    }
   }
 
   private prune() {

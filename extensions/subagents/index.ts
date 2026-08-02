@@ -3,6 +3,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import { ResultDelivery } from "../shared/delivery.ts";
 import { TOOL_LIMITS_NOTE, truncateForModel, truncateOneLine } from "../shared/text.ts";
+import { withUI } from "../shared/ui.ts";
 import { discoverAgents, isSameTrustedProject, type AgentDefinition } from "./agents.ts";
 import type { SubagentSnapshot } from "./domain.ts";
 import {
@@ -93,14 +94,18 @@ export default function (pi: ExtensionAPI) {
   };
 
   const updateWidget = () => {
-    if (!uiCtx?.hasUI || !manager) return;
-    const running = manager.list().filter((s) => s.status === "running").length;
-    if (running === 0) {
-      uiCtx.ui.setWidget(WIDGET_ID, undefined);
-      return;
-    }
-    const label = running === 1 ? "1 subagent running" : `${running} subagents running`;
-    uiCtx.ui.setWidget(WIDGET_ID, [label]);
+    const m = manager;
+    if (!m) return;
+    const ok = withUI(uiCtx, (ctx) => {
+      const running = m.list().filter((s) => s.status === "running").length;
+      if (running === 0) {
+        ctx.ui.setWidget(WIDGET_ID, undefined);
+        return;
+      }
+      const label = running === 1 ? "1 subagent running" : `${running} subagents running`;
+      ctx.ui.setWidget(WIDGET_ID, [label]);
+    });
+    if (!ok) uiCtx = undefined;
   };
 
   const flushDelivery = () => {
@@ -151,7 +156,7 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_shutdown", async () => {
     disposed = true;
     delivery.clear();
-    if (uiCtx?.hasUI) uiCtx.ui.setWidget(WIDGET_ID, undefined);
+    withUI(uiCtx, (ctx) => ctx.ui.setWidget(WIDGET_ID, undefined));
     const m = manager;
     manager = undefined;
     uiCtx = undefined;

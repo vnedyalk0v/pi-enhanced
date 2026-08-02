@@ -17,7 +17,7 @@
   ],
   "scripts": {
     "check": "tsc --noEmit",
-    "test": "node --test extensions/**/*.test.ts",
+    "test": "node --test \"extensions/**/*.test.ts\"",
     "smoke:package": "node scripts/package-smoke.mjs",
     "verify": "npm run check && npm test && npm run smoke:package"
   },

@@ -53,6 +53,26 @@ function createManager(opts: ManagerOptions = {}) {
 }
 
 describe("SubagentManager", () => {
+  it("passes an extension path to the backend starter", async () => {
+    let receivedExtensionPath: string | undefined;
+    const m = createManager({
+      starters: {
+        pi: async ({ extensionPath }) => {
+          receivedExtensionPath = extensionPath;
+          return fakeJob({ exitCode: 0, resultText: "done" });
+        },
+      },
+    });
+
+    await m.spawn({
+      prompt: "search files",
+      cwd: process.cwd(),
+      extensionPath: "/package/extensions/file-search/index.ts",
+    });
+
+    assert.equal(receivedExtensionPath, "/package/extensions/file-search/index.ts");
+  });
+
   it("keeps streamed output without notifying for every chunk", async () => {
     let finish!: () => void;
     const wait = new Promise<{ exitCode: number }>((resolve) => {

@@ -124,7 +124,11 @@ export class TerminalManager {
       clearTimeout(this.outputNotifyTimer);
       this.outputNotifyTimer = undefined;
     }
-    this.onChange?.();
+    try {
+      this.onChange?.();
+    } catch {
+      // UI listeners must not break process bookkeeping.
+    }
     for (const listener of this.listeners) {
       try {
         listener();

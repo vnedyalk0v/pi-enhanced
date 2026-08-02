@@ -104,14 +104,20 @@ export class OutputBuffer {
     }
 
     if (chunkBytes >= this.maxRetainedBytes) {
-      // Keep only the newest tail of this chunk (UTF-8 safe via Buffer slice).
       this.chunks = [];
       this.retainedBytes = 0;
       const buf = Buffer.from(chunk, "utf8");
-      const tail = buf.subarray(buf.length - this.maxRetainedBytes).toString("utf8");
+      // Advance off any continuation byte so the decoded tail starts on a whole
+      // character; decoding an arbitrary byte offset yields U+FFFD and inflates
+      // the retained size past the cap.
+      let start = buf.length - this.maxRetainedBytes;
+      while (start < buf.length && (buf[start]! & 0xc0) === 0x80) {
+        start += 1;
+      }
+      const tail = buf.subarray(start).toString("utf8");
       this.chunks.push(tail);
       this.retainedBytes = Buffer.byteLength(tail, "utf8");
-      this.truncatedBytes = this.totalBytes - this.retainedBytes;
+      this.truncatedBytes = Math.max(0, this.totalBytes - this.retainedBytes);
       return accepted;
     }
 

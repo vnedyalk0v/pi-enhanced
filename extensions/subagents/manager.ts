@@ -76,7 +76,11 @@ export class SubagentManager {
   }
 
   private notify() {
-    this.onChange?.();
+    try {
+      this.onChange?.();
+    } catch {
+      // UI listeners must not break process bookkeeping.
+    }
   }
 
   private pruneAfterInterestRelease() {

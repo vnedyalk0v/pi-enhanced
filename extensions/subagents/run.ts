@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import { contentToText } from "../shared/text.ts";
 
 export const PI_RESULT_RECORD_MAX_BYTES = 4 * 1024 * 1024;
@@ -57,11 +58,24 @@ export function runProcess(options: RunOptions): RunHandle {
     resolveWait(result);
   };
 
+  const stdoutDecoder = new StringDecoder("utf8");
+  const stderrDecoder = new StringDecoder("utf8");
+
   child.stdout?.on("data", (buf: Buffer) => {
-    options.onStdout?.(buf.toString("utf8"));
+    const text = stdoutDecoder.write(buf);
+    if (text) options.onStdout?.(text);
   });
   child.stderr?.on("data", (buf: Buffer) => {
-    options.onStderr?.(buf.toString("utf8"));
+    const text = stderrDecoder.write(buf);
+    if (text) options.onStderr?.(text);
+  });
+  child.stdout?.once("end", () => {
+    const text = stdoutDecoder.end();
+    if (text) options.onStdout?.(text);
+  });
+  child.stderr?.once("end", () => {
+    const text = stderrDecoder.end();
+    if (text) options.onStderr?.(text);
   });
 
   child.once("error", (err) => {
