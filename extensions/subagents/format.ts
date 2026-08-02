@@ -1,11 +1,21 @@
 import { formatElapsed } from "../shared/time.ts";
 import {
+  completionTail,
   formatExit,
   truncateForModel,
   truncateOneLine,
   UNTRUSTED_CONTENT_NOTICE,
 } from "../shared/text.ts";
 import type { SubagentSnapshot } from "./domain.ts";
+
+/** One-line truncation that breaks at a word boundary instead of mid-word. */
+export function truncateAtWord(s: string, max: number) {
+  const one = s.replace(/\s+/g, " ").trim();
+  if (one.length <= max) return one;
+  const cut = one.slice(0, max);
+  const lastSpace = cut.lastIndexOf(" ");
+  return `${lastSpace > max / 2 ? cut.slice(0, lastSpace) : cut}…`;
+}
 
 export function describeSubagent(snap: SubagentSnapshot) {
   const elapsed = formatElapsed(snap.createdAt, snap.settledAt);
@@ -72,6 +82,26 @@ export function buildCancelResult(snaps: SubagentSnapshot[]) {
     .join("\n");
 }
 
+/**
+ * /btw completions go straight to the user, so lead with the answer instead
+ * of retrieval instructions. Deliberate exception to the metadata-only rule
+ * for automatic completions: the user explicitly solicited this answer, and
+ * the host delivers it only while the agent is idle (held during streaming),
+ * so it never starts or steers a model turn; the model reads it, banner
+ * first, on the next turn the user starts.
+ */
+export function buildBtwAnswer(snap: SubagentSnapshot) {
+  const failed = snap.status !== "done";
+  const header = failed
+    ? `Side task ${snap.id} "${snap.title}" ${snap.status === "killed" ? "was cancelled" : "failed"} (${formatExit(snap)}).`
+    : `Side task ${snap.id} "${snap.title}":`;
+  const body = snap.resultText || snap.errorText || snap.outputTail;
+  return [header, UNTRUSTED_CONTENT_NOTICE, completionTail(body || "(no output)")].join("\n");
+}
+
+// Automatic completions stay metadata-only: child output must never enter
+// model context unsolicited (see "keeps automatic completion metadata-only"
+// tests). /btw is the one exception — see buildBtwAnswer.
 export function buildCompletionMessage(snap: SubagentSnapshot) {
   const elapsed = formatElapsed(snap.createdAt, snap.settledAt);
   const exit = formatExit(snap);

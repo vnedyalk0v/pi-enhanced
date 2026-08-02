@@ -170,7 +170,8 @@ describe("ask_user", () => {
       ],
     );
 
-    assert.deepEqual(titles, ["First [first]", "Second [second]"]);
+    // User-facing titles show progress, not the model-facing question ids.
+    assert.deepEqual(titles, ["(1/2) First", "(2/2) Second"]);
     assert.equal(result.content[0]?.type, "text");
     assert.equal(result.content[0]?.text, "User cancelled");
     assert.deepEqual(result.details, {

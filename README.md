@@ -60,8 +60,8 @@ before installation and use it only in trusted working directories.
 | Git and UI | `/git-info`, `github-dark-default` | Footer branch status and an automatically selected GitHub-style theme |
 | Background terminals | `bg_start`, `bg_status`, `bg_list`, `bg_kill`, `/ps` | Long-running non-interactive commands with completion delivery and bounded spill logs |
 | Web research | `fc_search`, `fc_scrape`, `fc_crawl` | Firecrawl search/scrape/crawl with DuckDuckGo fallback for no-key or quota-exhausted search |
-| Subagents | `sa_spawn`, `sa_agents`, `sa_status`, `sa_list`, `sa_wait`, `sa_cancel`, `/btw` | Isolated native pi workers (ad-hoc or named agent definitions) with bounded concurrency |
-| Workflows | `wf_start`, `wf_status`, `wf_list`, `wf_wait`, `wf_cancel`, `/workflow` | Reconnaissance, implementation, review, and synthesis with validated handoffs and artifacts |
+| Subagents | `sa_spawn`, `sa_agents`, `sa_status`, `sa_list`, `sa_wait`, `sa_cancel`, `/sa`, `/btw` | Isolated native pi workers (ad-hoc or named agent definitions) with bounded concurrency |
+| Workflows | `wf_start`, `wf_status`, `wf_list`, `wf_wait`, `wf_cancel`, `/wf`, `/workflow` | Reconnaissance, implementation, review, and synthesis with validated handoffs and artifacts |
 
 The package also provides on-demand skills for background terminals,
 subagents, web research, and workflows.
@@ -136,6 +136,13 @@ manager and expose them on `PATH`.
 Each workflow owns a separate four-child subagent pool. Starting jobs reserve
 capacity immediately.
 
+Automatic completion messages stay metadata-only; the model retrieves child
+output explicitly via `bg_status`, `sa_status`, or `wf_status`. The `/ps`,
+`/sa`, and `/wf` commands open interactive viewers for terminals, subagents,
+and workflows. `/btw` answers are delivered directly to the user, marked as
+untrusted content; delivery waits until the agent is idle so the answer never
+starts or steers a model turn.
+
 Background streams retain a 2 MiB in-memory tail and spill up to 16 MiB per
 stream, capped at 64 MiB per Pi session, to a private OS-temporary directory.
 Partial spill logs are labeled, and all logs are removed at Pi session shutdown.
@@ -164,7 +171,7 @@ confirms before running one interactively.
   platforms.
 - Firecrawl fails: set `FIRECRAWL_API_KEY` for scrape/crawl. Only missing-key or
   quota-exhausted search uses the fallback.
-- Concurrency limit reached: wait for or cancel an existing `bg-*`, `sa-*`, or
+- Concurrency limit reached: wait for or cancel an existing `bt-*`, `sa-*`, or
   `wf-*` job.
 - Missing output: inspect `bg_status` for spill logs, `wf_status` for workflow
   artifacts, or the full-output path returned by truncated `fd`/`rg` results.

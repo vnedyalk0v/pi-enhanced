@@ -55,11 +55,14 @@ discoverable before picking a name.
 Always pass a **self-contained** prompt. Children do not see the parent transcript.
 
 After spawn, keep working. A completion message arrives when the child finishes unless you
-already collected it with `sa_wait` or `sa_cancel`.
+already collected it with `sa_wait` or `sa_cancel`; retrieve the result with `sa_status`.
+
+Tell the user they can open `/sa` to inspect and cancel subagents interactively.
 
 ## Side questions
 
-`/btw <question>` starts an ad-hoc subagent for a short side inquiry without blocking the main chat.
+`/btw <question>` starts an ad-hoc subagent for a short side inquiry without blocking the
+main chat. Its answer is shown directly to the user when the side task settles.
 
 ## Limits
 

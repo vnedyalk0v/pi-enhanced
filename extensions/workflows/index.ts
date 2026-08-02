@@ -1,14 +1,18 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createManagerHost, modelLabel } from "../shared/host.ts";
+import { JobsOverlay } from "../shared/jobs-overlay.ts";
+import { terminalText } from "../shared/terminal-text.ts";
 import type { WorkflowSnapshot } from "./domain.ts";
-import { TOOL_LIMITS_NOTE } from "../shared/text.ts";
+import { TOOL_LIMITS_NOTE, truncateOneLine } from "../shared/text.ts";
+import { formatElapsed } from "../shared/time.ts";
 import {
   buildCancelResult,
   buildCompletionMessage,
   buildListResult,
+  buildPhaseTree,
   buildStartResult,
   buildStatusResult,
   buildWaitResult,
@@ -42,7 +46,8 @@ export default function (pi: ExtensionAPI) {
   const host = createManagerHost<WorkflowSnapshot>(pi, {
     widgetId: WIDGET_ID,
     customType: "workflow-result",
-    runningLabel: (n) => (n === 1 ? "1 workflow running" : `${n} workflows running`),
+    runningLabel: (n) =>
+      n === 1 ? "1 workflow running • /wf to view" : `${n} workflows running • /wf to view`,
     completion: (snap) => ({
       content: buildCompletionMessage(snap),
       details: {
@@ -226,4 +231,106 @@ export default function (pi: ExtensionAPI) {
       }
     },
   });
+
+  pi.registerCommand("wf", {
+    description: "Inspect and cancel workflows",
+    handler: async (_args, ctx) => {
+      if (ctx.mode !== "tui") {
+        if (!ctx.hasUI) return;
+        const m = manager;
+        if (!m) {
+          ctx.ui.notify("No workflows", "info");
+          return;
+        }
+        const text = buildListResult(m.list());
+        ctx.ui.notify(text.slice(0, 300) + (text.length > 300 ? "…" : ""), "info");
+        return;
+      }
+
+      const m = getManager();
+      await ctx.ui.custom((tui, theme, _kb, done) => {
+        const overlay = new JobsOverlay<WorkflowSnapshot>(
+          {
+            title: "Workflows",
+            list: () => m.list(),
+            subscribe: (listener) => m.subscribe(listener),
+            renderRow: (snap, th) => {
+              const elapsed = formatElapsed(snap.createdAt, snap.settledAt);
+              const phase = snap.currentPhase ? ` ${th.fg("muted", snap.currentPhase)}` : "";
+              const fails =
+                snap.failedTaskCount > 0
+                  ? ` ${th.fg("error", `${snap.failedTaskCount} failed`)}`
+                  : "";
+              return `${snap.id} ${workflowStatusColor(th, snap)} "${terminalText(snap.title)}"${phase}${fails} ${th.fg("dim", `(${elapsed})`)}`;
+            },
+            detailHeader: (snap, th) => {
+              const lines = [
+                `${workflowStatusColor(th, snap)}  ${formatElapsed(snap.createdAt, snap.settledAt)}` +
+                  (snap.currentPhase ? `  ${snap.currentPhase}` : ""),
+                th.fg("dim", terminalText(truncateOneLine(snap.goal, 200))),
+                th.fg("dim", terminalText(snap.artifactsDir)),
+              ];
+              if (snap.errorText) {
+                lines.push(th.fg("error", terminalText(truncateOneLine(snap.errorText, 200))));
+              }
+              return lines;
+            },
+            detailBody: (snap) => {
+              const lines = buildPhaseTree(snap);
+              if (snap.finalArtifactPath) lines.push("", `final: ${snap.finalArtifactPath}`);
+              if (snap.finalSummary) lines.push("", snap.finalSummary);
+              return lines.join("\n");
+            },
+            canCancel: (snap) => snap.status === "running",
+            cancel: (id) =>
+              m.cancel([id]).then((snaps) => {
+                host.delivery.consume([id]);
+                host.updateWidget();
+                const snap = snaps[0];
+                if (snap) {
+                  // Record the user action for the model without starting a turn.
+                  pi.sendMessage(
+                    {
+                      customType: "workflow-user-cancel",
+                      content: `User cancelled workflow ${snap.id} "${snap.title}" from /wf.`,
+                      display: false,
+                      details: { id: snap.id, status: snap.status },
+                    },
+                    { deliverAs: "nextTurn", triggerTurn: false },
+                  );
+                }
+              }),
+          },
+          theme,
+          () => {
+            overlay.dispose();
+            done(undefined);
+          },
+          () => tui.requestRender(),
+          () => tui.terminal.rows,
+        );
+        return {
+          render: (width: number) => overlay.render(width),
+          invalidate: () => {},
+          handleInput: (data: string) => overlay.handleInput(data),
+          dispose: () => overlay.dispose(),
+        };
+      });
+    },
+  });
+}
+
+function workflowStatusColor(th: Theme, snap: WorkflowSnapshot) {
+  switch (snap.status) {
+    case "running":
+      return th.fg("success", "running");
+    case "done":
+      return th.fg("muted", "done");
+    case "partial":
+      return th.fg("warning", "partial");
+    case "failed":
+      return th.fg("error", "failed");
+    case "cancelled":
+      return th.fg("warning", "cancelled");
+  }
 }

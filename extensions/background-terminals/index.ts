@@ -208,11 +208,28 @@ export default function (pi: ExtensionAPI) {
             done(undefined);
           },
           () => tui.requestRender(),
+          {
+            getRows: () => tui.terminal.rows,
+            // Record the user action for the model without starting a turn;
+            // otherwise it keeps believing the process is still running.
+            onKilled: (snap) => {
+              pi.sendMessage(
+                {
+                  customType: "background-terminal-user-kill",
+                  content: `User killed background terminal ${snap.id} "${snap.title}" from /ps.`,
+                  display: false,
+                  details: { id: snap.id, status: snap.status },
+                },
+                { deliverAs: "nextTurn", triggerTurn: false },
+              );
+            },
+          },
         );
         return {
           render: (width: number) => overlay.render(width),
           invalidate: () => {},
           handleInput: (data: string) => overlay.handleInput(data),
+          dispose: () => overlay.dispose(),
         };
       });
     },

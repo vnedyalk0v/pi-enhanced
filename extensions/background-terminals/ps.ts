@@ -1,12 +1,9 @@
-import { stripVTControlCharacters } from "node:util";
 import { formatSize, type Theme } from "@earendil-works/pi-coding-agent";
 import { matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
+import { stripTerminalControlStrings, terminalText } from "../shared/terminal-text.ts";
 import { formatExit } from "../shared/text.ts";
 import { formatElapsed } from "../shared/time.ts";
 import type { TerminalManager, TerminalSnapshot } from "./manager.ts";
-
-const VT_CONTROL_STRING_PATTERN =
-  /(?:(?:\x1b\]|\u009d)[\s\S]*?(?:\x07|\x1b\\|\u009c)|(?:\x1b(?:P|X|\^|_)|[\u0090\u0098\u009e\u009f])[\s\S]*?(?:\x1b\\|\u009c))/g;
 
 type Mode = { kind: "list" } | { kind: "detail"; id: string; scroll: number; stream: "stdout" | "stderr" };
 
@@ -24,17 +21,27 @@ export class PsOverlay {
   private theme: Theme;
   private onClose: () => void;
   private requestRender: () => void;
+  private getRows?: () => number;
+  private onKilled?: (snap: TerminalSnapshot) => void;
 
   constructor(
     manager: TerminalManager,
     theme: Theme,
     onClose: () => void,
     requestRender: () => void,
+    options?: {
+      /** Current terminal height in rows; used to size the detail body. */
+      getRows?: () => number;
+      /** Called after the user kills a running terminal from the overlay. */
+      onKilled?: (snap: TerminalSnapshot) => void;
+    },
   ) {
     this.manager = manager;
     this.theme = theme;
     this.onClose = onClose;
     this.requestRender = requestRender;
+    this.getRows = options?.getRows;
+    this.onKilled = options?.onKilled;
     this.refresh();
     this.unsub = manager.subscribe(() => {
       this.refresh();
@@ -65,6 +72,23 @@ export class PsOverlay {
   private invalidate() {
     this.cachedWidth = undefined;
     this.cachedLines = undefined;
+  }
+
+  private killTerminal(id: string) {
+    const snap = this.manager.get(id);
+    if (!snap || snap.status !== "running") return;
+    void this.manager
+      .kill([id])
+      .then(() => {
+        const settled = this.manager.get(id);
+        if (settled) this.onKilled?.(settled);
+        this.refresh();
+        this.invalidate();
+        this.requestRender();
+      })
+      .catch(() => {
+        // Manager disposed mid-shutdown; the overlay is going away anyway.
+      });
   }
 
   handleInput(data: string) {
@@ -110,17 +134,7 @@ export class PsOverlay {
     }
     if (data === "x" || data === "X") {
       const snap = this.snapshots[this.selected];
-      if (!snap || snap.status !== "running") return;
-      void this.manager
-        .kill([snap.id])
-        .then(() => {
-          this.refresh();
-          this.invalidate();
-          this.requestRender();
-        })
-        .catch(() => {
-          // Manager disposed mid-shutdown; the overlay is going away anyway.
-        });
+      if (snap) this.killTerminal(snap.id);
     }
   }
 
@@ -149,19 +163,7 @@ export class PsOverlay {
       return;
     }
     if (data === "x" || data === "X") {
-      const id = this.mode.id;
-      const snap = this.manager.get(id);
-      if (!snap || snap.status !== "running") return;
-      void this.manager
-        .kill([id])
-        .then(() => {
-          this.refresh();
-          this.invalidate();
-          this.requestRender();
-        })
-        .catch(() => {
-          // Manager disposed mid-shutdown; the overlay is going away anyway.
-        });
+      this.killTerminal(this.mode.id);
     }
   }
 
@@ -200,8 +202,9 @@ export class PsOverlay {
         const marker = i === this.selected ? th.fg("accent", "›") : " ";
         const status = statusColor(th, snap);
         const elapsed = formatElapsed(snap.createdAt, snap.settledAt);
-        const exit = formatExit(snap);
-        const body = `${snap.id} ${status} "${terminalText(snap.title)}" ${th.fg("dim", `(${exit}, ${elapsed})`)}`;
+        // Settled rows show the exit reason; running rows would repeat "running".
+        const detail = snap.status === "running" ? elapsed : `${formatExit(snap)}, ${elapsed}`;
+        const body = `${snap.id} ${status} "${terminalText(snap.title)}" ${th.fg("dim", `(${detail})`)}`;
         lines.push(truncateToWidth(`  ${marker} ${body}`, width));
       });
     }
@@ -239,7 +242,10 @@ export class PsOverlay {
     );
     lines.push(
       truncateToWidth(
-        `  ${statusColor(th, snap)}  ${formatExit(snap)}  ${formatElapsed(snap.createdAt, snap.settledAt)}` +
+        `  ${statusColor(th, snap)}` +
+          // Settled terminals show the exit reason; running would repeat "running".
+          (snap.status === "running" ? "" : `  ${formatExit(snap)}`) +
+          `  ${formatElapsed(snap.createdAt, snap.settledAt)}` +
           (snap.pid !== undefined ? `  pid ${snap.pid}` : ""),
         width,
       ),
@@ -268,8 +274,10 @@ export class PsOverlay {
 
     const content = stripTerminalControlStrings(stream.text || "(empty)");
     const contentLines = content.split("\n");
-    const headerLines = 10;
-    const maxBody = Math.max(5, 30 - headerLines);
+    // Header lines already emitted plus the footer hint block below.
+    const headerLines = lines.length + 3;
+    const rows = this.getRows?.() ?? 30;
+    const maxBody = Math.max(5, rows - headerLines);
     const maxScroll = Math.max(0, contentLines.length - maxBody);
     const scroll = Math.min(this.mode.scroll, maxScroll);
     if (scroll !== this.mode.scroll) {
@@ -290,16 +298,6 @@ export class PsOverlay {
     lines.push("");
     return lines;
   }
-}
-
-function stripTerminalControlStrings(value: string) {
-  return stripVTControlCharacters(value.replace(VT_CONTROL_STRING_PATTERN, ""));
-}
-
-function terminalText(value: string) {
-  return stripTerminalControlStrings(value)
-    .replace(/[\t\r\n]+/g, " ")
-    .replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
 }
 
 function statusColor(th: Theme, snap: TerminalSnapshot) {

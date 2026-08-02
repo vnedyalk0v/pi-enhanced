@@ -90,7 +90,10 @@ export async function runFcSearch(
       const classified = classifyThrown(error);
       if (classified.fallbackEligible) {
         try {
-          const fallback = await deps.duckDuckGoSearch(params.query, { limit, signal });
+          const fallback = {
+            ...(await deps.duckDuckGoSearch(params.query, { limit, signal })),
+            warning: "Firecrawl quota exhausted; used no-key DuckDuckGo fallback.",
+          };
           const details: SearchDetails = {
             provider: fallback.provider,
             count: fallback.results.length,
@@ -120,7 +123,12 @@ export async function runFcSearch(
 
   // No Firecrawl key: go straight to no-key search.
   try {
-    const fallback = await deps.duckDuckGoSearch(params.query, { limit, signal });
+    const fallback = {
+      ...(await deps.duckDuckGoSearch(params.query, { limit, signal })),
+      warning:
+        "FIRECRAWL_API_KEY is not set; used no-key DuckDuckGo search. " +
+        "Set the key (environment or ~/.pi/agent/.env) for higher-quality Firecrawl results.",
+    };
     const details: SearchDetails = {
       provider: fallback.provider,
       count: fallback.results.length,

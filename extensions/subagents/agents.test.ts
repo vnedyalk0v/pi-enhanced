@@ -4,7 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
-import { discoverAgents, findGitRoot, isSameTrustedProject, sharesGitRoot } from "./agents.ts";
+import {
+  describeHiddenAgent,
+  discoverAgents,
+  findGitRoot,
+  findHiddenAgent,
+  isSameTrustedProject,
+  sharesGitRoot,
+} from "./agents.ts";
 
 // realpathSync matters here: mkdtemp roots can themselves sit behind a symlink
 // (e.g. macOS's /var/folders -> /private/var/folders), and discoverAgents/
@@ -313,6 +320,43 @@ describe("discoverAgents", () => {
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }
+  });
+});
+
+describe("findHiddenAgent", () => {
+  it("explains a project agent hidden because the project is untrusted", () => {
+    writeAgent(
+      join(cwd, CONFIG_DIR_NAME, "agents"),
+      "worker.md",
+      "---\nname: worker\ndescription: general\n---\nBody.",
+    );
+
+    const hidden = findHiddenAgent("worker", cwd, cwd, false, agentDir);
+    assert.ok(hidden);
+    assert.equal(hidden.reason, "project-untrusted");
+    assert.equal(hidden.filePath, join(cwd, CONFIG_DIR_NAME, "agents", "worker.md"));
+    assert.match(describeHiddenAgent("worker", cwd, hidden), /trusted projects/);
+  });
+
+  it("explains a session-project agent unavailable for an outside working_dir", () => {
+    writeAgent(
+      join(cwd, CONFIG_DIR_NAME, "agents"),
+      "worker.md",
+      "---\nname: worker\ndescription: general\n---\nBody.",
+    );
+    const outside = mkTempDir("pi-subagent-outside-");
+    try {
+      const hidden = findHiddenAgent("worker", outside, cwd, true, agentDir);
+      assert.ok(hidden);
+      assert.equal(hidden.reason, "working-dir-outside-project");
+      assert.match(describeHiddenAgent("worker", outside, hidden), /working_dir/);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("returns undefined when the agent genuinely does not exist", () => {
+    assert.equal(findHiddenAgent("ghost", cwd, cwd, true, agentDir), undefined);
   });
 });
 

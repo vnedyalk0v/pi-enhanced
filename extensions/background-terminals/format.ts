@@ -57,6 +57,9 @@ export function buildKillResult(results: Array<{ id: string; snapshot: TerminalS
     .join("\n");
 }
 
+// Automatic completions stay metadata-only: child output must never enter
+// model context unsolicited (see "keeps automatic completion metadata-only"
+// tests). The model retrieves output explicitly via bg_status.
 export function buildTerminalResultMessage(snap: TerminalSnapshot) {
   const elapsed = formatElapsed(snap.createdAt, snap.settledAt);
   const exit = formatExit(snap);

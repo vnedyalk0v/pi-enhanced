@@ -1,17 +1,33 @@
 import { resolve } from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createManagerHost, modelLabel } from "../shared/host.ts";
-import { TOOL_LIMITS_NOTE, truncateForModel, truncateOneLine } from "../shared/text.ts";
-import { discoverAgents, isSameTrustedProject, type AgentDefinition } from "./agents.ts";
+import { JobsOverlay } from "../shared/jobs-overlay.ts";
+import { terminalText } from "../shared/terminal-text.ts";
+import {
+  formatExit,
+  TOOL_LIMITS_NOTE,
+  truncateForModel,
+  truncateOneLine,
+} from "../shared/text.ts";
+import { formatElapsed } from "../shared/time.ts";
+import {
+  describeHiddenAgent,
+  discoverAgents,
+  findHiddenAgent,
+  isSameTrustedProject,
+  type AgentDefinition,
+} from "./agents.ts";
 import type { SubagentSnapshot } from "./domain.ts";
 import {
+  buildBtwAnswer,
   buildCancelResult,
   buildCompletionMessage,
   buildListResult,
   buildSpawnResult,
   buildStatusResult,
   buildWaitResult,
+  truncateAtWord,
 } from "./format.ts";
 import { SubagentManager } from "./manager.ts";
 
@@ -68,22 +84,62 @@ function resolveDiscoveryContext(ctx: ExtensionContext, workingDir: string | und
 
 const PROJECT_AGENT_CONFIRM_TIMEOUT_MS = 30_000;
 
+/**
+ * Fail a nonsense model override before spawning instead of after a full
+ * child round trip. Substring match over id/name/provider-qualified id
+ * approximates pi's own fuzzy resolution; globs and an empty registry are
+ * left for the child to resolve.
+ */
+export function modelPatternMatchesRegistry(
+  pattern: string,
+  models: Array<{ provider: string; id: string; name?: string }>,
+) {
+  if (models.length === 0 || /[*?]/.test(pattern)) return true;
+  // pi resolves <known-provider>/<any-id> to a custom model (targeting ids
+  // newer than the local registry), so a known provider prefix always passes.
+  const slash = pattern.indexOf("/");
+  if (slash > 0) {
+    const provider = pattern.slice(0, slash).toLowerCase();
+    if (models.some((m) => m.provider.toLowerCase() === provider)) return true;
+  }
+  const tries = [pattern.toLowerCase()];
+  const colon = pattern.lastIndexOf(":");
+  if (colon > 0) tries.push(pattern.slice(0, colon).toLowerCase());
+  return models.some((m) => {
+    const candidates = [m.id, m.name ?? "", `${m.provider}/${m.id}`].map((c) => c.toLowerCase());
+    return tries.some((t) => candidates.some((c) => c.includes(t)));
+  });
+}
+
 export default function (pi: ExtensionAPI) {
   let manager: SubagentManager | undefined;
+  /** Ids spawned by /btw: completions go straight to the user, no model turn. */
+  const btwIds = new Set<string>();
 
   const host = createManagerHost<SubagentSnapshot>(pi, {
     widgetId: WIDGET_ID,
     customType: "subagent-result",
-    runningLabel: (n) => (n === 1 ? "1 subagent running" : `${n} subagents running`),
-    completion: (snap) => ({
-      content: buildCompletionMessage(snap),
-      details: { id: snap.id, agent: snap.agent, status: snap.status, exitCode: snap.exitCode },
-    }),
+    runningLabel: (n) =>
+      n === 1 ? "1 subagent running • /sa to view" : `${n} subagents running • /sa to view`,
+    completion: (snap) => {
+      if (btwIds.delete(snap.id)) {
+        return {
+          content: buildBtwAnswer(snap),
+          details: { id: snap.id, agent: snap.agent, status: snap.status, btw: true },
+          triggerTurn: false,
+        };
+      }
+      return {
+        content: buildCompletionMessage(snap),
+        details: { id: snap.id, agent: snap.agent, status: snap.status, exitCode: snap.exitCode },
+      };
+    },
     getRunning: () =>
       manager ? manager.list().filter((s) => s.status === "running").length : undefined,
     dispose: async () => {
       const m = manager;
       manager = undefined;
+      btwIds.clear();
       if (m) await m.disposeAll();
     },
   });
@@ -110,6 +166,17 @@ export default function (pi: ExtensionAPI) {
     parameters: SpawnParams,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       const m = getManager();
+
+      // Validate before any discovery or confirm dialog so a bogus override
+      // fails fast instead of after the user approved a project agent.
+      const modelOverride = params.model?.trim();
+      if (modelOverride && !modelPatternMatchesRegistry(modelOverride, ctx.modelRegistry?.getAll() ?? [])) {
+        throw new Error(
+          `Model "${modelOverride}" does not match any model in the registry. ` +
+            "Use a provider/id pattern from pi --list-models, or omit `model` to inherit the parent's.",
+        );
+      }
+
       // Discover from (and confirm against) the directory the child actually
       // runs in, not the parent session's cwd — see resolveDiscoveryContext.
       const { cwd, projectTrusted } = resolveDiscoveryContext(ctx, params.working_dir);
@@ -121,7 +188,13 @@ export default function (pi: ExtensionAPI) {
         agentDef = agents.find((a) => a.name === agentName);
         if (!agentDef) {
           const available = agents.map((a) => a.name).join(", ") || "none";
-          throw new Error(`Unknown agent: "${agentName}". Available: ${truncateOneLine(available, 300)}.`);
+          const hidden = projectTrusted
+            ? undefined
+            : findHiddenAgent(agentName, cwd, ctx.cwd, ctx.isProjectTrusted());
+          const explanation = hidden ? ` ${describeHiddenAgent(agentName, cwd, hidden)}` : "";
+          throw new Error(
+            `Unknown agent: "${agentName}".${explanation} Available: ${truncateOneLine(available, 300)}.`,
+          );
         }
         if (agentDef.source === "project" && ctx.hasUI) {
           // hasUI covers both tui and rpc modes — rpc dialog methods work over
@@ -144,7 +217,7 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
-      const model = params.model?.trim() || agentDef?.model || modelLabel(ctx);
+      const model = modelOverride || agentDef?.model || modelLabel(ctx);
       const thinking = params.thinking?.trim() || agentDef?.thinking || ctx.thinkingLevel;
 
       const snap = await m.spawn({
@@ -260,6 +333,7 @@ export default function (pi: ExtensionAPI) {
       try {
         const snaps = await m.cancel(params.ids, signal);
         host.delivery.consume(params.ids);
+        for (const id of params.ids) btwIds.delete(id);
         host.updateWidget();
         return {
           content: [{ type: "text" as const, text: buildCancelResult(snaps) }],
@@ -287,19 +361,20 @@ export default function (pi: ExtensionAPI) {
       try {
         const snap = await m.spawn({
           prompt: [
-            "Answer this side question for the parent agent.",
+            "Answer this side question for the user.",
             "Be concise. Do not modify files unless the question explicitly requires it.",
             "",
             prompt,
           ].join("\n"),
-          title: `btw: ${prompt.slice(0, 40)}`,
+          title: `btw: ${truncateAtWord(prompt, 40)}`,
           cwd: ctx.cwd,
           model: modelLabel(ctx),
           thinking: ctx.thinkingLevel ?? "low",
         });
+        btwIds.add(snap.id);
         host.updateWidget();
         if (ctx.hasUI) {
-          ctx.ui.notify(`Side task ${snap.id} started`, "info");
+          ctx.ui.notify(`Side task ${snap.id} started — answer will appear here`, "info");
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -307,4 +382,108 @@ export default function (pi: ExtensionAPI) {
       }
     },
   });
+
+  pi.registerCommand("sa", {
+    description: "Inspect and cancel subagents",
+    handler: async (_args, ctx) => {
+      if (ctx.mode !== "tui") {
+        if (!ctx.hasUI) return;
+        const m = manager;
+        if (!m) {
+          ctx.ui.notify("No subagents", "info");
+          return;
+        }
+        const text = buildListResult(m.list());
+        ctx.ui.notify(text.slice(0, 300) + (text.length > 300 ? "…" : ""), "info");
+        return;
+      }
+
+      const m = getManager();
+      await ctx.ui.custom((tui, theme, _kb, done) => {
+        const overlay = new JobsOverlay<SubagentSnapshot>(
+          {
+            title: "Subagents",
+            list: () => m.list(),
+            subscribe: (listener) => m.subscribe(listener),
+            renderRow: (snap, th) => {
+              const elapsed = formatElapsed(snap.createdAt, snap.settledAt);
+              const detail =
+                snap.status === "running" ? elapsed : `${formatExit(snap)}, ${elapsed}`;
+              const agent = snap.agent ? ` ${th.fg("muted", snap.agent)}` : "";
+              return `${snap.id} ${subagentStatusColor(th, snap)} "${terminalText(snap.title)}"${agent} ${th.fg("dim", `(${detail})`)}`;
+            },
+            detailHeader: (snap, th) => {
+              const lines = [
+                `${subagentStatusColor(th, snap)}` +
+                  (snap.status === "running" ? "" : `  ${formatExit(snap)}`) +
+                  `  ${formatElapsed(snap.createdAt, snap.settledAt)}` +
+                  (snap.pid !== undefined ? `  pid ${snap.pid}` : ""),
+                th.fg(
+                  "dim",
+                  terminalText(
+                    [snap.agent && `agent ${snap.agent}`, snap.model, snap.thinking]
+                      .filter(Boolean)
+                      .join("  "),
+                  ),
+                ),
+                th.fg("dim", terminalText(snap.cwd)),
+                th.fg("dim", terminalText(truncateOneLine(snap.prompt, 200))),
+              ];
+              if (snap.errorText) {
+                lines.push(th.fg("error", terminalText(truncateOneLine(snap.errorText, 200))));
+              }
+              return lines.filter((l) => l.trim() !== "");
+            },
+            detailBody: (snap) => snap.resultText || snap.outputTail || "(no output)",
+            canCancel: (snap) => snap.status === "running",
+            cancel: (id) =>
+              m.cancel([id]).then((snaps) => {
+                host.delivery.consume([id]);
+                btwIds.delete(id);
+                host.updateWidget();
+                const snap = snaps[0];
+                if (snap) {
+                  // Record the user action for the model without starting a turn.
+                  pi.sendMessage(
+                    {
+                      customType: "subagent-user-cancel",
+                      content: `User cancelled subagent ${snap.id} "${snap.title}" from /sa.`,
+                      display: false,
+                      details: { id: snap.id, status: snap.status },
+                    },
+                    { deliverAs: "nextTurn", triggerTurn: false },
+                  );
+                }
+              }),
+          },
+          theme,
+          () => {
+            overlay.dispose();
+            done(undefined);
+          },
+          () => tui.requestRender(),
+          () => tui.terminal.rows,
+        );
+        return {
+          render: (width: number) => overlay.render(width),
+          invalidate: () => {},
+          handleInput: (data: string) => overlay.handleInput(data),
+          dispose: () => overlay.dispose(),
+        };
+      });
+    },
+  });
+}
+
+function subagentStatusColor(th: Theme, snap: SubagentSnapshot) {
+  switch (snap.status) {
+    case "running":
+      return th.fg("success", "running");
+    case "done":
+      return th.fg("muted", "done");
+    case "failed":
+      return th.fg("error", "failed");
+    case "killed":
+      return th.fg("warning", "killed");
+  }
 }

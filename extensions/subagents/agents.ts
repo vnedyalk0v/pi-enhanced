@@ -1,6 +1,8 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync, type Dirent } from "node:fs";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { CONFIG_DIR_NAME, getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
+import { terminalText } from "../shared/terminal-text.ts";
+import { truncateOneLine } from "../shared/text.ts";
 
 export type AgentSource = "user" | "project";
 
@@ -237,4 +239,56 @@ export function discoverAgents(
   for (const agent of projectAgents) byName.set(agent.name, agent);
 
   return { agents: [...byName.values()], projectAgentsDir };
+}
+
+export type HiddenAgentInfo = {
+  filePath: string;
+  reason: "project-untrusted" | "working-dir-outside-project";
+};
+
+/**
+ * Explain why a named agent was not discoverable: it may exist as a project
+ * definition that trust rules excluded. Diagnostic only — reads frontmatter to
+ * match the name, never executes the definition.
+ */
+export function findHiddenAgent(
+  name: string,
+  workerCwd: string,
+  sessionCwd: string,
+  sessionTrusted: boolean,
+  agentDir: string = getAgentDir(),
+): HiddenAgentInfo | undefined {
+  const inSession = discoverAgents(sessionCwd, true, agentDir, sessionCwd).agents.find(
+    (a) => a.name === name && a.source === "project",
+  );
+  if (inSession) {
+    return {
+      filePath: inSession.filePath,
+      reason: sessionTrusted ? "working-dir-outside-project" : "project-untrusted",
+    };
+  }
+  const nearWorker = discoverAgents(workerCwd, true, agentDir, workerCwd).agents.find(
+    (a) => a.name === name && a.source === "project",
+  );
+  if (nearWorker) {
+    return { filePath: nearWorker.filePath, reason: "working-dir-outside-project" };
+  }
+  return undefined;
+}
+
+export function describeHiddenAgent(name: string, workingDir: string, hidden: HiddenAgentInfo) {
+  // The file lives in an untrusted repo, so its name is attacker-chosen;
+  // strip control characters before echoing it into a model-facing error.
+  const filePath = truncateOneLine(terminalText(hidden.filePath), 300);
+  if (hidden.reason === "project-untrusted") {
+    return (
+      `Agent "${name}" is defined at ${filePath}, but project agents only load ` +
+      "for trusted projects. Approve the project to use it."
+    );
+  }
+  return (
+    `Agent "${name}" is defined at ${filePath}, but working_dir "${truncateOneLine(terminalText(workingDir), 300)}" ` +
+    "does not share the trusted project, so project agents are unavailable there. " +
+    "Omit working_dir or use a directory inside the project."
+  );
 }

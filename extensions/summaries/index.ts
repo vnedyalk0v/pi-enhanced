@@ -1,7 +1,7 @@
 import { uuidv7 } from "@earendil-works/pi-ai";
 import { complete } from "@earendil-works/pi-ai/compat";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { DynamicBorder, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
+import { copyToClipboard, DynamicBorder, getMarkdownTheme } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, matchesKey, Text } from "@earendil-works/pi-tui";
 import { extractConversationText } from "../shared/text.ts";
 
@@ -26,23 +26,34 @@ async function showSummary(summary: string, ctx: ExtensionCommandContext) {
     return;
   }
 
-  await ctx.ui.custom((_tui, theme, _kb, done) => {
+  const copied = await ctx.ui.custom<boolean>((_tui, theme, _kb, done) => {
     const container = new Container();
     const border = new DynamicBorder((s: string) => theme.fg("accent", s));
     const mdTheme = getMarkdownTheme();
     container.addChild(border);
     container.addChild(new Text(theme.fg("accent", theme.bold("Session summary")), 1, 0));
     container.addChild(new Markdown(summary, 1, 1, mdTheme));
-    container.addChild(new Text(theme.fg("dim", "Enter or Esc to close"), 1, 0));
+    container.addChild(new Text(theme.fg("dim", "Enter/Esc close  c copy to clipboard"), 1, 0));
     container.addChild(border);
     return {
       render: (width: number) => container.render(width),
       invalidate: () => container.invalidate(),
       handleInput: (data: string) => {
-        if (matchesKey(data, "enter") || matchesKey(data, "escape")) done(undefined);
+        if (matchesKey(data, "enter") || matchesKey(data, "escape")) done(false);
+        if (data === "c" || data === "C") done(true);
       },
     };
   });
+
+  if (copied) {
+    try {
+      await copyToClipboard(summary);
+      ctx.ui.notify(`Summary copied (${summary.length} chars)`, "info");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      ctx.ui.notify(`Copy failed: ${message}`, "error");
+    }
+  }
 }
 
 export function registerSummaryCommand(pi: ExtensionAPI, completeSummary: typeof complete) {

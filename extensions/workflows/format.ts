@@ -6,6 +6,24 @@ import {
 } from "../shared/text.ts";
 import type { WorkflowSnapshot } from "./domain.ts";
 
+/** Plain-text phase/task tree, shared by wf_status and the /wf overlay. */
+export function buildPhaseTree(snap: WorkflowSnapshot) {
+  const lines: string[] = [];
+  for (const phase of snap.phases) {
+    lines.push(`${statusIcon(phase.status)} ${phase.name} [${phase.status}]`);
+    for (const task of phase.tasks) {
+      const sa = task.subagentId ? ` ${task.subagentId}` : "";
+      const extra = task.error
+        ? ` — ${task.error}`
+        : task.summary
+          ? ` — ${truncateOneLine(task.summary, 80)}`
+          : "";
+      lines.push(`  ${statusIcon(task.status)} ${task.key} [${task.status}]${sa}${extra}`);
+    }
+  }
+  return lines;
+}
+
 export function describeWorkflow(snap: WorkflowSnapshot) {
   const elapsed = formatElapsed(snap.createdAt, snap.settledAt);
   const phase = snap.currentPhase ? ` phase=${snap.currentPhase}` : "";
@@ -35,18 +53,7 @@ export function buildStatusResult(snap: WorkflowSnapshot) {
   ];
   if (snap.errorText) lines.push(`error: ${snap.errorText}`);
   lines.push("", "--- phases ---");
-  for (const phase of snap.phases) {
-    lines.push(`${statusIcon(phase.status)} ${phase.name} [${phase.status}]`);
-    for (const task of phase.tasks) {
-      const sa = task.subagentId ? ` ${task.subagentId}` : "";
-      const extra = task.error
-        ? ` — ${task.error}`
-        : task.summary
-          ? ` — ${truncateOneLine(task.summary, 80)}`
-          : "";
-      lines.push(`  ${statusIcon(task.status)} ${task.key} [${task.status}]${sa}${extra}`);
-    }
-  }
+  lines.push(...buildPhaseTree(snap));
   if (snap.finalArtifactPath) {
     lines.push("", `final: ${snap.finalArtifactPath}`);
   }
@@ -84,6 +91,9 @@ export function buildCancelResult(snaps: WorkflowSnapshot[]) {
     .join("\n");
 }
 
+// Automatic completions stay metadata-only: child output must never enter
+// model context unsolicited (see "keeps automatic completion metadata-only"
+// tests). The model retrieves details explicitly via wf_status/wf_wait.
 export function buildCompletionMessage(snap: WorkflowSnapshot) {
   const elapsed = formatElapsed(snap.createdAt, snap.settledAt);
   const verb =
