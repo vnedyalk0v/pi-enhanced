@@ -1,9 +1,8 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { ResultDelivery } from "../shared/delivery.ts";
-import { withUI } from "../shared/ui.ts";
+import { createManagerHost, modelLabel } from "../shared/host.ts";
 import type { WorkflowSnapshot } from "./domain.ts";
 import { TOOL_LIMITS_NOTE } from "../shared/text.ts";
 import {
@@ -39,101 +38,42 @@ const IdsParams = Type.Object({
 
 export default function (pi: ExtensionAPI) {
   let manager: WorkflowManager | undefined;
-  let uiCtx: ExtensionContext | undefined;
-  let disposed = false;
-  const delivery = new ResultDelivery<WorkflowSnapshot>();
 
-  let parentModelLabel: string | undefined;
-  let parentThinking: string | undefined;
+  const host = createManagerHost<WorkflowSnapshot>(pi, {
+    widgetId: WIDGET_ID,
+    customType: "workflow-result",
+    runningLabel: (n) => (n === 1 ? "1 workflow running" : `${n} workflows running`),
+    completion: (snap) => ({
+      content: buildCompletionMessage(snap),
+      details: {
+        id: snap.id,
+        status: snap.status,
+        artifactsDir: snap.artifactsDir,
+        finalArtifactPath: snap.finalArtifactPath,
+        failedTaskCount: snap.failedTaskCount,
+      },
+    }),
+    getRunning: () =>
+      manager ? manager.list().filter((s) => s.status === "running").length : undefined,
+    dispose: async () => {
+      const m = manager;
+      manager = undefined;
+      if (m) await m.disposeAll();
+    },
+  });
 
   const getManager = () => {
-    if (disposed) throw new Error("Workflow manager is shutting down.");
+    if (host.disposed) throw new Error("Workflow manager is shutting down.");
     if (manager) return manager;
     const reconTools = selectReconTools(pi.getAllTools().map((tool) => tool.name));
     manager = new WorkflowManager({
       reconTools,
       reconExtensionPath: reconTools.includes("fd") ? FILE_SEARCH_EXTENSION : undefined,
-      onSettled: ({ snapshot, consumed }) => {
-        if (disposed || consumed) return;
-        delivery.enqueue(snapshot.id, snapshot);
-        flushDelivery();
-      },
-      onChange: () => updateWidget(),
+      onSettled: host.onSettled,
+      onChange: host.updateWidget,
     });
     return manager;
   };
-
-  const updateWidget = () => {
-    const m = manager;
-    if (!m) return;
-    const ok = withUI(uiCtx, (ctx) => {
-      const running = m.list().filter((s) => s.status === "running").length;
-      if (running === 0) {
-        ctx.ui.setWidget(WIDGET_ID, undefined);
-        return;
-      }
-      const label =
-        running === 1 ? "1 workflow running" : `${running} workflows running`;
-      ctx.ui.setWidget(WIDGET_ID, [label]);
-    });
-    if (!ok) uiCtx = undefined;
-  };
-
-  const flushDelivery = () => {
-    if (disposed) {
-      delivery.clear();
-      return;
-    }
-    for (const { value } of delivery.drainAll()) {
-      pi.sendMessage(
-        {
-          customType: "workflow-result",
-          content: buildCompletionMessage(value),
-          display: true,
-          details: {
-            id: value.id,
-            status: value.status,
-            artifactsDir: value.artifactsDir,
-            finalArtifactPath: value.finalArtifactPath,
-            failedTaskCount: value.failedTaskCount,
-          },
-        },
-        { deliverAs: "followUp", triggerTurn: true },
-      );
-    }
-  };
-
-  const captureParentDefaults = (ctx: ExtensionContext) => {
-    if (ctx.model) {
-      parentModelLabel = `${ctx.model.provider}/${ctx.model.id}`;
-    }
-    if (ctx.thinkingLevel) parentThinking = ctx.thinkingLevel;
-  };
-
-  pi.on("session_start", async (_event, ctx) => {
-    disposed = false;
-    uiCtx = ctx;
-    captureParentDefaults(ctx);
-  });
-
-  pi.on("model_select", async (_event, ctx) => {
-    captureParentDefaults(ctx);
-  });
-
-  pi.on("thinking_level_select", async (event, ctx) => {
-    parentThinking = event.level;
-    captureParentDefaults(ctx);
-  });
-
-  pi.on("session_shutdown", async () => {
-    disposed = true;
-    delivery.clear();
-    withUI(uiCtx, (ctx) => ctx.ui.setWidget(WIDGET_ID, undefined));
-    const m = manager;
-    manager = undefined;
-    uiCtx = undefined;
-    if (m) await m.disposeAll();
-  });
 
   pi.registerTool({
     name: "wf_start",
@@ -147,18 +87,17 @@ export default function (pi: ExtensionAPI) {
     ],
     parameters: StartParams,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      captureParentDefaults(ctx);
       const m = getManager();
       const cwd = resolve(ctx.cwd, params.working_dir ?? ".");
       const snap = await m.start({
         goal: params.goal,
         title: params.title,
         cwd,
-        model: parentModelLabel,
-        thinking: parentThinking,
+        model: modelLabel(ctx),
+        thinking: ctx.thinkingLevel,
         signal,
       });
-      updateWidget();
+      host.updateWidget();
       return {
         content: [{ type: "text" as const, text: buildStartResult(snap) }],
         details: {
@@ -180,7 +119,7 @@ export default function (pi: ExtensionAPI) {
       const m = getManager();
       const snap = m.get(params.id);
       if (!snap) throw new Error(`Unknown workflow id: ${params.id}`);
-      if (snap.status !== "running") delivery.consume([snap.id]);
+      if (snap.status !== "running") host.delivery.consume([snap.id]);
       return {
         content: [{ type: "text" as const, text: buildStatusResult(snap) }],
         details: {
@@ -219,8 +158,8 @@ export default function (pi: ExtensionAPI) {
       if (params.ids.length === 0) throw new Error("ids must not be empty");
       const m = getManager();
       const snaps = await m.wait(params.ids, signal);
-      delivery.consume(params.ids);
-      updateWidget();
+      host.delivery.consume(params.ids);
+      host.updateWidget();
       return {
         content: [{ type: "text" as const, text: buildWaitResult(snaps) }],
         details: {
@@ -246,8 +185,8 @@ export default function (pi: ExtensionAPI) {
       const m = getManager();
       try {
         const snaps = await m.cancel(params.ids, signal);
-        delivery.consume(params.ids);
-        updateWidget();
+        host.delivery.consume(params.ids);
+        host.updateWidget();
         return {
           content: [{ type: "text" as const, text: buildCancelResult(snaps) }],
           details: {
@@ -255,11 +194,7 @@ export default function (pi: ExtensionAPI) {
           },
         };
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (message.includes("Cancel wait aborted")) {
-          delivery.consume(params.ids);
-          updateWidget();
-        }
+        host.consumeIfWaitAborted(error, params.ids);
         throw error;
       }
     },
@@ -273,16 +208,15 @@ export default function (pi: ExtensionAPI) {
         if (ctx.hasUI) ctx.ui.notify("Usage: /workflow <goal>", "warning");
         return;
       }
-      captureParentDefaults(ctx);
       const m = getManager();
       try {
         const snap = await m.start({
           goal,
           cwd: ctx.cwd,
-          model: parentModelLabel,
-          thinking: parentThinking,
+          model: modelLabel(ctx),
+          thinking: ctx.thinkingLevel,
         });
-        updateWidget();
+        host.updateWidget();
         if (ctx.hasUI) {
           ctx.ui.notify(`Workflow ${snap.id} started — artifacts: ${snap.artifactsDir}`, "info");
         }

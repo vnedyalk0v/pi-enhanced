@@ -47,6 +47,8 @@ discoverable before picking a name.
 - **Model/thinking**: explicit `sa_spawn` params win, then the agent definition's
   `model`/`thinking`, then the parent's current model/thinking level.
 - **Tools**: the agent definition's `tools` list if set; otherwise pi's full default set.
+- **Runtime**: workers are force-killed after 30 minutes; split longer work into
+  smaller self-contained tasks.
 
 ## Prompting children
 

@@ -252,6 +252,26 @@ describe("SubagentManager", () => {
     assert.equal(await settled, true);
   });
 
+  it("wait fails cleanly when the manager is disposed mid-wait", async () => {
+    let finish!: () => void;
+    const gate = new Promise<{ exitCode: number }>((resolve) => {
+      finish = () => resolve({ exitCode: 0 });
+    });
+    const m = createManager({
+      starters: {
+        pi: async () => ({
+          handle: { pid: 12345, kill: () => finish(), wait: gate },
+          collect: async () => ({ ...(await gate), resultText: "ok", output: "" }),
+        }),
+      },
+    });
+
+    const snap = await m.spawn({ prompt: "work", cwd: process.cwd() });
+    const waiting = m.wait([snap.id]);
+    await m.disposeAll();
+    await assert.rejects(waiting, /disposed during wait/);
+  });
+
   it("enforces concurrency limit", async () => {
     const m = createManager({
       maxRunning: 1,

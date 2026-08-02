@@ -27,6 +27,15 @@ describe("classifyHttpError", () => {
     assert.equal(c.fallbackEligible, false);
   });
 
+  it("keeps a 429 with quota wording as rate_limit (no fallback)", () => {
+    const c = classifyHttpError(
+      429,
+      JSON.stringify({ error: "Rate limit exceeded. Please upgrade your plan." }),
+    );
+    assert.equal(c.kind, "rate_limit");
+    assert.equal(c.fallbackEligible, false);
+  });
+
   it("detects 400 as bad_request", () => {
     const c = classifyHttpError(400, JSON.stringify({ error: "Invalid query" }));
     assert.equal(c.kind, "bad_request");

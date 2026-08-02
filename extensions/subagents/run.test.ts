@@ -138,6 +138,35 @@ it("flushes trailing bytes when the stream ends", async () => {
   assert.deepEqual(await collectNodeStdout([Buffer.from([0xc3])]), ["�"]);
 });
 
+it("pipes stdinData to the child and closes stdin", async () => {
+  let stdout = "";
+  const handle = runProcess({
+    command: process.execPath,
+    args: ["-e", 'process.stdout.write(require("node:fs").readFileSync(0, "utf8"));'],
+    cwd: process.cwd(),
+    stdinData: "Task: hello stdin",
+    onStdout: (chunk) => {
+      stdout += chunk;
+    },
+  });
+
+  const result = await Promise.race([handle.wait, timeout("child did not exit")]);
+  assert.equal(result.exitCode, 0);
+  assert.equal(stdout, "Task: hello stdin");
+});
+
+it("survives a child that exits without reading stdin", async () => {
+  const handle = runProcess({
+    command: process.execPath,
+    args: ["-e", "process.exit(0);"],
+    cwd: process.cwd(),
+    stdinData: "x".repeat(1024 * 1024),
+  });
+
+  const result = await Promise.race([handle.wait, timeout("child did not exit")]);
+  assert.equal(result.exitCode, 0);
+});
+
 describe("appendBounded", () => {
   it("keeps a tail when over max", () => {
     const out = appendBounded("abcdef", "ghij", 8);

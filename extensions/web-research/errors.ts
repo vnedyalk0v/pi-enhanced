@@ -30,55 +30,27 @@ const BAD_RE = /bad request|invalid|validation|malformed/i;
 export function classifyHttpError(status: number, bodyText: string): ClassifiedError {
   const message = extractErrorMessage(bodyText) || `HTTP ${status}`;
 
+  // Rate limit wins over quota keywords: real 429 bodies often say "upgrade
+  // your plan", and the documented contract is that rate limits never fall back.
+  if (status === 429 || RATE_RE.test(bodyText)) {
+    return { kind: "rate_limit", status, message, fallbackEligible: false };
+  }
   if (status === 402 || QUOTA_RE.test(bodyText) || QUOTA_RE.test(message)) {
-    return {
-      kind: "quota",
-      status,
-      message: message || "Firecrawl quota exhausted",
-      fallbackEligible: true,
-    };
+    return { kind: "quota", status, message, fallbackEligible: true };
   }
   if (status === 401) {
-    return {
-      kind: "auth",
-      status,
-      message: message || "Authentication failed",
-      fallbackEligible: false,
-    };
+    return { kind: "auth", status, message, fallbackEligible: false };
   }
   // 403 is ambiguous across gateways (auth vs. other denial) — only claim "auth"
   // when the body confirms it; otherwise fall through to the checks below.
   if (status === 403 && (AUTH_RE.test(bodyText) || AUTH_RE.test(message))) {
-    return {
-      kind: "auth",
-      status,
-      message: message || "Authentication failed",
-      fallbackEligible: false,
-    };
-  }
-  if (status === 429 || RATE_RE.test(bodyText)) {
-    return {
-      kind: "rate_limit",
-      status,
-      message: message || "Rate limit exceeded",
-      fallbackEligible: false,
-    };
+    return { kind: "auth", status, message, fallbackEligible: false };
   }
   if (status === 400 || status === 422 || BAD_RE.test(message)) {
-    return {
-      kind: "bad_request",
-      status,
-      message: message || "Invalid request",
-      fallbackEligible: false,
-    };
+    return { kind: "bad_request", status, message, fallbackEligible: false };
   }
   if (status >= 500 || status === 408) {
-    return {
-      kind: "transient",
-      status,
-      message: message || "Transient provider error",
-      fallbackEligible: false,
-    };
+    return { kind: "transient", status, message, fallbackEligible: false };
   }
   return {
     kind: "unknown",
@@ -91,14 +63,14 @@ export function classifyHttpError(status: number, bodyText: string): ClassifiedE
 export function classifyThrown(error: unknown): ClassifiedError {
   if (isClassifiedError(error)) return error;
   const message = error instanceof Error ? error.message : String(error);
+  if (RATE_RE.test(message)) {
+    return { kind: "rate_limit", message, fallbackEligible: false };
+  }
   if (QUOTA_RE.test(message)) {
     return { kind: "quota", message, fallbackEligible: true };
   }
   if (AUTH_RE.test(message)) {
     return { kind: "auth", message, fallbackEligible: false };
-  }
-  if (RATE_RE.test(message)) {
-    return { kind: "rate_limit", message, fallbackEligible: false };
   }
   return { kind: "unknown", message, fallbackEligible: false };
 }

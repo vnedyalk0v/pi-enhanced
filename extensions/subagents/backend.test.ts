@@ -92,16 +92,18 @@ it(
       `#!/usr/bin/env node
 const fs = require("node:fs");
 const args = process.argv.slice(2);
+const stdin = fs.readFileSync(0, "utf8");
 const promptIndex = args.indexOf("--append-system-prompt");
 const promptFile = args[promptIndex + 1];
 fs.writeFileSync(process.env.PI_ENHANCED_BACKEND_CAPTURE, JSON.stringify({
   args,
   cwd: process.cwd(),
+  stdin,
   promptFile,
   promptFileExists: fs.existsSync(promptFile),
   systemPrompt: fs.readFileSync(promptFile, "utf8"),
 }));
-const mode = args.at(-1)?.replace(/^Task: /, "");
+const mode = stdin.replace(/^Task: /, "");
 if (mode === "oversized complete") {
   process.stdout.end(JSON.stringify({
     type: "message_end",
@@ -163,7 +165,8 @@ if (mode === "oversized complete") {
         "--tools",
         "read,grep",
       ]);
-      assert.equal(capture.args.at(-1), "Task: complete this task");
+      assert.equal(capture.stdin, "Task: complete this task");
+      assert.ok(!capture.args.some((arg) => arg.startsWith("Task:")));
       assert.match(capture.systemPrompt, /You are a subagent worker in an isolated Pi session/);
       assert.equal(capture.systemPrompt.match(/SPECIALIZED BACKEND PROMPT/g)?.length, 1);
 
@@ -177,7 +180,8 @@ if (mode === "oversized complete") {
         await rm(capturePath, { force: true });
         const literal = await startPiBackend({ prompt, cwd });
         const literalCapture = await waitForCapture(capturePath);
-        assert.equal(literalCapture.args.at(-1), `Task: ${prompt}`);
+        assert.equal(literalCapture.stdin, `Task: ${prompt}`);
+        assert.ok(!literalCapture.args.some((arg) => arg.includes(prompt.split("\n")[0]!)));
         assert.equal((await literal.collect()).exitCode, 0);
       }
 
@@ -206,6 +210,7 @@ async function waitForCapture(path: string) {
       return JSON.parse(await readFile(path, "utf8")) as {
         args: string[];
         cwd: string;
+        stdin: string;
         promptFile: string;
         promptFileExists: boolean;
         systemPrompt: string;

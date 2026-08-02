@@ -26,6 +26,22 @@ describe("parseDuckDuckGoHtml", () => {
     assert.match(hits[0]?.description ?? "", /short description/);
     assert.equal(hits[1]?.url, "https://other.test/docs");
   });
+
+  it("decodes entities in one pass without double-decoding", () => {
+    const html =
+      '<a class="result__a" href="https://example.com/">' +
+      "Tom &amp; Jerry &amp;lt;div&amp;gt; &#128512; &#x27;quoted&#x27;</a>";
+    const hits = parseDuckDuckGoHtml(html, 5);
+    // "&amp;lt;" is literal "&lt;" text, not a tag to strip; astral numeric
+    // refs must decode as full code points, not lone surrogates.
+    assert.equal(hits[0]?.title, "Tom & Jerry &lt;div&gt; \u{1F600} 'quoted'");
+  });
+
+  it("leaves out-of-range numeric references untouched", () => {
+    const html = '<a class="result__a" href="https://example.com/">big &#1114112; ref</a>';
+    const hits = parseDuckDuckGoHtml(html, 5);
+    assert.equal(hits[0]?.title, "big &#1114112; ref");
+  });
 });
 
 describe("duckDuckGoSearch", () => {

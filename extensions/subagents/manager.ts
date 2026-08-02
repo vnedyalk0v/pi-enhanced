@@ -310,7 +310,11 @@ export class SubagentManager {
     this.notify();
 
     if (!this.disposed) {
-      this.onSettled?.({ snapshot: this.snapshotOf(entry), consumed });
+      try {
+        this.onSettled?.({ snapshot: this.snapshotOf(entry), consumed });
+      } catch {
+        // Completion listeners must not break settle bookkeeping.
+      }
     }
   }
 
@@ -326,6 +330,8 @@ export class SubagentManager {
         Promise.all(waits),
         abortPromise(signal, "Wait aborted; subagents continue in the background."),
       ]);
+      // disposeAll may clear entries between the settle and this continuation.
+      if (this.disposed) throw new Error("Subagent manager was disposed during wait.");
       return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
     } finally {
       for (const id of ids) this.waitInterest.release(id);
@@ -358,6 +364,8 @@ export class SubagentManager {
           abortPromise(signal, "Cancel wait aborted; termination continues in the background."),
         ]);
       }
+      // disposeAll may clear entries between the settle and this continuation.
+      if (this.disposed) throw new Error("Subagent manager was disposed during cancel.");
       return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
     } finally {
       for (const id of ids) {

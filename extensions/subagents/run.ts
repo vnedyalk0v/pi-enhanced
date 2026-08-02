@@ -27,6 +27,8 @@ export type RunOptions = {
   cwd: string;
   env?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
+  /** Written to the child's stdin, which is then closed. Omitted = no stdin. */
+  stdinData?: string;
   onStdout?: (chunk: string) => void;
   onStderr?: (chunk: string) => void;
 };
@@ -40,10 +42,16 @@ export function runProcess(options: RunOptions): RunHandle {
   const child: ChildProcess = spawn(options.command, options.args, {
     cwd: options.cwd,
     env: options.env ?? process.env,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: [options.stdinData === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     detached: !isWin,
     windowsHide: true,
   });
+
+  if (options.stdinData !== undefined && child.stdin) {
+    // EPIPE if the child exits before reading; the exit path already reports that.
+    child.stdin.on("error", () => {});
+    child.stdin.end(options.stdinData);
+  }
 
   let settled = false;
   let exitResult: { exitCode: number; signal?: string } | undefined;
