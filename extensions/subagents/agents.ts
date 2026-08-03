@@ -1,4 +1,17 @@
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync, type Dirent } from "node:fs";
+import {
+  closeSync,
+  constants,
+  existsSync,
+  fstatSync,
+  openSync,
+  opendirSync,
+  readFileSync,
+  readdirSync,
+  readSync,
+  realpathSync,
+  statSync,
+  type Dirent,
+} from "node:fs";
 import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { CONFIG_DIR_NAME, getAgentDir, parseFrontmatter } from "@earendil-works/pi-coding-agent";
 import { terminalText } from "../shared/terminal-text.ts";
@@ -134,11 +147,7 @@ function findNearestProjectAgentsDir(cwd: string, boundary: string) {
   }
 }
 
-function loadAgentsFromDir(
-  dir: string,
-  source: AgentSource,
-  maxFileBytes?: number,
-): AgentDefinition[] {
+function loadAgentsFromDir(dir: string, source: AgentSource): AgentDefinition[] {
   if (!isDirectory(dir)) return [];
   let entries: Dirent[];
   try {
@@ -160,12 +169,6 @@ function loadAgentsFromDir(
 
     const filePath = join(dir, entry.name);
     try {
-      if (maxFileBytes !== undefined) {
-        // Diagnostic reads happen before the project is trusted, so never pull
-        // a repo-controlled file of arbitrary size into memory.
-        const { size } = statSync(filePath);
-        if (size > maxFileBytes) continue;
-      }
       const content = readFileSync(filePath, "utf8");
       const { frontmatter, body } = parseFrontmatter<Record<string, unknown>>(content);
 
@@ -238,15 +241,11 @@ export function discoverAgents(
   projectTrusted: boolean,
   agentDir: string = getAgentDir(),
   discoveryBoundary: string = cwd,
-  /** Skip definition files larger than this (diagnostic reads of untrusted repos). */
-  maxFileBytes?: number,
 ): AgentDiscovery {
-  const userAgents = loadAgentsFromDir(join(agentDir, "agents"), "user", maxFileBytes);
+  const userAgents = loadAgentsFromDir(join(agentDir, "agents"), "user");
   const projectAgentsDir = findNearestProjectAgentsDir(cwd, discoveryBoundary);
   const projectAgents =
-    projectTrusted && projectAgentsDir
-      ? loadAgentsFromDir(projectAgentsDir, "project", maxFileBytes)
-      : [];
+    projectTrusted && projectAgentsDir ? loadAgentsFromDir(projectAgentsDir, "project") : [];
 
   const byName = new Map<string, AgentDefinition>();
   for (const agent of userAgents) byName.set(agent.name, agent);
@@ -255,8 +254,118 @@ export function discoverAgents(
   return { agents: [...byName.values()], projectAgentsDir };
 }
 
-/** An agent definition is frontmatter plus a prompt; 256 KiB is already absurd. */
+/** Diagnostic limits apply before a repository has been trusted. */
 const DIAGNOSTIC_MAX_FILE_BYTES = 256 * 1024;
+const DIAGNOSTIC_MAX_FRONTMATTER_BYTES = 32 * 1024;
+const DIAGNOSTIC_MAX_TOTAL_BYTES = 512 * 1024;
+const DIAGNOSTIC_MAX_FILES = 64;
+
+type DiagnosticBudget = { entries: number; bytes: number };
+
+function findFrontmatterEnd(buffer: Buffer) {
+  if (buffer.length < 3 || buffer[0] !== 45 || buffer[1] !== 45 || buffer[2] !== 45) {
+    return -1;
+  }
+  for (let i = 3; i < buffer.length; i++) {
+    const byte = buffer[i];
+    if (byte !== 10 && byte !== 13) continue;
+    const marker = byte === 13 && buffer[i + 1] === 10 ? i + 2 : i + 1;
+    if (buffer[marker] === 45 && buffer[marker + 1] === 45 && buffer[marker + 2] === 45) {
+      return marker + 3;
+    }
+  }
+  return -1;
+}
+
+function readDiagnosticAgentName(fd: number, maxBytes: number) {
+  const chunks: Buffer[] = [];
+  let bytesRead = 0;
+  let frontmatterEnd = -1;
+  while (bytesRead < maxBytes && frontmatterEnd === -1) {
+    const chunk = Buffer.allocUnsafe(Math.min(512, maxBytes - bytesRead));
+    const count = readSync(fd, chunk, 0, chunk.length, bytesRead);
+    if (count === 0) break;
+    chunks.push(chunk.subarray(0, count));
+    bytesRead += count;
+    frontmatterEnd = findFrontmatterEnd(Buffer.concat(chunks, bytesRead));
+  }
+  if (frontmatterEnd === -1) return { bytesRead };
+
+  try {
+    // Parse only through the closing marker; prompt body bytes from the final
+    // read chunk are never converted to a string or retained.
+    const frontmatterBlock = Buffer.concat(chunks, bytesRead)
+      .subarray(0, frontmatterEnd)
+      .toString("utf8");
+    const { frontmatter } = parseFrontmatter<Record<string, unknown>>(frontmatterBlock);
+    const rawName = frontmatter.name;
+    const description = frontmatter.description;
+    if (
+      typeof rawName !== "string" ||
+      !rawName.trim() ||
+      typeof description !== "string" ||
+      !description.trim()
+    ) {
+      return { bytesRead };
+    }
+    return { bytesRead, name: rawName.trim() };
+  } catch {
+    return { bytesRead };
+  }
+}
+
+/** Find one project agent without materializing every repo-controlled prompt. */
+function findDiagnosticProjectAgent(
+  name: string,
+  cwd: string,
+  boundary: string,
+  budget: DiagnosticBudget,
+) {
+  const dir = findNearestProjectAgentsDir(cwd, boundary);
+  if (!dir) return undefined;
+
+  try {
+    const handle = opendirSync(dir);
+    try {
+      while (budget.entries > 0 && budget.bytes > 0) {
+        const entry = handle.readSync();
+        if (!entry) break;
+        // Count every directory entry, including irrelevant files and symlinks.
+        budget.entries -= 1;
+        if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+
+        const filePath = join(dir, entry.name);
+        let fd: number | undefined;
+        try {
+          fd = openSync(filePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+          const stat = fstatSync(fd);
+          if (!stat.isFile() || stat.size > DIAGNOSTIC_MAX_FILE_BYTES) continue;
+          const result = readDiagnosticAgentName(
+            fd,
+            Math.min(DIAGNOSTIC_MAX_FRONTMATTER_BYTES, budget.bytes),
+          );
+          budget.bytes -= result.bytesRead;
+          if (result.name === name) return filePath;
+        } catch {
+          continue;
+        } finally {
+          if (fd !== undefined) {
+            try {
+              closeSync(fd);
+            } catch {
+              // Best-effort diagnostic cleanup.
+            }
+          }
+        }
+      }
+    } finally {
+      handle.closeSync();
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
 
 export type HiddenAgentInfo = {
   filePath: string;
@@ -274,34 +383,29 @@ export function findHiddenAgent(
   workerCwd: string,
   sessionCwd: string,
   sessionTrusted: boolean,
-  agentDir: string = getAgentDir(),
 ): HiddenAgentInfo | undefined {
-  const inSession = discoverAgents(
-    sessionCwd,
-    true,
-    agentDir,
-    sessionCwd,
-    DIAGNOSTIC_MAX_FILE_BYTES,
-  ).agents.find((a) => a.name === name && a.source === "project");
-  if (inSession) {
-    if (!isSameTrustedProject(sessionCwd, workerCwd)) {
-      return { filePath: inSession.filePath, reason: "working-dir-outside-project" };
-    }
-    return sessionTrusted
-      ? undefined
-      : { filePath: inSession.filePath, reason: "project-untrusted" };
-  }
-  const nearWorker = discoverAgents(
-    workerCwd,
-    true,
-    agentDir,
-    workerCwd,
-    DIAGNOSTIC_MAX_FILE_BYTES,
-  ).agents.find((a) => a.name === name && a.source === "project");
+  // Diagnostics inspect project files only, avoiding unrelated user prompts.
+  const budget: DiagnosticBudget = {
+    entries: DIAGNOSTIC_MAX_FILES,
+    bytes: DIAGNOSTIC_MAX_TOTAL_BYTES,
+  };
+  const sameProject = isSameTrustedProject(sessionCwd, workerCwd);
+  const workerBoundary = sameProject ? sessionCwd : workerCwd;
+  const nearWorker = findDiagnosticProjectAgent(name, workerCwd, workerBoundary, budget);
   if (nearWorker) {
-    return { filePath: nearWorker.filePath, reason: "working-dir-outside-project" };
+    if (sameProject) {
+      return sessionTrusted
+        ? undefined
+        : { filePath: nearWorker, reason: "project-untrusted" };
+    }
+    return { filePath: nearWorker, reason: "working-dir-outside-project" };
   }
-  return undefined;
+  if (sameProject) return undefined;
+
+  const inSession = findDiagnosticProjectAgent(name, sessionCwd, sessionCwd, budget);
+  return inSession
+    ? { filePath: inSession, reason: "working-dir-outside-project" }
+    : undefined;
 }
 
 export function describeHiddenAgent(name: string, workingDir: string, hidden: HiddenAgentInfo) {
