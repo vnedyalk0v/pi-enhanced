@@ -63,9 +63,10 @@ export default function (pi: ExtensionAPI) {
         }));
         if (allowOther) choices.push({ display: `${choices.length + 1}. ${OTHER}` });
 
+        // Question ids are for the model's answer bookkeeping, not the user.
         const title =
           params.questions.length > 1
-            ? `${question.prompt} [${question.id}]`
+            ? `(${params.questions.indexOf(question) + 1}/${params.questions.length}) ${question.prompt}`
             : question.prompt;
 
         const selected = await ctx.ui.select(

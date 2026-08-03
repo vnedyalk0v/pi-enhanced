@@ -134,6 +134,41 @@ describe("SubagentManager", () => {
     assert.equal(settled.at(-1)?.consumed, true);
   });
 
+  it("classifies a quiet job before an immediate completion can settle", async () => {
+    let spawnReturned = false;
+    let settledBeforeReturn = false;
+    let settledQuiet: boolean | undefined;
+    const m = createManager({
+      starters: {
+        pi: async () => ({
+          handle: {
+            pid: 12345,
+            kill: () => {},
+            wait: Promise.resolve({ exitCode: 1 }),
+          },
+          collect: async () => ({
+            exitCode: 1,
+            resultText: "",
+            errorText: "launch failed",
+            output: "",
+          }),
+        }),
+      },
+      onSettled: ({ snapshot }) => {
+        settledBeforeReturn = !spawnReturned;
+        settledQuiet = snapshot.quiet;
+      },
+    });
+
+    const snap = await m.spawn({ prompt: "quick side question", cwd: process.cwd(), quiet: true });
+    spawnReturned = true;
+    await Promise.resolve();
+
+    assert.equal(settledBeforeReturn, true);
+    assert.equal(settledQuiet, true);
+    assert.equal(snap.quiet, true);
+  });
+
   it("async completion is not consumed when not waiting", async () => {
     const settled: boolean[] = [];
     const m = createManager({

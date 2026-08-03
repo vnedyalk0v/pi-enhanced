@@ -47,6 +47,7 @@ export function tailText(s: string, n: number) {
   return s.length <= n ? s : s.slice(s.length - n);
 }
 
+
 export function formatExit(snap: {
   status: string;
   signal?: string;

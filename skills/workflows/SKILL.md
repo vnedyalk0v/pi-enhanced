@@ -43,6 +43,6 @@ After `wf_start`, keep working. A completion message arrives when the workflow f
 - Fixed pipeline only (no template param).
 - Completed artifacts are preserved after the session, but OS-temp storage is
   not a durable or cross-machine archive.
-- Interactive dashboard deferred; use `wf_status` and its reported artifact
-  directory.
+- Tell the user they can open `/wf` to watch phases and cancel workflows
+  interactively; `wf_status` reports the same tree plus artifact paths.
 - Session shutdown cancels remaining workflows.

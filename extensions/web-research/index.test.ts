@@ -79,6 +79,28 @@ describe("runFcSearch fallback contract", () => {
     assert.equal((result.details as { noFirecrawlKey?: boolean }).noFirecrawlKey, true);
   });
 
+  it("tells the user how to fix a missing key, not a bogus quota story", async () => {
+    const noKey = await runFcSearch(
+      { query: "q" },
+      undefined,
+      deps({ resolveApiKey: () => undefined }),
+    );
+    assert.match(noKey.content[0]!.text, /FIRECRAWL_API_KEY is not set/);
+    assert.doesNotMatch(noKey.content[0]!.text, /quota/i);
+
+    const quota = await runFcSearch(
+      { query: "q" },
+      undefined,
+      deps({
+        firecrawlSearch: async () => {
+          throwClassified({ kind: "quota", message: "out of credits", fallbackEligible: true });
+        },
+      }),
+    );
+    assert.match(quota.content[0]!.text, /quota exhausted/);
+    assert.doesNotMatch(quota.content[0]!.text, /is not set/);
+  });
+
   for (const kind of ["auth", "rate_limit", "bad_request", "transient"] as const) {
     it(`does NOT fall back on ${kind}`, async () => {
       let fallbackCalls = 0;

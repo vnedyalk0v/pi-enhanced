@@ -601,11 +601,27 @@ export class WorkflowManager {
     };
   }
 
+  private readonly listeners = new Set<() => void>();
+
+  subscribe(listener: () => void) {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
   private notify() {
     try {
       this.onChange?.();
     } catch {
       // UI listeners must not break process bookkeeping.
+    }
+    for (const listener of this.listeners) {
+      try {
+        listener();
+      } catch {
+        // UI listeners must not break process bookkeeping.
+      }
     }
   }
 
