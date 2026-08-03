@@ -9,6 +9,12 @@ describe("classifyHttpError", () => {
     assert.equal(c.fallbackEligible, true);
   });
 
+  it("keeps 402 as quota when the body also says rate limit", () => {
+    const c = classifyHttpError(402, JSON.stringify({ error: "Rate limit; upgrade your plan" }));
+    assert.equal(c.kind, "quota");
+    assert.equal(c.fallbackEligible, true);
+  });
+
   it("detects insufficient credits in body as quota", () => {
     const c = classifyHttpError(403, JSON.stringify({ error: "Insufficient credits" }));
     assert.equal(c.kind, "quota");
@@ -50,6 +56,12 @@ describe("classifyHttpError", () => {
 });
 
 describe("classifyThrown", () => {
+  it("keeps rate-limit errors with quota wording out of fallback", () => {
+    const c = classifyThrown(new Error("Rate limit exceeded; please upgrade your plan"));
+    assert.equal(c.kind, "rate_limit");
+    assert.equal(c.fallbackEligible, false);
+  });
+
   it("matches quota phrasing", () => {
     const c = classifyThrown(new Error("You are out of credits on free plan"));
     assert.equal(c.kind, "quota");

@@ -26,7 +26,7 @@ export function formatSearchResult(result: SearchResult): string {
     return lines.join("\n");
   }
 
-  lines.push(UNTRUSTED_CONTENT_NOTICE);
+  lines.unshift(UNTRUSTED_CONTENT_NOTICE);
   lines.push("");
 
   result.results.forEach((hit, i) => {
@@ -40,7 +40,7 @@ export function formatSearchResult(result: SearchResult): string {
 }
 
 export function formatScrapeResult(result: ScrapeResult): string {
-  const lines = [`provider: ${result.provider}`, UNTRUSTED_CONTENT_NOTICE];
+  const lines = [UNTRUSTED_CONTENT_NOTICE, `provider: ${result.provider}`];
   lines.push(`url: ${result.url}`);
   if (result.title) lines.push(`title: ${result.title}`);
   if (result.warning) lines.push(`warning: ${result.warning}`);
@@ -90,6 +90,7 @@ export function formatCrawlResult(result: CrawlResult): string {
   };
 
   const metadata = [
+    UNTRUSTED_CONTENT_NOTICE,
     `provider: ${result.provider}`,
     `url: ${result.url}`,
     `status: ${result.status}`,
@@ -99,7 +100,6 @@ export function formatCrawlResult(result: CrawlResult): string {
   }
   if (result.creditsUsed !== undefined) metadata.push(`creditsUsed: ${result.creditsUsed}`);
   if (result.warning) metadata.push(`warning: ${result.warning}`);
-  metadata.push(UNTRUSTED_CONTENT_NOTICE);
   metadata.push("");
   for (const line of metadata) {
     if (!append(line)) break;

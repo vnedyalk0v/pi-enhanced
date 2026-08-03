@@ -30,6 +30,7 @@ export function createManagerHost<S extends { id: string }>(
   pi: ExtensionAPI,
   options: ManagerHostOptions<S>,
 ) {
+  let sessionCtx: ExtensionContext | undefined;
   let uiCtx: ExtensionContext | undefined;
   let disposed = false;
   let agentActive = false;
@@ -59,7 +60,7 @@ export function createManagerHost<S extends { id: string }>(
   const agentStreaming = () => {
     if (agentActive) return true;
     try {
-      return uiCtx ? !uiCtx.isIdle() : false;
+      return sessionCtx ? !sessionCtx.isIdle() : false;
     } catch {
       return false;
     }
@@ -96,6 +97,8 @@ export function createManagerHost<S extends { id: string }>(
 
   pi.on("session_start", async (_event, ctx) => {
     disposed = false;
+    agentActive = false;
+    sessionCtx = ctx;
     uiCtx = ctx;
   });
 
@@ -119,6 +122,7 @@ export function createManagerHost<S extends { id: string }>(
     delivery.clear();
     heldWhileStreaming.length = 0;
     withUI(uiCtx, (ctx) => ctx.ui.setWidget(options.widgetId, undefined));
+    sessionCtx = undefined;
     uiCtx = undefined;
     await options.dispose();
   });

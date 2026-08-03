@@ -18,9 +18,12 @@ function makePi() {
   return { pi, handlers, sent };
 }
 
-function makeCtx(widgets: Map<string, unknown>, options?: { isIdle?: () => boolean }) {
+function makeCtx(
+  widgets: Map<string, unknown>,
+  options?: { isIdle?: () => boolean; hasUI?: boolean },
+) {
   return {
-    hasUI: true,
+    hasUI: options?.hasUI ?? true,
     isIdle: options?.isIdle ?? (() => true),
     ui: {
       setWidget: (id: string, value: unknown) => widgets.set(id, value),
@@ -92,6 +95,22 @@ describe("createManagerHost", () => {
     assert.deepEqual(sent[1]!.options, { deliverAs: "followUp", triggerTurn: false });
   });
 
+  it("preserves the run-startup guard when no UI is available", async () => {
+    const { host, handlers, sent } = makeHost({ getRunning: () => 1 });
+    await handlers.get("session_start")!(
+      {},
+      makeCtx(new Map(), { hasUI: false, isIdle: () => false }),
+    );
+    host.updateWidget();
+
+    host.onSettled({ snapshot: { id: "q-1", label: "answer", quiet: true }, consumed: false });
+    assert.equal(sent.length, 0);
+
+    await handlers.get("agent_settled")!({});
+    assert.equal(sent.length, 1);
+    assert.deepEqual(sent[0]!.options, { deliverAs: "followUp", triggerTurn: false });
+  });
+
   it("holds quiet completions in the run-startup window before agent_start fires", async () => {
     // The session's run flag flips before extension agent_start handlers run;
     // ctx.isIdle() reads that flag, so the hold must consult it too.
@@ -102,6 +121,20 @@ describe("createManagerHost", () => {
     assert.equal(sent.length, 0);
 
     await handlers.get("agent_settled")!({});
+    assert.equal(sent.length, 1);
+    assert.deepEqual(sent[0]!.options, { deliverAs: "followUp", triggerTurn: false });
+  });
+
+  it("resets streaming state when a new session starts", async () => {
+    const { host, handlers, sent } = makeHost();
+    const widgets = new Map<string, unknown>();
+    await handlers.get("session_start")!({}, makeCtx(widgets));
+    await handlers.get("agent_start")!({});
+    await handlers.get("session_shutdown")!({});
+
+    await handlers.get("session_start")!({}, makeCtx(widgets));
+    host.onSettled({ snapshot: { id: "q-1", label: "answer", quiet: true }, consumed: false });
+
     assert.equal(sent.length, 1);
     assert.deepEqual(sent[0]!.options, { deliverAs: "followUp", triggerTurn: false });
   });

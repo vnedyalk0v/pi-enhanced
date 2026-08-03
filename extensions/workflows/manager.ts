@@ -24,9 +24,11 @@ const DEFAULT_MAX_TRACKED = 16;
 
 export function selectReconTools(availableTools: Iterable<string>) {
   const available = new Set(availableTools);
-  return available.has("read") && available.has("fd") && available.has("rg")
-    ? ["read", "fd", "rg"]
-    : ["read", "find", "grep", "ls"].filter((tool) => available.has(tool));
+  if (available.has("read") && available.has("fd") && available.has("rg")) {
+    return ["read", "fd", "rg"];
+  }
+  const fallback = ["read", "find", "grep", "ls"].filter((tool) => available.has(tool));
+  return fallback.length > 0 ? fallback : undefined;
 }
 
 type PhaseRuntime = {
@@ -84,6 +86,7 @@ export class WorkflowManager {
   private startingCount = 0;
   private disposed = false;
   private waitInterest = new InterestTracker();
+  private readonly listeners = new Set<() => void>();
   private readonly maxRunning: number;
   private readonly maxTracked: number;
   private readonly artifactsRoot?: string;
@@ -600,8 +603,6 @@ export class WorkflowManager {
       failedTaskCount: entry.failedTaskCount,
     };
   }
-
-  private readonly listeners = new Set<() => void>();
 
   subscribe(listener: () => void) {
     this.listeners.add(listener);

@@ -73,7 +73,7 @@ export default function (pi: ExtensionAPI) {
     const reconTools = selectReconTools(pi.getAllTools().map((tool) => tool.name));
     manager = new WorkflowManager({
       reconTools,
-      reconExtensionPath: reconTools.includes("fd") ? FILE_SEARCH_EXTENSION : undefined,
+      reconExtensionPath: reconTools?.includes("fd") ? FILE_SEARCH_EXTENSION : undefined,
       onSettled: host.onSettled,
       onChange: host.updateWidget,
     });

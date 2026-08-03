@@ -37,10 +37,12 @@ describe("parseDuckDuckGoHtml", () => {
     assert.equal(hits[0]?.title, "Tom & Jerry &lt;div&gt; \u{1F600} 'quoted'");
   });
 
-  it("leaves out-of-range numeric references untouched", () => {
-    const html = '<a class="result__a" href="https://example.com/">big &#1114112; ref</a>';
+  it("leaves surrogate and out-of-range numeric references untouched", () => {
+    const html =
+      '<a class="result__a" href="https://example.com/">' +
+      "surrogates &#55296; &#xDFFF; big &#1114112; ref</a>";
     const hits = parseDuckDuckGoHtml(html, 5);
-    assert.equal(hits[0]?.title, "big &#1114112; ref");
+    assert.equal(hits[0]?.title, "surrogates &#55296; &#xDFFF; big &#1114112; ref");
   });
 });
 

@@ -20,7 +20,11 @@ function buildPrompt(conversationText: string): string {
 export const SUMMARY_PROMPT_MAX_CHARS = 32_000;
 const SUMMARY_CONVERSATION_MAX_CHARS = SUMMARY_PROMPT_MAX_CHARS - buildPrompt("").length;
 
-async function showSummary(summary: string, ctx: ExtensionCommandContext) {
+async function showSummary(
+  summary: string,
+  ctx: ExtensionCommandContext,
+  copySummary: typeof copyToClipboard,
+) {
   if (ctx.mode !== "tui") {
     ctx.ui.notify(summary.slice(0, 200) + (summary.length > 200 ? "…" : ""), "info");
     return;
@@ -47,7 +51,7 @@ async function showSummary(summary: string, ctx: ExtensionCommandContext) {
 
   if (copied) {
     try {
-      await copyToClipboard(summary);
+      await copySummary(summary);
       ctx.ui.notify(`Summary copied (${summary.length} chars)`, "info");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -56,7 +60,11 @@ async function showSummary(summary: string, ctx: ExtensionCommandContext) {
   }
 }
 
-export function registerSummaryCommand(pi: ExtensionAPI, completeSummary: typeof complete) {
+export function registerSummaryCommand(
+  pi: ExtensionAPI,
+  completeSummary: typeof complete,
+  copySummary: typeof copyToClipboard = copyToClipboard,
+) {
   pi.registerCommand("summary", {
     description: "Summarize the current conversation with the active model",
     handler: async (_args, ctx) => {
@@ -117,7 +125,7 @@ export function registerSummaryCommand(pi: ExtensionAPI, completeSummary: typeof
           return;
         }
 
-        await showSummary(summary, ctx);
+        await showSummary(summary, ctx, copySummary);
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         if (ctx.hasUI) ctx.ui.notify(`Summary failed: ${message}`, "error");

@@ -234,6 +234,18 @@ describe("JobsOverlay rendering", () => {
     assert.match(body, /↓ \d+ more/);
   });
 
+  it("sanitizes terminal controls in detail body lines", () => {
+    const h = makeHarness({
+      snapshots: [{ id: "j-1", label: "visible\n\x1b[31mred\x1b[0m", running: false }],
+    });
+    h.overlay.handleInput("\r");
+
+    const rendered = h.overlay.render(60).join("\n");
+    assert.doesNotMatch(rendered, /\x1b\[31m/);
+    assert.match(rendered, /visible/);
+    assert.match(rendered, /red/);
+  });
+
   it("wraps long prose instead of cutting it at the right edge", () => {
     const paragraph = Array.from({ length: 40 }, (_, i) => `word${i}`).join(" ");
     const h = makeHarness({

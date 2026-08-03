@@ -389,7 +389,7 @@ export default function (pi: ExtensionAPI) {
           ctx.ui.notify("No subagents", "info");
           return;
         }
-        const text = buildListResult(m.list());
+        const text = terminalText(buildListResult(m.list()));
         ctx.ui.notify(text.slice(0, 300) + (text.length > 300 ? "…" : ""), "info");
         return;
       }

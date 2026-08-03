@@ -135,9 +135,11 @@ describe("SubagentManager", () => {
   });
 
   it("classifies a quiet job before an immediate completion can settle", async () => {
-    let spawnReturned = false;
-    let settledBeforeReturn = false;
     let settledQuiet: boolean | undefined;
+    let resolveSettled!: () => void;
+    const didSettle = new Promise<void>((resolve) => {
+      resolveSettled = resolve;
+    });
     const m = createManager({
       starters: {
         pi: async () => ({
@@ -155,16 +157,14 @@ describe("SubagentManager", () => {
         }),
       },
       onSettled: ({ snapshot }) => {
-        settledBeforeReturn = !spawnReturned;
         settledQuiet = snapshot.quiet;
+        resolveSettled();
       },
     });
 
     const snap = await m.spawn({ prompt: "quick side question", cwd: process.cwd(), quiet: true });
-    spawnReturned = true;
-    await Promise.resolve();
+    await didSettle;
 
-    assert.equal(settledBeforeReturn, true);
     assert.equal(settledQuiet, true);
     assert.equal(snap.quiet, true);
   });

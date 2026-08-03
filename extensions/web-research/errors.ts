@@ -30,12 +30,17 @@ const BAD_RE = /bad request|invalid|validation|malformed/i;
 export function classifyHttpError(status: number, bodyText: string): ClassifiedError {
   const message = extractErrorMessage(bodyText) || `HTTP ${status}`;
 
-  // Rate limit wins over quota keywords: real 429 bodies often say "upgrade
-  // your plan", and the documented contract is that rate limits never fall back.
-  if (status === 429 || RATE_RE.test(bodyText)) {
+  // Explicit statuses are authoritative over mixed provider wording.
+  if (status === 429) {
     return { kind: "rate_limit", status, message, fallbackEligible: false };
   }
-  if (status === 402 || QUOTA_RE.test(bodyText) || QUOTA_RE.test(message)) {
+  if (status === 402) {
+    return { kind: "quota", status, message, fallbackEligible: true };
+  }
+  if (RATE_RE.test(bodyText)) {
+    return { kind: "rate_limit", status, message, fallbackEligible: false };
+  }
+  if (QUOTA_RE.test(bodyText) || QUOTA_RE.test(message)) {
     return { kind: "quota", status, message, fallbackEligible: true };
   }
   if (status === 401) {

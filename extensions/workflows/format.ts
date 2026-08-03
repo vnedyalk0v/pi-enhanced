@@ -14,7 +14,7 @@ export function buildPhaseTree(snap: WorkflowSnapshot) {
     for (const task of phase.tasks) {
       const sa = task.subagentId ? ` ${task.subagentId}` : "";
       const extra = task.error
-        ? ` — ${task.error}`
+        ? ` — ${truncateOneLine(task.error, 80)}`
         : task.summary
           ? ` — ${truncateOneLine(task.summary, 80)}`
           : "";

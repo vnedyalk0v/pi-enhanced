@@ -456,7 +456,7 @@ describe("WorkflowManager", () => {
       ["read", "fd", "rg"],
     );
     assert.deepEqual(selectReconTools(["read", "grep"]), ["read", "grep"]);
-    assert.deepEqual(selectReconTools(["fd", "rg"]), []);
+    assert.equal(selectReconTools(["fd", "rg"]), undefined);
     const reconTools = selectReconTools(["read", "fd", "rg"]);
     const calls: Array<{ key: string; tools?: string[]; extensionPath?: string }> = [];
     const { m } = await createManager({

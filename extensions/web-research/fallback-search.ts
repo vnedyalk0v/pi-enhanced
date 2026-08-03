@@ -112,7 +112,9 @@ function decodeHtml(s: string) {
           entity[1]!.toLowerCase() === "x"
             ? Number.parseInt(entity.slice(2), 16)
             : Number.parseInt(entity.slice(1), 10);
-        return code <= 0x10ffff ? String.fromCodePoint(code) : whole;
+        return code <= 0x10ffff && !(code >= 0xd800 && code <= 0xdfff)
+          ? String.fromCodePoint(code)
+          : whole;
       }
     }
   });

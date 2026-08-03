@@ -21,7 +21,7 @@ export const SPILL_MAX_BYTES = 16 * 1024 * 1024;
  * notice. Lives next to the notice format below so the two cannot drift.
  */
 export function stripSpillPathClause(text: string) {
-  return text.replace(/ (?:Full|Partial) output[^:\]]*: [^\]]+(?=\])/, "");
+  return text.replace(/ (?:Full|Partial) output[^:\]\n]*: [^\]\n]+(?=\]\s*$)/, "");
 }
 
 export type RunResult = {

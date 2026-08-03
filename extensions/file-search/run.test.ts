@@ -18,7 +18,7 @@ async function spillPaths(name: string) {
 }
 
 describe("stripSpillPathClause", () => {
-  it("strips the path clause from Full and Partial notices", () => {
+  it("strips the path clause only from the final generated notice", () => {
     const base = "[Output truncated: showing 5 of 9 lines (1.0MB of 2.0MB).";
     assert.equal(
       stripSpillPathClause(`${base} Full output: /tmp/a/output.txt]`),
@@ -28,6 +28,12 @@ describe("stripSpillPathClause", () => {
       stripSpillPathClause(`${base} Partial output (first 16.0MB): /tmp/a/output.txt]`),
       `${base}]`,
     );
+    for (const userOutput of ["match: Full output: value]", "match Full output without delimiter"]) {
+      assert.equal(
+        stripSpillPathClause(`${userOutput}\n${base} Full output: /tmp/a/output.txt]`),
+        `${userOutput}\n${base}]`,
+      );
+    }
   });
 });
 
