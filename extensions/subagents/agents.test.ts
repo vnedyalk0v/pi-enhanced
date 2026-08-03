@@ -346,10 +346,12 @@ describe("findHiddenAgent", () => {
     );
     const outside = mkTempDir("pi-subagent-outside-");
     try {
-      const hidden = findHiddenAgent("worker", outside, cwd, true, agentDir);
-      assert.ok(hidden);
-      assert.equal(hidden.reason, "working-dir-outside-project");
-      assert.match(describeHiddenAgent("worker", outside, hidden), /working_dir/);
+      for (const sessionTrusted of [true, false]) {
+        const hidden = findHiddenAgent("worker", outside, cwd, sessionTrusted, agentDir);
+        assert.ok(hidden);
+        assert.equal(hidden.reason, "working-dir-outside-project");
+        assert.match(describeHiddenAgent("worker", outside, hidden), /working_dir/);
+      }
     } finally {
       rmSync(outside, { recursive: true, force: true });
     }

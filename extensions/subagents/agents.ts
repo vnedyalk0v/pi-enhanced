@@ -284,10 +284,12 @@ export function findHiddenAgent(
     DIAGNOSTIC_MAX_FILE_BYTES,
   ).agents.find((a) => a.name === name && a.source === "project");
   if (inSession) {
-    return {
-      filePath: inSession.filePath,
-      reason: sessionTrusted ? "working-dir-outside-project" : "project-untrusted",
-    };
+    if (!isSameTrustedProject(sessionCwd, workerCwd)) {
+      return { filePath: inSession.filePath, reason: "working-dir-outside-project" };
+    }
+    return sessionTrusted
+      ? undefined
+      : { filePath: inSession.filePath, reason: "project-untrusted" };
   }
   const nearWorker = discoverAgents(
     workerCwd,

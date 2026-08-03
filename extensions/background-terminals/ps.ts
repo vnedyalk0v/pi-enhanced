@@ -17,6 +17,7 @@ export class PsOverlay {
   private snapshots: TerminalSnapshot[] = [];
   private unsub?: () => void;
   private cachedWidth?: number;
+  private cachedRows?: number;
   private cachedLines?: string[];
   private disposed = false;
   private manager: TerminalManager;
@@ -24,7 +25,7 @@ export class PsOverlay {
   private onClose: () => void;
   private requestRender: () => void;
   private getRows?: () => number;
-  private onKilled?: (snap: TerminalSnapshot) => void;
+  private onKillRequested?: (snap: TerminalSnapshot) => void;
 
   constructor(
     manager: TerminalManager,
@@ -34,8 +35,8 @@ export class PsOverlay {
     options?: {
       /** Current terminal height in rows; used to size the detail body. */
       getRows?: () => number;
-      /** Called after the user kills a running terminal from the overlay. */
-      onKilled?: (snap: TerminalSnapshot) => void;
+      /** Called synchronously when the user requests a kill, before termination waits. */
+      onKillRequested?: (snap: TerminalSnapshot) => void;
     },
   ) {
     this.manager = manager;
@@ -43,7 +44,7 @@ export class PsOverlay {
     this.onClose = onClose;
     this.requestRender = requestRender;
     this.getRows = options?.getRows;
-    this.onKilled = options?.onKilled;
+    this.onKillRequested = options?.onKillRequested;
     this.refresh();
     this.unsub = manager.subscribe(() => {
       this.refresh();
@@ -77,17 +78,21 @@ export class PsOverlay {
 
   private invalidate() {
     this.cachedWidth = undefined;
+    this.cachedRows = undefined;
     this.cachedLines = undefined;
   }
 
   private killTerminal(id: string) {
     const snap = this.manager.get(id);
     if (!snap || snap.status !== "running") return;
-    void this.manager
-      .kill([id])
+    const termination = this.manager.kill([id]);
+    try {
+      this.onKillRequested?.(snap);
+    } catch {
+      // A stale model-notification callback must not block termination.
+    }
+    void termination
       .then(() => {
-        const settled = this.manager.get(id);
-        if (settled) this.onKilled?.(settled);
         // Termination can settle after the overlay closed.
         if (this.disposed) return;
         this.refresh();
@@ -176,17 +181,19 @@ export class PsOverlay {
   }
 
   render(width: number): string[] {
-    if (this.cachedLines && this.cachedWidth === width) {
+    const rows = this.getRows?.() ?? 30;
+    if (this.cachedLines && this.cachedWidth === width && this.cachedRows === rows) {
       return this.cachedLines;
     }
     const lines =
-      this.mode.kind === "list" ? this.renderList(width) : this.renderDetail(width);
+      this.mode.kind === "list" ? this.renderList(width, rows) : this.renderDetail(width, rows);
     this.cachedWidth = width;
+    this.cachedRows = rows;
     this.cachedLines = lines;
     return lines;
   }
 
-  private renderList(width: number): string[] {
+  private renderList(width: number, rows: number): string[] {
     const th = this.theme;
     const lines: string[] = [];
     lines.push("");
@@ -207,7 +214,6 @@ export class PsOverlay {
       lines.push(truncateToWidth(`  ${th.fg("dim", "No background terminals.")}`, width));
     } else {
       // Up to 32 terminals are tracked; keep the selected row on screen.
-      const rows = this.getRows?.() ?? 30;
       const win = windowAround(this.snapshots.length, this.selected, Math.max(3, rows - 8));
       if (win.before > 0) {
         lines.push(truncateToWidth(`  ${th.fg("dim", `↑ ${win.before} more`)}`, width));
@@ -238,7 +244,7 @@ export class PsOverlay {
     return lines;
   }
 
-  private renderDetail(width: number): string[] {
+  private renderDetail(width: number, rows: number): string[] {
     const th = this.theme;
     if (this.mode.kind !== "detail") return [];
     const snap = this.manager.get(this.mode.id);
@@ -294,7 +300,6 @@ export class PsOverlay {
     const contentLines = content.split("\n");
     // Header lines already emitted plus the footer hint block below.
     const headerLines = lines.length + 3;
-    const rows = this.getRows?.() ?? 30;
     const maxBody = Math.max(5, rows - headerLines);
     const maxScroll = Math.max(0, contentLines.length - maxBody);
     const scroll = Math.min(this.mode.scroll, maxScroll);

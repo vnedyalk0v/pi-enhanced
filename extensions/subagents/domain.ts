@@ -9,6 +9,8 @@ export type SubagentSnapshot = {
   cwd: string;
   model?: string;
   thinking?: string;
+  /** Suppress model-turn completion delivery (used by direct /btw answers). */
+  quiet?: boolean;
   status: SubagentStatus;
   createdAt: number;
   settledAt?: number;
@@ -30,6 +32,8 @@ export type SpawnOptions = {
   cwd: string;
   model?: string;
   thinking?: string;
+  /** Deliver completion directly without triggering or steering a model turn. */
+  quiet?: boolean;
   /** Tool allowlist from the agent definition, if restricted. */
   tools?: string[];
   /** Extension required by an explicitly allowed worker tool. */

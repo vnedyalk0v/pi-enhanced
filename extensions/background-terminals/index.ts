@@ -210,13 +210,13 @@ export default function (pi: ExtensionAPI) {
           () => tui.requestRender(),
           {
             getRows: () => tui.terminal.rows,
-            // Record the user action for the model without starting a turn;
-            // otherwise it keeps believing the process is still running.
-            onKilled: (snap) => {
+            // Queue before waiting for process termination; the user can close
+            // the overlay and start another turn immediately.
+            onKillRequested: (snap) => {
               pi.sendMessage(
                 {
                   customType: "background-terminal-user-kill",
-                  content: `User killed background terminal ${snap.id} "${truncateOneLine(snap.title, 120)}" from /ps.`,
+                  content: `User requested termination of background terminal ${snap.id} "${truncateOneLine(snap.title, 120)}" from /ps.`,
                   display: false,
                   details: { id: snap.id, status: snap.status },
                 },

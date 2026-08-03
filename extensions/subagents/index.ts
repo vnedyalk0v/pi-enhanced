@@ -114,16 +114,13 @@ export function modelPatternMatchesRegistry(
 
 export default function (pi: ExtensionAPI) {
   let manager: SubagentManager | undefined;
-  /** Ids spawned by /btw: completions go straight to the user, no model turn. */
-  const btwIds = new Set<string>();
-
   const host = createManagerHost<SubagentSnapshot>(pi, {
     widgetId: WIDGET_ID,
     customType: "subagent-result",
     runningLabel: (n) =>
       n === 1 ? "1 subagent running • /sa to view" : `${n} subagents running • /sa to view`,
     completion: (snap) => {
-      if (btwIds.delete(snap.id)) {
+      if (snap.quiet) {
         return {
           content: buildBtwAnswer(snap),
           details: { id: snap.id, agent: snap.agent, status: snap.status, btw: true },
@@ -140,7 +137,6 @@ export default function (pi: ExtensionAPI) {
     dispose: async () => {
       const m = manager;
       manager = undefined;
-      btwIds.clear();
       if (m) await m.disposeAll();
     },
   });
@@ -334,7 +330,6 @@ export default function (pi: ExtensionAPI) {
       try {
         const snaps = await m.cancel(params.ids, signal);
         host.delivery.consume(params.ids);
-        for (const id of params.ids) btwIds.delete(id);
         host.updateWidget();
         return {
           content: [{ type: "text" as const, text: buildCancelResult(snaps) }],
@@ -371,8 +366,8 @@ export default function (pi: ExtensionAPI) {
           cwd: ctx.cwd,
           model: modelLabel(ctx),
           thinking: ctx.thinkingLevel ?? "low",
+          quiet: true,
         });
-        btwIds.add(snap.id);
         host.updateWidget();
         if (ctx.hasUI) {
           ctx.ui.notify(`Side task ${snap.id} started — answer will appear here`, "info");
@@ -439,25 +434,24 @@ export default function (pi: ExtensionAPI) {
             detailBody: (snap) =>
               snap.resultText || summarizeOutputTail(snap.outputTail) || "(no output yet)",
             canCancel: (snap) => snap.status === "running",
+            onCancelRequested: (snap) => {
+              // Queue the note before waiting for process termination; the user
+              // can close the overlay and start another turn immediately.
+              pi.sendMessage(
+                {
+                  customType: "subagent-user-cancel",
+                  // Titles default to a repo-controlled agent description.
+                  content: `User requested cancellation of subagent ${snap.id} "${truncateOneLine(snap.title, 120)}" from /sa.`,
+                  display: false,
+                  details: { id: snap.id, status: snap.status },
+                },
+                { deliverAs: "nextTurn", triggerTurn: false },
+              );
+            },
             cancel: (id) =>
-              m.cancel([id]).then((snaps) => {
+              m.cancel([id]).then(() => {
                 host.delivery.consume([id]);
-                btwIds.delete(id);
                 host.updateWidget();
-                const snap = snaps[0];
-                if (snap) {
-                  // Record the user action for the model without starting a turn.
-                  pi.sendMessage(
-                    {
-                      customType: "subagent-user-cancel",
-                      // Titles default to a repo-controlled agent description.
-                      content: `User cancelled subagent ${snap.id} "${truncateOneLine(snap.title, 120)}" from /sa.`,
-                      display: false,
-                      details: { id: snap.id, status: snap.status },
-                    },
-                    { deliverAs: "nextTurn", triggerTurn: false },
-                  );
-                }
               }),
           },
           theme,

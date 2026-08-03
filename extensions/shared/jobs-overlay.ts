@@ -29,6 +29,8 @@ export type JobsOverlayConfig<S extends { id: string }> = {
   /** Scrollable plain-text detail body (result, output, phase tree, ...). */
   detailBody: (snap: S) => string;
   canCancel: (snap: S) => boolean;
+  /** Called synchronously once cancellation is accepted, before termination waits. */
+  onCancelRequested?: (snap: S) => void;
   cancel: (id: string) => Promise<unknown>;
 };
 
@@ -48,6 +50,7 @@ export class JobsOverlay<S extends { id: string }> {
   private snapshots: S[] = [];
   private unsub?: () => void;
   private cachedWidth?: number;
+  private cachedRows?: number;
   private cachedLines?: string[];
   private disposed = false;
   private config: JobsOverlayConfig<S>;
@@ -101,6 +104,7 @@ export class JobsOverlay<S extends { id: string }> {
 
   private invalidate() {
     this.cachedWidth = undefined;
+    this.cachedRows = undefined;
     this.cachedLines = undefined;
   }
 
@@ -128,8 +132,13 @@ export class JobsOverlay<S extends { id: string }> {
   private cancelJob(id: string) {
     const snap = this.snapshots.find((s) => s.id === id);
     if (!snap || !this.config.canCancel(snap)) return;
-    void this.config
-      .cancel(id)
+    const cancellation = this.config.cancel(id);
+    try {
+      this.config.onCancelRequested?.(snap);
+    } catch {
+      // A stale model-notification callback must not block cancellation.
+    }
+    void cancellation
       .then(() => {
         // Cancellation can settle after the overlay closed.
         if (this.disposed) return;
@@ -183,9 +192,14 @@ export class JobsOverlay<S extends { id: string }> {
   }
 
   render(width: number): string[] {
-    if (this.cachedLines && this.cachedWidth === width) return this.cachedLines;
-    const lines = this.mode.kind === "list" ? this.renderList(width) : this.renderDetail(width);
+    const rows = this.getRows?.() ?? FALLBACK_ROWS;
+    if (this.cachedLines && this.cachedWidth === width && this.cachedRows === rows) {
+      return this.cachedLines;
+    }
+    const lines =
+      this.mode.kind === "list" ? this.renderList(width, rows) : this.renderDetail(width, rows);
     this.cachedWidth = width;
+    this.cachedRows = rows;
     this.cachedLines = lines;
     return lines;
   }
@@ -202,7 +216,7 @@ export class JobsOverlay<S extends { id: string }> {
     );
   }
 
-  private renderList(width: number): string[] {
+  private renderList(width: number, rows: number): string[] {
     const th = this.theme;
     const lines: string[] = [""];
     lines.push(this.titleRule(width, this.config.title));
@@ -213,7 +227,6 @@ export class JobsOverlay<S extends { id: string }> {
     } else {
       // Chrome: blank, rule, blank above; blank, hint, blank below, plus the
       // two "N more" markers the window itself may add.
-      const rows = this.getRows?.() ?? FALLBACK_ROWS;
       const maxRows = Math.max(MIN_LIST_ROWS, rows - 8);
       const win = windowAround(this.snapshots.length, this.selected, maxRows);
       if (win.before > 0) {
@@ -237,7 +250,7 @@ export class JobsOverlay<S extends { id: string }> {
     return lines;
   }
 
-  private renderDetail(width: number): string[] {
+  private renderDetail(width: number, rows: number): string[] {
     const th = this.theme;
     const mode = this.mode;
     if (mode.kind !== "detail") return [];
@@ -265,7 +278,6 @@ export class JobsOverlay<S extends { id: string }> {
     }
 
     const headerLines = lines.length + 3;
-    const rows = this.getRows?.() ?? FALLBACK_ROWS;
     const maxBody = Math.max(MIN_BODY_LINES, rows - headerLines);
     const maxScroll = Math.max(0, contentLines.length - maxBody);
     const scroll = Math.min(mode.scroll, maxScroll);

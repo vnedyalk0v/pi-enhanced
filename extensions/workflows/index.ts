@@ -282,23 +282,23 @@ export default function (pi: ExtensionAPI) {
               return lines.join("\n");
             },
             canCancel: (snap) => snap.status === "running",
+            onCancelRequested: (snap) => {
+              // Queue the note before waiting for child termination; the user
+              // can close the overlay and start another turn immediately.
+              pi.sendMessage(
+                {
+                  customType: "workflow-user-cancel",
+                  content: `User requested cancellation of workflow ${snap.id} "${truncateOneLine(snap.title, 120)}" from /wf.`,
+                  display: false,
+                  details: { id: snap.id, status: snap.status },
+                },
+                { deliverAs: "nextTurn", triggerTurn: false },
+              );
+            },
             cancel: (id) =>
-              m.cancel([id]).then((snaps) => {
+              m.cancel([id]).then(() => {
                 host.delivery.consume([id]);
                 host.updateWidget();
-                const snap = snaps[0];
-                if (snap) {
-                  // Record the user action for the model without starting a turn.
-                  pi.sendMessage(
-                    {
-                      customType: "workflow-user-cancel",
-                      content: `User cancelled workflow ${snap.id} "${truncateOneLine(snap.title, 120)}" from /wf.`,
-                      display: false,
-                      details: { id: snap.id, status: snap.status },
-                    },
-                    { deliverAs: "nextTurn", triggerTurn: false },
-                  );
-                }
               }),
           },
           theme,

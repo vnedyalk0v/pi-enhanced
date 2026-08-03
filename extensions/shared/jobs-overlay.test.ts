@@ -10,12 +10,14 @@ const theme = {
   bold: (text: string) => text,
 } as unknown as Theme;
 
-function makeHarness(options?: { snapshots?: Snap[]; rows?: number }) {
+function makeHarness(options?: { snapshots?: Snap[]; rows?: number; requestThrows?: boolean }) {
   let snapshots = options?.snapshots ?? [{ id: "j-1", label: "first", running: true }];
+  let rows = options?.rows ?? 30;
   const listeners = new Set<() => void>();
   let unsubscribeCalls = 0;
   let renderRequests = 0;
   let closes = 0;
+  const events: string[] = [];
   const cancelled: string[] = [];
   let resolveCancel: (() => void) | undefined;
 
@@ -33,7 +35,12 @@ function makeHarness(options?: { snapshots?: Snap[]; rows?: number }) {
     detailHeader: (snap) => [`${snap.id} header`],
     detailBody: (snap) => snap.label,
     canCancel: (snap) => snap.running,
+    onCancelRequested: (snap) => {
+      events.push(`requested:${snap.id}`);
+      if (options?.requestThrows) throw new Error("stale notification context");
+    },
     cancel: (id) => {
+      events.push(`cancel:${id}`);
       cancelled.push(id);
       return new Promise<void>((resolve) => {
         resolveCancel = resolve;
@@ -46,7 +53,7 @@ function makeHarness(options?: { snapshots?: Snap[]; rows?: number }) {
     theme,
     () => closes++,
     () => renderRequests++,
-    () => options?.rows ?? 30,
+    () => rows,
   );
 
   return {
@@ -63,6 +70,7 @@ function makeHarness(options?: { snapshots?: Snap[]; rows?: number }) {
     get closes() {
       return closes;
     },
+    events,
     cancelled,
     notify: () => {
       for (const listener of [...listeners]) listener();
@@ -74,6 +82,9 @@ function makeHarness(options?: { snapshots?: Snap[]; rows?: number }) {
     },
     setSnapshots: (next: Snap[]) => {
       snapshots = next;
+    },
+    setRows: (next: number) => {
+      rows = next;
     },
   };
 }
@@ -123,15 +134,22 @@ describe("JobsOverlay lifecycle", () => {
     assert.equal(h.renderRequests, afterLive);
   });
 
-  it("does not render after a late cancel settles post-disposal", async () => {
+  it("records cancellation before a late cancel settles after close", async () => {
     const h = makeHarness();
     h.overlay.handleInput("x");
+    assert.deepEqual(h.events, ["cancel:j-1", "requested:j-1"]);
     assert.deepEqual(h.cancelled, ["j-1"]);
 
-    h.overlay.dispose();
-    const afterDispose = h.renderRequests;
+    h.overlay.handleInput(ESC);
+    const afterClose = h.renderRequests;
     await h.finishCancel();
-    assert.equal(h.renderRequests, afterDispose);
+    assert.equal(h.renderRequests, afterClose);
+  });
+
+  it("still cancels when the request notification throws", () => {
+    const h = makeHarness({ requestThrows: true });
+    h.overlay.handleInput("x");
+    assert.deepEqual(h.cancelled, ["j-1"]);
   });
 
   it("only cancels jobs the config allows", () => {
@@ -154,6 +172,22 @@ describe("JobsOverlay lifecycle", () => {
 });
 
 describe("JobsOverlay rendering", () => {
+  it("invalidates the viewport cache when terminal height changes", () => {
+    const snapshots = Array.from({ length: 32 }, (_, i) => ({
+      id: `j-${i}`,
+      label: `job ${i}`,
+      running: true,
+    }));
+    const h = makeHarness({ snapshots, rows: 30 });
+
+    const tall = h.overlay.render(60);
+    h.setRows(12);
+    const short = h.overlay.render(60);
+
+    assert.ok(short.length < tall.length);
+    assert.ok(short.length <= 12, `rendered ${short.length} lines into 12 rows`);
+  });
+
   it("windows a long list and marks the hidden rows", () => {
     const snapshots = Array.from({ length: 32 }, (_, i) => ({
       id: `j-${i}`,

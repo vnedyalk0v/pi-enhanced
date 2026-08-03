@@ -23,6 +23,7 @@ type Entry = {
   cwd: string;
   model?: string;
   thinking?: string;
+  quiet?: boolean;
   status: SubagentStatus;
   createdAt: number;
   settledAt?: number;
@@ -142,6 +143,7 @@ export class SubagentManager {
       cwd: entry.cwd,
       model: entry.model,
       thinking: entry.thinking,
+      quiet: entry.quiet,
       status: entry.status,
       createdAt: entry.createdAt,
       settledAt: entry.settledAt,
@@ -198,6 +200,7 @@ export class SubagentManager {
       cwd,
       model: options.model,
       thinking: options.thinking,
+      quiet: options.quiet,
       status: "running",
       createdAt: Date.now(),
       outputTail: "",
