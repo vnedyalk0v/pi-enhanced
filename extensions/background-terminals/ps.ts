@@ -19,6 +19,8 @@ export class PsOverlay {
   private cachedWidth?: number;
   private cachedRows?: number;
   private cachedLines?: string[];
+  private streamLinesCache?: { id: string; stream: "stdout" | "stderr"; lines: string[] };
+  private terminating = new Set<string>();
   private disposed = false;
   private manager: TerminalManager;
   private theme: Theme;
@@ -55,6 +57,8 @@ export class PsOverlay {
 
   dispose() {
     this.disposed = true;
+    this.terminating.clear();
+    this.streamLinesCache = undefined;
     // Both the Esc path and TUI teardown call this; unsubscribe exactly once.
     const unsub = this.unsub;
     this.unsub = undefined;
@@ -63,8 +67,9 @@ export class PsOverlay {
 
   private refresh() {
     this.snapshots = this.manager.list();
+    this.streamLinesCache = undefined;
     if (this.mode.kind === "list") {
-      if (this.selected >= this.snapshots.length) {
+      if (this.selected < 0 || this.selected >= this.snapshots.length) {
         this.selected = Math.max(0, this.snapshots.length - 1);
       }
       return;
@@ -84,8 +89,15 @@ export class PsOverlay {
 
   private killTerminal(id: string) {
     const snap = this.manager.get(id);
-    if (!snap || snap.status !== "running") return;
-    const termination = this.manager.kill([id]);
+    if (!snap || snap.status !== "running" || this.terminating.has(id)) return;
+    this.terminating.add(id);
+    let termination: ReturnType<TerminalManager["kill"]>;
+    try {
+      termination = this.manager.kill([id]);
+    } catch {
+      this.terminating.delete(id);
+      return;
+    }
     try {
       this.onKillRequested?.(snap);
     } catch {
@@ -101,13 +113,16 @@ export class PsOverlay {
       })
       .catch(() => {
         // Manager disposed mid-shutdown; the overlay is going away anyway.
-      });
+      })
+      .finally(() => this.terminating.delete(id));
   }
 
   handleInput(data: string) {
+    if (this.disposed) return;
     if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
       if (this.mode.kind === "detail") {
         this.mode = { kind: "list" };
+        this.streamLinesCache = undefined;
         this.invalidate();
         this.requestRender();
         return;
@@ -132,7 +147,7 @@ export class PsOverlay {
       return;
     }
     if (matchesKey(data, "down") || matchesKey(data, "j")) {
-      this.selected = Math.min(this.snapshots.length - 1, this.selected + 1);
+      this.selected = Math.min(Math.max(0, this.snapshots.length - 1), this.selected + 1);
       this.invalidate();
       this.requestRender();
       return;
@@ -296,8 +311,14 @@ export class PsOverlay {
     lines.push(truncateToWidth(`  ${th.fg("accent", streamLabel)}${th.fg("dim", sizeNote)}`, width));
     lines.push(th.fg("borderMuted", "─".repeat(Math.min(width, 40))));
 
-    const content = stripTerminalControlStrings(stream.text || "(empty)");
-    const contentLines = content.split("\n");
+    let contentLines =
+      this.streamLinesCache?.id === snap.id && this.streamLinesCache.stream === this.mode.stream
+        ? this.streamLinesCache.lines
+        : undefined;
+    if (!contentLines) {
+      contentLines = stripTerminalControlStrings(stream.text || "(empty)").split("\n");
+      this.streamLinesCache = { id: snap.id, stream: this.mode.stream, lines: contentLines };
+    }
     // Header lines already emitted plus the footer hint block below.
     const headerLines = lines.length + 3;
     const maxBody = Math.max(5, rows - headerLines);

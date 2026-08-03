@@ -52,6 +52,8 @@ export class JobsOverlay<S extends { id: string }> {
   private cachedWidth?: number;
   private cachedRows?: number;
   private cachedLines?: string[];
+  private wrappedBodyCache?: { id: string; width: number; lines: string[] };
+  private cancelling = new Set<string>();
   private disposed = false;
   private config: JobsOverlayConfig<S>;
   private theme: Theme;
@@ -82,6 +84,8 @@ export class JobsOverlay<S extends { id: string }> {
 
   dispose() {
     this.disposed = true;
+    this.cancelling.clear();
+    this.wrappedBodyCache = undefined;
     // Both the Esc path and TUI teardown call this; unsubscribe exactly once.
     const unsub = this.unsub;
     this.unsub = undefined;
@@ -90,8 +94,9 @@ export class JobsOverlay<S extends { id: string }> {
 
   private refresh() {
     this.snapshots = this.config.list();
+    this.wrappedBodyCache = undefined;
     if (this.mode.kind === "list") {
-      if (this.selected >= this.snapshots.length) {
+      if (this.selected < 0 || this.selected >= this.snapshots.length) {
         this.selected = Math.max(0, this.snapshots.length - 1);
       }
       return;
@@ -115,9 +120,11 @@ export class JobsOverlay<S extends { id: string }> {
   }
 
   handleInput(data: string) {
+    if (this.disposed) return;
     if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
       if (this.mode.kind === "detail") {
         this.mode = { kind: "list" };
+        this.wrappedBodyCache = undefined;
         this.rerender();
         return;
       }
@@ -131,8 +138,15 @@ export class JobsOverlay<S extends { id: string }> {
 
   private cancelJob(id: string) {
     const snap = this.snapshots.find((s) => s.id === id);
-    if (!snap || !this.config.canCancel(snap)) return;
-    const cancellation = this.config.cancel(id);
+    if (!snap || !this.config.canCancel(snap) || this.cancelling.has(id)) return;
+    this.cancelling.add(id);
+    let cancellation: Promise<unknown>;
+    try {
+      cancellation = this.config.cancel(id);
+    } catch {
+      this.cancelling.delete(id);
+      return;
+    }
     try {
       this.config.onCancelRequested?.(snap);
     } catch {
@@ -147,7 +161,8 @@ export class JobsOverlay<S extends { id: string }> {
       })
       .catch(() => {
         // Manager disposed mid-shutdown; the overlay is going away anyway.
-      });
+      })
+      .finally(() => this.cancelling.delete(id));
   }
 
   private handleListInput(data: string) {
@@ -157,7 +172,7 @@ export class JobsOverlay<S extends { id: string }> {
       return;
     }
     if (matchesKey(data, "down") || matchesKey(data, "j")) {
-      this.selected = Math.min(this.snapshots.length - 1, this.selected + 1);
+      this.selected = Math.min(Math.max(0, this.snapshots.length - 1), this.selected + 1);
       this.rerender();
       return;
     }
@@ -266,15 +281,25 @@ export class JobsOverlay<S extends { id: string }> {
 
     // Results are prose: a long paragraph is one logical line, so wrap to the
     // body width instead of truncating everything past the right edge away.
+    // Keep the wrapped rows across scroll renders; manager refreshes clear the
+    // cache when the underlying snapshot can have changed.
     const bodyWidth = Math.max(1, width - 2);
-    const contentLines: string[] = [];
-    for (const raw of this.config.detailBody(snap).split("\n")) {
-      const line = terminalText(raw);
-      if (!line) {
-        contentLines.push("");
-        continue;
+    const cachedBody = this.wrappedBodyCache;
+    let contentLines =
+      cachedBody?.id === snap.id && cachedBody.width === bodyWidth
+        ? cachedBody.lines
+        : undefined;
+    if (!contentLines) {
+      contentLines = [];
+      for (const raw of this.config.detailBody(snap).split("\n")) {
+        const line = terminalText(raw);
+        if (!line) {
+          contentLines.push("");
+          continue;
+        }
+        contentLines.push(...wrapTextWithAnsi(line, bodyWidth));
       }
-      contentLines.push(...wrapTextWithAnsi(line, bodyWidth));
+      this.wrappedBodyCache = { id: snap.id, width: bodyWidth, lines: contentLines };
     }
 
     const headerLines = lines.length + 3;

@@ -17,6 +17,7 @@ function makeHarness(options?: { snapshots?: Snap[]; rows?: number; requestThrow
   let unsubscribeCalls = 0;
   let renderRequests = 0;
   let closes = 0;
+  let detailBodyCalls = 0;
   const events: string[] = [];
   const cancelled: string[] = [];
   let resolveCancel: (() => void) | undefined;
@@ -33,7 +34,10 @@ function makeHarness(options?: { snapshots?: Snap[]; rows?: number; requestThrow
     },
     renderRow: (snap) => `${snap.id} ${snap.label}`,
     detailHeader: (snap) => [`${snap.id} header`],
-    detailBody: (snap) => snap.label,
+    detailBody: (snap) => {
+      detailBodyCalls++;
+      return snap.label;
+    },
     canCancel: (snap) => snap.running,
     onCancelRequested: (snap) => {
       events.push(`requested:${snap.id}`);
@@ -69,6 +73,9 @@ function makeHarness(options?: { snapshots?: Snap[]; rows?: number; requestThrow
     },
     get closes() {
       return closes;
+    },
+    get detailBodyCalls() {
+      return detailBodyCalls;
     },
     events,
     cancelled,
@@ -142,8 +149,21 @@ describe("JobsOverlay lifecycle", () => {
 
     h.overlay.handleInput(ESC);
     const afterClose = h.renderRequests;
+    h.overlay.handleInput("x");
+    h.overlay.handleInput("j");
+    assert.deepEqual(h.events, ["cancel:j-1", "requested:j-1"]);
+    assert.equal(h.renderRequests, afterClose);
     await h.finishCancel();
     assert.equal(h.renderRequests, afterClose);
+  });
+
+  it("deduplicates cancellation while termination is pending", async () => {
+    const h = makeHarness();
+    h.overlay.handleInput("x");
+    h.overlay.handleInput("x");
+    assert.deepEqual(h.events, ["cancel:j-1", "requested:j-1"]);
+    assert.deepEqual(h.cancelled, ["j-1"]);
+    await h.finishCancel();
   });
 
   it("still cancels when the request notification throws", () => {
@@ -156,6 +176,17 @@ describe("JobsOverlay lifecycle", () => {
     const h = makeHarness({ snapshots: [{ id: "j-1", label: "done", running: false }] });
     h.overlay.handleInput("x");
     assert.deepEqual(h.cancelled, []);
+  });
+
+  it("keeps selection at zero when a job appears after an empty-list Down", () => {
+    const h = makeHarness({ snapshots: [] });
+    h.overlay.handleInput("j");
+    h.setSnapshots([{ id: "j-1", label: "first", running: true }]);
+    h.notify();
+
+    assert.match(h.overlay.render(60).join("\n"), /› j-1 first/);
+    h.overlay.handleInput("\r");
+    assert.match(h.overlay.render(60).join("\n"), /j-1 header/);
   });
 
   it("falls back to the list when the detailed job disappears", () => {
@@ -215,6 +246,28 @@ describe("JobsOverlay rendering", () => {
     assert.match(body, /word0/);
     // The tail of the paragraph survives on a wrapped row rather than being cut.
     assert.match(body, /word39/);
+  });
+
+  it("caches wrapped detail rows across scrolling", () => {
+    const paragraph = Array.from({ length: 2_000 }, (_, i) => `word${i}`).join(" ");
+    const h = makeHarness({
+      snapshots: [{ id: "j-1", label: paragraph, running: false }],
+      rows: 20,
+    });
+    h.overlay.handleInput("\r");
+
+    h.overlay.render(40);
+    for (let i = 0; i < 20; i++) {
+      h.overlay.handleInput("j");
+      h.overlay.render(40);
+    }
+    assert.equal(h.detailBodyCalls, 1);
+
+    h.overlay.render(50);
+    assert.equal(h.detailBodyCalls, 2);
+    h.notify();
+    h.overlay.render(50);
+    assert.equal(h.detailBodyCalls, 3);
   });
 
   it("scrolls wrapped content instead of losing it", () => {

@@ -8,14 +8,16 @@ const theme = {
   fg: (_color: string, text: string) => text,
 } as unknown as Theme;
 
-const output = {
-  text: "",
-  totalBytes: 0,
-  truncatedBytes: 0,
-  spillTruncatedBytes: 0,
-};
-
-function snapshot(index: number): TerminalSnapshot {
+function snapshot(index: number, onTextRead: () => void): TerminalSnapshot {
+  const output = {
+    get text() {
+      onTextRead();
+      return "first\nsecond\nthird";
+    },
+    totalBytes: 18,
+    truncatedBytes: 0,
+    spillTruncatedBytes: 0,
+  };
   return {
     id: `bt-${index}`,
     command: "sleep 10",
@@ -29,7 +31,10 @@ function snapshot(index: number): TerminalSnapshot {
 }
 
 function makeHarness(count = 1, initialRows = 30, requestThrows = false) {
-  const snapshots = Array.from({ length: count }, (_, index) => snapshot(index + 1));
+  let streamTextReads = 0;
+  const snapshots = Array.from({ length: count }, (_, index) =>
+    snapshot(index + 1, () => streamTextReads++),
+  );
   let rows = initialRows;
   let renders = 0;
   let closes = 0;
@@ -75,6 +80,9 @@ function makeHarness(count = 1, initialRows = 30, requestThrows = false) {
     get closes() {
       return closes;
     },
+    get streamTextReads() {
+      return streamTextReads;
+    },
   };
 }
 
@@ -89,20 +97,40 @@ describe("PsOverlay", () => {
     assert.ok(short.length <= 12, `rendered ${short.length} lines into 12 rows`);
   });
 
+  it("caches processed stream lines across scrolling", () => {
+    const h = makeHarness();
+    h.overlay.handleInput("\r");
+    h.overlay.render(60);
+    for (let i = 0; i < 10; i++) {
+      h.overlay.handleInput("j");
+      h.overlay.render(60);
+    }
+    assert.equal(h.streamTextReads, 1);
+
+    h.overlay.handleInput("t");
+    h.overlay.render(60);
+    assert.equal(h.streamTextReads, 2);
+  });
+
   it("still starts termination when the request notification throws", () => {
     const h = makeHarness(1, 30, true);
     h.overlay.handleInput("x");
     assert.deepEqual(h.events, ["kill:bt-1", "requested:bt-1"]);
   });
 
-  it("records a kill request before termination settles after close", async () => {
+  it("deduplicates a kill request before termination settles after close", async () => {
     const h = makeHarness();
+    h.overlay.handleInput("x");
     h.overlay.handleInput("x");
     assert.deepEqual(h.events, ["kill:bt-1", "requested:bt-1"]);
 
     h.overlay.handleInput("\x1b");
     assert.equal(h.closes, 1);
     const afterClose = h.renders;
+    h.overlay.handleInput("x");
+    h.overlay.handleInput("j");
+    assert.deepEqual(h.events, ["kill:bt-1", "requested:bt-1"]);
+    assert.equal(h.renders, afterClose);
     h.finishKill();
     await Promise.resolve();
     await Promise.resolve();
