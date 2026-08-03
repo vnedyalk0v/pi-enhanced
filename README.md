@@ -15,7 +15,7 @@ The package follows three boundaries:
 
 | Dependency | Requirement |
 | --- | --- |
-| Pi | `0.82.1` |
+| Pi | `0.83.0` |
 | Node.js | `24.12.0` or newer |
 | npm and Git | Available on `PATH` |
 
@@ -58,10 +58,10 @@ before installation and use it only in trusted working directories.
 | Conversation | `ask_user`, `/copy-all`, `/summary` | Structured choices, clipboard export, and model-generated session summaries |
 | File search | `fd`, `rg` | Fast filename and content search with bounded model output |
 | Git and UI | `/git-info`, `github-dark-default` | Footer branch status and an automatically selected GitHub-style theme |
-| Background terminals | `bg_start`, `bg_status`, `bg_list`, `bg_kill`, `/ps` | Long-running non-interactive commands with completion delivery and full spill logs |
+| Background terminals | `bg_start`, `bg_status`, `bg_list`, `bg_kill`, `/ps` | Long-running non-interactive commands with completion delivery and bounded spill logs |
 | Web research | `fc_search`, `fc_scrape`, `fc_crawl` | Firecrawl search/scrape/crawl with DuckDuckGo fallback for no-key or quota-exhausted search |
-| Subagents | `sa_spawn`, `sa_agents`, `sa_status`, `sa_list`, `sa_wait`, `sa_cancel`, `/btw` | Isolated native pi workers (ad-hoc or named agent definitions) with bounded concurrency |
-| Workflows | `wf_start`, `wf_status`, `wf_list`, `wf_wait`, `wf_cancel`, `/workflow` | Reconnaissance, implementation, review, and synthesis with validated handoffs and artifacts |
+| Subagents | `sa_spawn`, `sa_agents`, `sa_status`, `sa_list`, `sa_wait`, `sa_cancel`, `/sa`, `/btw` | Isolated native pi workers (ad-hoc or named agent definitions) with bounded concurrency |
+| Workflows | `wf_start`, `wf_status`, `wf_list`, `wf_wait`, `wf_cancel`, `/wf`, `/workflow` | Reconnaissance, implementation, review, and synthesis with validated handoffs and artifacts |
 
 The package also provides on-demand skills for background terminals,
 subagents, web research, and workflows.
@@ -136,10 +136,21 @@ manager and expose them on `PATH`.
 Each workflow owns a separate four-child subagent pool. Starting jobs reserve
 capacity immediately.
 
-Background streams retain a 2 MiB in-memory tail while full logs spill to a
-private OS-temporary directory. Those logs are removed at Pi session shutdown.
-Native subagent JSON result records have a 4 MiB UTF-8 ceiling. An oversized
-record fails the worker instead of returning a truncated successful result.
+Automatic completion messages stay metadata-only; the model retrieves child
+output explicitly via `bg_status`, `sa_status`, or `wf_status`. The `/ps`,
+`/sa`, and `/wf` commands open interactive viewers for terminals, subagents,
+and workflows. `/btw` answers are delivered directly to the user, marked as
+untrusted content; delivery waits until the agent is idle so the answer never
+starts or steers a model turn.
+
+Background streams retain a 2 MiB in-memory tail and spill up to 16 MiB per
+stream, capped at 64 MiB per Pi session, to a private OS-temporary directory.
+Partial spill logs are labeled, and all logs are removed at Pi session shutdown.
+Truncated `fd`/`rg` results spill full output to a private temporary file with
+the same 16 MiB cap; larger spills are labeled partial. Native subagent JSON
+result records have a 4 MiB UTF-8 ceiling. An oversized record fails the worker
+instead of returning a truncated successful result. Subagents (standalone and
+workflow children) are force-killed after 30 minutes of runtime.
 Workflow artifacts use private OS-temporary directories reported by
 `wf_status`; completed artifacts survive the session but are not durable or
 cross-machine storage.
@@ -160,7 +171,7 @@ confirms before running one interactively.
   platforms.
 - Firecrawl fails: set `FIRECRAWL_API_KEY` for scrape/crawl. Only missing-key or
   quota-exhausted search uses the fallback.
-- Concurrency limit reached: wait for or cancel an existing `bg-*`, `sa-*`, or
+- Concurrency limit reached: wait for or cancel an existing `bt-*`, `sa-*`, or
   `wf-*` job.
 - Missing output: inspect `bg_status` for spill logs, `wf_status` for workflow
   artifacts, or the full-output path returned by truncated `fd`/`rg` results.

@@ -3,7 +3,11 @@ import {
   DEFAULT_MAX_LINES,
 } from "@earendil-works/pi-coding-agent";
 import { StringDecoder } from "node:string_decoder";
-import { formatTruncationNotice, truncateForModel } from "../shared/text.ts";
+import {
+  formatTruncationNotice,
+  truncateForModel,
+  UNTRUSTED_CONTENT_NOTICE,
+} from "../shared/text.ts";
 import type { ClassifiedError } from "./errors.ts";
 import type { CrawlResult, ScrapeResult, SearchResult } from "./normalize.ts";
 
@@ -16,12 +20,14 @@ export function formatSearchResult(result: SearchResult): string {
     lines.push(`creditsUsed: ${result.creditsUsed}`);
   }
   if (result.warning) lines.push(`warning: ${result.warning}`);
-  lines.push("");
 
   if (result.results.length === 0) {
-    lines.push("No results.");
+    lines.push("", "No results.");
     return lines.join("\n");
   }
+
+  lines.unshift(UNTRUSTED_CONTENT_NOTICE);
+  lines.push("");
 
   result.results.forEach((hit, i) => {
     lines.push(`${i + 1}. ${hit.title}`);
@@ -34,10 +40,8 @@ export function formatSearchResult(result: SearchResult): string {
 }
 
 export function formatScrapeResult(result: ScrapeResult): string {
-  const lines = [
-    `provider: ${result.provider}`,
-    `url: ${result.url}`,
-  ];
+  const lines = [UNTRUSTED_CONTENT_NOTICE, `provider: ${result.provider}`];
+  lines.push(`url: ${result.url}`);
   if (result.title) lines.push(`title: ${result.title}`);
   if (result.warning) lines.push(`warning: ${result.warning}`);
   lines.push("", result.markdown || "(empty)");
@@ -86,6 +90,7 @@ export function formatCrawlResult(result: CrawlResult): string {
   };
 
   const metadata = [
+    UNTRUSTED_CONTENT_NOTICE,
     `provider: ${result.provider}`,
     `url: ${result.url}`,
     `status: ${result.status}`,

@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
 import { contentToText } from "../shared/text.ts";
 
 export const PI_RESULT_RECORD_MAX_BYTES = 4 * 1024 * 1024;
@@ -26,6 +27,8 @@ export type RunOptions = {
   cwd: string;
   env?: NodeJS.ProcessEnv;
   signal?: AbortSignal;
+  /** Written to the child's stdin, which is then closed. Omitted = no stdin. */
+  stdinData?: string;
   onStdout?: (chunk: string) => void;
   onStderr?: (chunk: string) => void;
 };
@@ -39,10 +42,16 @@ export function runProcess(options: RunOptions): RunHandle {
   const child: ChildProcess = spawn(options.command, options.args, {
     cwd: options.cwd,
     env: options.env ?? process.env,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: [options.stdinData === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     detached: !isWin,
     windowsHide: true,
   });
+
+  if (options.stdinData !== undefined && child.stdin) {
+    // EPIPE if the child exits before reading; the exit path already reports that.
+    child.stdin.on("error", () => {});
+    child.stdin.end(options.stdinData);
+  }
 
   let settled = false;
   let exitResult: { exitCode: number; signal?: string } | undefined;
@@ -57,11 +66,24 @@ export function runProcess(options: RunOptions): RunHandle {
     resolveWait(result);
   };
 
+  const stdoutDecoder = new StringDecoder("utf8");
+  const stderrDecoder = new StringDecoder("utf8");
+
   child.stdout?.on("data", (buf: Buffer) => {
-    options.onStdout?.(buf.toString("utf8"));
+    const text = stdoutDecoder.write(buf);
+    if (text) options.onStdout?.(text);
   });
   child.stderr?.on("data", (buf: Buffer) => {
-    options.onStderr?.(buf.toString("utf8"));
+    const text = stderrDecoder.write(buf);
+    if (text) options.onStderr?.(text);
+  });
+  child.stdout?.once("end", () => {
+    const text = stdoutDecoder.end();
+    if (text) options.onStdout?.(text);
+  });
+  child.stderr?.once("end", () => {
+    const text = stderrDecoder.end();
+    if (text) options.onStderr?.(text);
   });
 
   child.once("error", (err) => {

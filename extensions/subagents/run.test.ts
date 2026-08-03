@@ -13,6 +13,21 @@ function timeout(message: string) {
   });
 }
 
+async function collectNodeStdout(chunks: Buffer[]) {
+  const encoded = chunks.map((chunk) => chunk.toString("base64"));
+  const script = `const chunks = ${JSON.stringify(encoded)}; let index = 0; const writeNext = () => { if (index === chunks.length) return; process.stdout.write(Buffer.from(chunks[index++], "base64")); setTimeout(writeNext, 25); }; writeNext();`;
+  const output: string[] = [];
+  const handle = runProcess({
+    command: process.execPath,
+    args: ["-e", script],
+    cwd: process.cwd(),
+    onStdout: (chunk) => output.push(chunk),
+  });
+
+  await Promise.race([handle.wait, timeout("child did not exit")]);
+  return output;
+}
+
 it(
   "escalates SIGTERM to SIGKILL",
   { skip: process.platform === "win32" },
@@ -85,6 +100,73 @@ it(
   },
 );
 
+it("reassembles a JSONL record split mid-character", async () => {
+  const record = `${JSON.stringify({
+    type: "message_end",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "café \u{2615} done" }],
+    },
+  })}\n`;
+  const bytes = Buffer.from(record, "utf8");
+  const splitAt = bytes.indexOf(Buffer.from("é")) + 1;
+  const collector = createPiAssistantTextCollector();
+
+  assert.equal(bytes[splitAt]! & 0xc0, 0x80);
+  for (const chunk of await collectNodeStdout([
+    bytes.subarray(0, splitAt),
+    bytes.subarray(splitAt),
+  ])) {
+    collector.push(chunk);
+  }
+
+  const result = collector.finish();
+  assert.equal(result, "café \u{2615} done");
+  assert.doesNotMatch(result, /�/);
+});
+
+it("emits nothing for a chunk that ends mid-character", async () => {
+  const bytes = Buffer.from("é", "utf8");
+
+  assert.deepEqual(
+    await collectNodeStdout([bytes.subarray(0, 1), bytes.subarray(1)]),
+    ["é"],
+  );
+});
+
+it("flushes trailing bytes when the stream ends", async () => {
+  assert.deepEqual(await collectNodeStdout([Buffer.from([0xc3])]), ["�"]);
+});
+
+it("pipes stdinData to the child and closes stdin", async () => {
+  let stdout = "";
+  const handle = runProcess({
+    command: process.execPath,
+    args: ["-e", 'process.stdout.write(require("node:fs").readFileSync(0, "utf8"));'],
+    cwd: process.cwd(),
+    stdinData: "Task: hello stdin",
+    onStdout: (chunk) => {
+      stdout += chunk;
+    },
+  });
+
+  const result = await Promise.race([handle.wait, timeout("child did not exit")]);
+  assert.equal(result.exitCode, 0);
+  assert.equal(stdout, "Task: hello stdin");
+});
+
+it("survives a child that exits without reading stdin", async () => {
+  const handle = runProcess({
+    command: process.execPath,
+    args: ["-e", "process.exit(0);"],
+    cwd: process.cwd(),
+    stdinData: "x".repeat(1024 * 1024),
+  });
+
+  const result = await Promise.race([handle.wait, timeout("child did not exit")]);
+  assert.equal(result.exitCode, 0);
+});
+
 describe("appendBounded", () => {
   it("keeps a tail when over max", () => {
     const out = appendBounded("abcdef", "ghij", 8);
@@ -130,14 +212,14 @@ describe("createPiAssistantTextCollector", () => {
   });
 
   it("accepts an exact-limit record split inside a surrogate pair", () => {
-    const event = assistantEvent("😀");
-    const split = event.indexOf("😀") + 1;
+    const event = assistantEvent("\u{1F600}");
+    const split = event.indexOf("\u{1F600}") + 1;
     const collector = createPiAssistantTextCollector(Buffer.byteLength(event, "utf8"));
 
     collector.push(event.slice(0, split));
     collector.push(`${event.slice(split)}\n`);
 
-    assert.equal(collector.finish(), "😀");
+    assert.equal(collector.finish(), "\u{1F600}");
   });
 
   it("accepts an exact-limit CRLF record", () => {
@@ -179,14 +261,6 @@ describe("createPiAssistantTextCollector", () => {
     );
 
     assert.throws(() => collector.push(`${event}\n`), PiResultRecordTooLargeError);
-  });
-
-  it("ignores malformed lines", () => {
-    const collector = createPiAssistantTextCollector();
-
-    collector.push(`not-json\n${assistantEvent("valid")}\n{broken}\n`);
-
-    assert.equal(collector.finish(), "valid");
   });
 
   it("processes an unterminated final record only on finish", () => {

@@ -7,6 +7,8 @@ import { describe, it } from "node:test";
 import {
   createSpillDir,
   MAX_RETAINED_BYTES,
+  MAX_SESSION_SPILL_BYTES,
+  MAX_SPILL_BYTES,
   openSpillStreams,
   OutputBuffer,
 } from "./output.ts";
@@ -41,6 +43,39 @@ describe("OutputBuffer", () => {
     assert.equal(view.truncatedBytes, 5);
   });
 
+  it("keeps a valid character boundary when the cap splits a multi-byte char", () => {
+    const buf = new OutputBuffer(10);
+    buf.push("\u{1F600}\u{1F600}\u{1F600}");
+    const view = buf.view();
+    const retainedBytes = Buffer.byteLength(view.text, "utf8");
+    assert.equal(view.text.includes("�"), false);
+    assert.equal(retainedBytes <= 10, true);
+    assert.equal(view.truncatedBytes, view.totalBytes - retainedBytes);
+  });
+
+  it("never reports negative truncation", () => {
+    const buf = new OutputBuffer(10);
+    buf.push("\u{1F600}\u{1F600}\u{1F600}");
+    assert.equal(buf.view().truncatedBytes >= 0, true);
+  });
+
+  it("retains the whole chunk when it lands exactly on the cap", () => {
+    const buf = new OutputBuffer(6);
+    buf.push("a\u{1F600}b");
+    const view = buf.view();
+    assert.equal(view.text, "a\u{1F600}b");
+    assert.equal(view.truncatedBytes, 0);
+  });
+
+  it("handles a cap smaller than one character", () => {
+    const buf = new OutputBuffer(2);
+    buf.push("\u{1F600}");
+    const view = buf.view();
+    assert.equal(view.text, "");
+    assert.equal(view.text.includes("�"), false);
+    assert.equal(view.truncatedBytes >= 0, true);
+  });
+
   it("returns metadata without joining retained text", () => {
     const buf = new OutputBuffer(64);
     buf.push("hello");
@@ -58,6 +93,7 @@ describe("OutputBuffer", () => {
       text: "",
       totalBytes: 5,
       truncatedBytes: 0,
+      spillTruncatedBytes: 0,
       spillPath: undefined,
     });
 
@@ -81,6 +117,7 @@ describe("OutputBuffer", () => {
     assert.equal(view.text, "ijkl");
     assert.equal(view.totalBytes, 12);
     assert.equal(view.truncatedBytes, 8);
+    assert.equal(view.spillTruncatedBytes, 0);
     assert.equal(view.spillPath, path);
     await rm(dir, { recursive: true, force: true });
   });
@@ -89,17 +126,57 @@ describe("OutputBuffer", () => {
     const dir = await mkdtemp(join(tmpdir(), "pi-bt-out-"));
     const path = join(dir, "missing", "out.log");
     const stream = createWriteStream(path, { highWaterMark: 1 });
-    const buf = new OutputBuffer(8, { path, stream });
+    const buf = new OutputBuffer(8, { path, stream, maxBytes: 2 });
 
     assert.equal(buf.push("data"), false);
     await buf.waitForDrain();
     assert.equal(buf.view().spillPath, undefined);
+    assert.equal(buf.view().spillTruncatedBytes, 2);
     await buf.close();
     await rm(dir, { recursive: true, force: true });
   });
 
   it("uses default max retained size", () => {
     assert.equal(MAX_RETAINED_BYTES, 2 * 1024 * 1024);
+    assert.equal(MAX_SPILL_BYTES, 16 * 1024 * 1024);
+    assert.equal(MAX_SESSION_SPILL_BYTES, 64 * 1024 * 1024);
+  });
+
+  it("stops spilling at per-stream and shared session quotas", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "pi-bt-quota-"));
+    const budget = { remainingBytes: 7 };
+    const firstPath = join(dir, "first.log");
+    const secondPath = join(dir, "second.log");
+    const first = new OutputBuffer(8, {
+      path: firstPath,
+      stream: createWriteStream(firstPath, { mode: 0o600 }),
+      budget,
+      maxBytes: 4,
+    });
+    const second = new OutputBuffer(8, {
+      path: secondPath,
+      stream: createWriteStream(secondPath, { mode: 0o600 }),
+      budget,
+      maxBytes: 8,
+    });
+
+    try {
+      first.push("abcdef");
+      first.push("g");
+      second.push("éxy");
+      await Promise.all([first.close(), second.close()]);
+
+      assert.equal(await readFile(firstPath, "utf8"), "abcd");
+      assert.equal(await readFile(secondPath, "utf8"), "éx");
+      assert.equal(first.view().spillTruncatedBytes, 3);
+      assert.equal(second.view().spillTruncatedBytes, 1);
+      assert.equal(first.view().text, "abcdefg");
+      assert.equal(second.view().text, "éxy");
+      assert.equal(budget.remainingBytes, 0);
+    } finally {
+      await Promise.all([first.close(), second.close()]);
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("creates distinct private spill directories and files", async () => {

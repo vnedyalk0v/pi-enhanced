@@ -10,6 +10,7 @@ import {
   formatScrapeResult,
   formatSearchResult,
 } from "./format.ts";
+import { UNTRUSTED_CONTENT_NOTICE } from "../shared/text.ts";
 import type { CrawlPage, CrawlResult } from "./normalize.ts";
 
 describe("web research formatting", () => {
@@ -38,6 +39,7 @@ describe("web research formatting", () => {
     assert.equal(
       formatCrawlResult(result),
       [
+        UNTRUSTED_CONTENT_NOTICE,
         "provider: firecrawl",
         "url: https://root.example",
         "status: completed",
@@ -72,7 +74,7 @@ describe("web research formatting", () => {
       }],
     });
 
-    assert.match(output, /^provider: firecrawl\nurl: https:\/\/root\.example\nstatus: completed/);
+    assert.ok(output.startsWith(`${UNTRUSTED_CONTENT_NOTICE}\nprovider: firecrawl`));
     assert.match(output, /\n\n\[truncated: first .+ of .+\]$/);
     assert.ok(Buffer.byteLength(output) < DEFAULT_MAX_BYTES + 100);
     assert.ok(!output.includes("\uFFFD"));
@@ -160,7 +162,7 @@ describe("web research formatting", () => {
       url: "https://root.example",
       status: "completed",
     } as const;
-    const exactLines = Array.from({ length: DEFAULT_MAX_LINES - 7 }, () => "é").join("\n");
+    const exactLines = Array.from({ length: DEFAULT_MAX_LINES - 8 }, () => "é").join("\n");
     const lineBounded = formatCrawlResult({
       ...base,
       pages: [{ title: "Exact", url: "https://page.example", markdown: exactLines }],
@@ -183,7 +185,7 @@ describe("web research formatting", () => {
     assert.ok(!byteBounded.includes("\uFFFD"));
   });
 
-  it("leaves search and scrape formatting unchanged", () => {
+  it("formats search and scrape with the untrusted-content notice", () => {
     assert.equal(
       formatSearchResult({
         provider: "firecrawl",
@@ -193,6 +195,7 @@ describe("web research formatting", () => {
         results: [{ title: "T", url: "https://example.com", description: "D" }],
       }),
       [
+        UNTRUSTED_CONTENT_NOTICE,
         "provider: firecrawl",
         "query: q",
         "creditsUsed: 1",
@@ -212,6 +215,7 @@ describe("web research formatting", () => {
         markdown: "body",
       }),
       [
+        UNTRUSTED_CONTENT_NOTICE,
         "provider: firecrawl",
         "url: https://example.com",
         "title: T",
@@ -220,5 +224,93 @@ describe("web research formatting", () => {
         "body",
       ].join("\n"),
     );
+  });
+
+  it("scrape output labels remote content as untrusted", () => {
+    const output = formatScrapeResult({
+      provider: "firecrawl",
+      url: "https://example.com",
+      markdown: "remote body",
+    });
+
+    assert.ok(output.includes(UNTRUSTED_CONTENT_NOTICE));
+    assert.ok(
+      output.indexOf(UNTRUSTED_CONTENT_NOTICE) <
+        output.indexOf("url: https://example.com"),
+    );
+    assert.ok(output.indexOf(UNTRUSTED_CONTENT_NOTICE) < output.indexOf("remote body"));
+  });
+
+  it("search output labels remote content as untrusted", () => {
+    const output = formatSearchResult({
+      provider: "firecrawl",
+      query: "q",
+      results: [{ title: "Remote title", url: "https://example.com", description: "" }],
+    });
+
+    assert.ok(output.includes(UNTRUSTED_CONTENT_NOTICE));
+    assert.ok(output.indexOf(UNTRUSTED_CONTENT_NOTICE) < output.indexOf("1. Remote title"));
+  });
+
+  it("crawl output labels remote content as untrusted", () => {
+    const output = formatCrawlResult({
+      provider: "firecrawl",
+      url: "https://root.example",
+      status: "completed",
+      pages: [{ title: "Remote page", url: "https://example.com", markdown: "body" }],
+    });
+
+    assert.ok(output.includes(UNTRUSTED_CONTENT_NOTICE));
+    assert.ok(output.indexOf(UNTRUSTED_CONTENT_NOTICE) < output.indexOf("## Remote page"));
+  });
+
+  it("keeps the search notice ahead of oversized query metadata", () => {
+    const output = formatSearchResult({
+      provider: "firecrawl",
+      query: "q".repeat(DEFAULT_MAX_BYTES * 2),
+      results: [{ title: "Remote", url: "https://example.com", description: "body" }],
+    });
+
+    assert.ok(output.startsWith(UNTRUSTED_CONTENT_NOTICE));
+    assert.match(output, /\[truncated: first /);
+  });
+
+  it("keeps the crawl notice ahead of an oversized root URL", () => {
+    const output = formatCrawlResult({
+      provider: "firecrawl",
+      url: `https://example.com/${"x".repeat(DEFAULT_MAX_BYTES * 2)}`,
+      status: "completed",
+      pages: [{ title: "Remote", url: "https://example.com", markdown: "body" }],
+    });
+
+    assert.ok(output.startsWith(UNTRUSTED_CONTENT_NOTICE));
+    assert.match(output, /\[truncated: first /);
+  });
+
+  it("keeps the crawl notice inside the byte budget", () => {
+    const output = formatCrawlResult({
+      provider: "firecrawl",
+      url: "https://root.example",
+      status: "completed",
+      pages: [{
+        title: "Large",
+        url: "https://large.example",
+        markdown: "x".repeat(DEFAULT_MAX_BYTES * 2),
+      }],
+    });
+
+    assert.ok(output.includes(UNTRUSTED_CONTENT_NOTICE));
+    assert.ok(Buffer.byteLength(output, "utf8") < DEFAULT_MAX_BYTES + 100);
+  });
+
+  it("keeps the notice when a large scrape is truncated", () => {
+    const output = formatScrapeResult({
+      provider: "firecrawl",
+      url: "https://example.com",
+      markdown: "x".repeat(DEFAULT_MAX_BYTES * 2),
+    });
+
+    assert.ok(output.includes(UNTRUSTED_CONTENT_NOTICE));
+    assert.match(output, /\[truncated: first /);
   });
 });

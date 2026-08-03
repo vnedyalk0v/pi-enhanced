@@ -83,7 +83,6 @@ npm test               # run when tests exist for the touched area
 
 - Subject: imperative, lowercase after the colon, no trailing period, ≤72 chars.
 - Body (skip for trivial commits): blank line, wrap ~78 cols, explain *why*; for multi-area changes prefer `path: what/why` bullets over prose.
-- Trailer: `Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>`.
 
 ### Pull requests
 

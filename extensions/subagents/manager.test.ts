@@ -53,6 +53,26 @@ function createManager(opts: ManagerOptions = {}) {
 }
 
 describe("SubagentManager", () => {
+  it("passes an extension path to the backend starter", async () => {
+    let receivedExtensionPath: string | undefined;
+    const m = createManager({
+      starters: {
+        pi: async ({ extensionPath }) => {
+          receivedExtensionPath = extensionPath;
+          return fakeJob({ exitCode: 0, resultText: "done" });
+        },
+      },
+    });
+
+    await m.spawn({
+      prompt: "search files",
+      cwd: process.cwd(),
+      extensionPath: "/package/extensions/file-search/index.ts",
+    });
+
+    assert.equal(receivedExtensionPath, "/package/extensions/file-search/index.ts");
+  });
+
   it("keeps streamed output without notifying for every chunk", async () => {
     let finish!: () => void;
     const wait = new Promise<{ exitCode: number }>((resolve) => {
@@ -112,6 +132,41 @@ describe("SubagentManager", () => {
     assert.equal(after.resultText, "hello");
     // wait holds interest → consumed
     assert.equal(settled.at(-1)?.consumed, true);
+  });
+
+  it("classifies a quiet job before an immediate completion can settle", async () => {
+    let settledQuiet: boolean | undefined;
+    let resolveSettled!: () => void;
+    const didSettle = new Promise<void>((resolve) => {
+      resolveSettled = resolve;
+    });
+    const m = createManager({
+      starters: {
+        pi: async () => ({
+          handle: {
+            pid: 12345,
+            kill: () => {},
+            wait: Promise.resolve({ exitCode: 1 }),
+          },
+          collect: async () => ({
+            exitCode: 1,
+            resultText: "",
+            errorText: "launch failed",
+            output: "",
+          }),
+        }),
+      },
+      onSettled: ({ snapshot }) => {
+        settledQuiet = snapshot.quiet;
+        resolveSettled();
+      },
+    });
+
+    const snap = await m.spawn({ prompt: "quick side question", cwd: process.cwd(), quiet: true });
+    await didSettle;
+
+    assert.equal(settledQuiet, true);
+    assert.equal(snap.quiet, true);
   });
 
   it("async completion is not consumed when not waiting", async () => {
@@ -230,6 +285,26 @@ describe("SubagentManager", () => {
     finish();
 
     assert.equal(await settled, true);
+  });
+
+  it("wait fails cleanly when the manager is disposed mid-wait", async () => {
+    let finish!: () => void;
+    const gate = new Promise<{ exitCode: number }>((resolve) => {
+      finish = () => resolve({ exitCode: 0 });
+    });
+    const m = createManager({
+      starters: {
+        pi: async () => ({
+          handle: { pid: 12345, kill: () => finish(), wait: gate },
+          collect: async () => ({ ...(await gate), resultText: "ok", output: "" }),
+        }),
+      },
+    });
+
+    const snap = await m.spawn({ prompt: "work", cwd: process.cwd() });
+    const waiting = m.wait([snap.id]);
+    await m.disposeAll();
+    await assert.rejects(waiting, /disposed during wait/);
   });
 
   it("enforces concurrency limit", async () => {

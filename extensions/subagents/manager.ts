@@ -13,6 +13,7 @@ const DEFAULT_KILL_GRACE_MS = 3000;
 // if a legitimate task needs longer than 30 minutes.
 const DEFAULT_MAX_RUNTIME_MS = 30 * 60_000;
 const OUTPUT_TAIL_CHARS = 24_000;
+const OUTPUT_NOTIFY_INTERVAL_MS = 100;
 
 type Entry = {
   id: string;
@@ -22,6 +23,7 @@ type Entry = {
   cwd: string;
   model?: string;
   thinking?: string;
+  quiet?: boolean;
   status: SubagentStatus;
   createdAt: number;
   settledAt?: number;
@@ -75,8 +77,43 @@ export class SubagentManager {
     this.starter = options.starters?.pi ?? startPiBackend;
   }
 
+  private readonly listeners = new Set<() => void>();
+  private outputNotifyTimer?: ReturnType<typeof setTimeout>;
+
+  subscribe(listener: () => void) {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
   private notify() {
-    this.onChange?.();
+    if (this.outputNotifyTimer) {
+      clearTimeout(this.outputNotifyTimer);
+      this.outputNotifyTimer = undefined;
+    }
+    try {
+      this.onChange?.();
+    } catch {
+      // UI listeners must not break process bookkeeping.
+    }
+    for (const listener of this.listeners) {
+      try {
+        listener();
+      } catch {
+        // UI listeners must not break process bookkeeping.
+      }
+    }
+  }
+
+  /** Coalesced notify for streamed output, so /sa follows a running worker. */
+  private notifyOutput() {
+    if (this.disposed || this.outputNotifyTimer) return;
+    this.outputNotifyTimer = setTimeout(() => {
+      this.outputNotifyTimer = undefined;
+      this.notify();
+    }, OUTPUT_NOTIFY_INTERVAL_MS);
+    this.outputNotifyTimer.unref?.();
   }
 
   private pruneAfterInterestRelease() {
@@ -106,6 +143,7 @@ export class SubagentManager {
       cwd: entry.cwd,
       model: entry.model,
       thinking: entry.thinking,
+      quiet: entry.quiet,
       status: entry.status,
       createdAt: entry.createdAt,
       settledAt: entry.settledAt,
@@ -162,6 +200,7 @@ export class SubagentManager {
       cwd,
       model: options.model,
       thinking: options.thinking,
+      quiet: options.quiet,
       status: "running",
       createdAt: Date.now(),
       outputTail: "",
@@ -172,6 +211,7 @@ export class SubagentManager {
 
     const onOutput = (chunk: string) => {
       entry.outputTail = appendBounded(entry.outputTail, chunk, OUTPUT_TAIL_CHARS);
+      this.notifyOutput();
     };
 
     let job: BackendJob;
@@ -183,6 +223,7 @@ export class SubagentManager {
           model: options.model,
           thinking: options.thinking,
           tools: options.tools,
+          extensionPath: options.extensionPath,
           systemPromptAppend: options.systemPromptAppend,
           signal: options.signal,
           onOutput,
@@ -305,7 +346,11 @@ export class SubagentManager {
     this.notify();
 
     if (!this.disposed) {
-      this.onSettled?.({ snapshot: this.snapshotOf(entry), consumed });
+      try {
+        this.onSettled?.({ snapshot: this.snapshotOf(entry), consumed });
+      } catch {
+        // Completion listeners must not break settle bookkeeping.
+      }
     }
   }
 
@@ -321,6 +366,8 @@ export class SubagentManager {
         Promise.all(waits),
         abortPromise(signal, "Wait aborted; subagents continue in the background."),
       ]);
+      // disposeAll may clear entries between the settle and this continuation.
+      if (this.disposed) throw new Error("Subagent manager was disposed during wait.");
       return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
     } finally {
       for (const id of ids) this.waitInterest.release(id);
@@ -353,6 +400,8 @@ export class SubagentManager {
           abortPromise(signal, "Cancel wait aborted; termination continues in the background."),
         ]);
       }
+      // disposeAll may clear entries between the settle and this continuation.
+      if (this.disposed) throw new Error("Subagent manager was disposed during cancel.");
       return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
     } finally {
       for (const id of ids) {
@@ -375,6 +424,10 @@ export class SubagentManager {
   async disposeAll() {
     if (this.disposed) return;
     this.disposed = true;
+    if (this.outputNotifyTimer) {
+      clearTimeout(this.outputNotifyTimer);
+      this.outputNotifyTimer = undefined;
+    }
     const running = [...this.entries.values()].filter((e) => e.status === "running");
     for (const entry of running) {
       this.waitInterest.add(entry.id);

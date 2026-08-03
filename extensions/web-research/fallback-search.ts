@@ -94,13 +94,28 @@ function stripTags(s: string) {
   return s.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
 }
 
+// Single pass so replacements are never re-decoded: "&amp;lt;" must yield
+// the literal text "&lt;", not "<".
 function decodeHtml(s: string) {
-  return s
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#x27;/g, "'")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
+  return s.replace(/&(amp|lt|gt|quot|#\d+|#x[0-9a-f]+);/gi, (whole, entity: string) => {
+    switch (entity.toLowerCase()) {
+      case "amp":
+        return "&";
+      case "lt":
+        return "<";
+      case "gt":
+        return ">";
+      case "quot":
+        return '"';
+      default: {
+        const code =
+          entity[1]!.toLowerCase() === "x"
+            ? Number.parseInt(entity.slice(2), 16)
+            : Number.parseInt(entity.slice(1), 10);
+        return code <= 0x10ffff && !(code >= 0xd800 && code <= 0xdfff)
+          ? String.fromCodePoint(code)
+          : whole;
+      }
+    }
+  });
 }

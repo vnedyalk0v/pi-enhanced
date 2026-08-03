@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { readFile, readdir, rm } from "node:fs/promises";
+import { readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname } from "node:path";
 import { describe, it } from "node:test";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES } from "@earendil-works/pi-coding-agent";
-import { runBinary } from "./run.ts";
+import { runBinary, SPILL_MAX_BYTES, stripSpillPathClause } from "./run.ts";
 
 function prefix() {
   return `pi-file-search-test-${randomUUID()}`;
@@ -16,6 +16,26 @@ async function spillPaths(name: string) {
     .filter((entry) => entry.startsWith(`${name}-`))
     .map((entry) => `${tmpdir()}/${entry}`);
 }
+
+describe("stripSpillPathClause", () => {
+  it("strips the path clause only from the final generated notice", () => {
+    const base = "[Output truncated: showing 5 of 9 lines (1.0MB of 2.0MB).";
+    assert.equal(
+      stripSpillPathClause(`${base} Full output: /tmp/a/output.txt]`),
+      `${base}]`,
+    );
+    assert.equal(
+      stripSpillPathClause(`${base} Partial output (first 16.0MB): /tmp/a/output.txt]`),
+      `${base}]`,
+    );
+    for (const userOutput of ["match: Full output: value]", "match Full output without delimiter"]) {
+      assert.equal(
+        stripSpillPathClause(`${userOutput}\n${base} Full output: /tmp/a/output.txt]`),
+        `${userOutput}\n${base}]`,
+      );
+    }
+  });
+});
 
 describe("runBinary", () => {
   it("returns small output exactly and removes its temporary file", async () => {
@@ -83,6 +103,50 @@ describe("runBinary", () => {
     assert.match(result.text, new RegExp(`showing \\d+ of ${lines.length} lines`));
     assert.ok(result.fullOutputPath);
     assert.equal((await readFile(result.fullOutputPath, "utf8")), expected);
+
+    await rm(dirname(result.fullOutputPath), { recursive: true });
+  });
+
+  it("caps the spill file at SPILL_MAX_BYTES and labels it partial", async () => {
+    const name = prefix();
+    const chunks = Math.floor(SPILL_MAX_BYTES / (1024 * 1024)) + 1;
+    const result = await runBinary(
+      process.execPath,
+      [
+        "-e",
+        `const chunk = Buffer.alloc(1024 * 1024, 120); for (let i = 0; i < ${chunks}; i++) process.stdout.write(chunk);`,
+      ],
+      tmpdir(),
+      name,
+    );
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.truncated, true);
+    assert.match(result.text, /Partial output \(first [^)]+\): /);
+    assert.ok(result.fullOutputPath);
+    assert.equal((await stat(result.fullOutputPath)).size, SPILL_MAX_BYTES);
+
+    await rm(dirname(result.fullOutputPath), { recursive: true });
+  });
+
+  it("moves a partial spill boundary before an incomplete UTF-8 character", async () => {
+    const name = prefix();
+    const result = await runBinary(
+      process.execPath,
+      [
+        "-e",
+        `const out = Buffer.alloc(${SPILL_MAX_BYTES + 4}, 97); out.set(Buffer.from("€"), ${SPILL_MAX_BYTES - 1}); process.stdout.write(out);`,
+      ],
+      tmpdir(),
+      name,
+    );
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.truncated, true);
+    assert.ok(result.fullOutputPath);
+    const spill = await readFile(result.fullOutputPath);
+    assert.equal(spill.length, SPILL_MAX_BYTES - 1);
+    assert.doesNotThrow(() => new TextDecoder("utf-8", { fatal: true }).decode(spill));
 
     await rm(dirname(result.fullOutputPath), { recursive: true });
   });

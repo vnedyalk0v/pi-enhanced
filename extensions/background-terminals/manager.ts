@@ -8,6 +8,7 @@ import { InterestTracker, pruneSettled } from "../shared/lifecycle.ts";
 import { abortPromise, sleep } from "../shared/time.ts";
 import {
   createSpillDir,
+  MAX_SESSION_SPILL_BYTES,
   OutputBuffer,
   openSpillStreams,
   removeSpillDir,
@@ -94,6 +95,7 @@ export class TerminalManager {
   private outputNotifyTimer?: ReturnType<typeof setTimeout>;
   private spillDirPromise?: Promise<string>;
   private spillOpenings = new Set<Promise<Awaited<ReturnType<typeof openSpillStreams>>>>();
+  private readonly spillBudget = { remainingBytes: MAX_SESSION_SPILL_BYTES };
   private readonly isRetained = (entry: Entry) =>
     entry.status === "running" || this.killInterest.has(entry.id);
   private readonly maxRunning: number;
@@ -122,7 +124,11 @@ export class TerminalManager {
       clearTimeout(this.outputNotifyTimer);
       this.outputNotifyTimer = undefined;
     }
-    this.onChange?.();
+    try {
+      this.onChange?.();
+    } catch {
+      // UI listeners must not break process bookkeeping.
+    }
     for (const listener of this.listeners) {
       try {
         listener();
@@ -222,8 +228,8 @@ export class TerminalManager {
     } finally {
       this.spillOpenings.delete(spillOpening);
     }
-    const stdout = new OutputBuffer(undefined, spill.stdout);
-    const stderr = new OutputBuffer(undefined, spill.stderr);
+    const stdout = new OutputBuffer(undefined, { ...spill.stdout, budget: this.spillBudget });
+    const stderr = new OutputBuffer(undefined, { ...spill.stderr, budget: this.spillBudget });
     if (this.disposed) {
       this.startingCount -= 1;
       await Promise.all([stdout.close(), stderr.close()]);
@@ -381,7 +387,13 @@ export class TerminalManager {
     this.notify();
 
     if (!this.disposed) {
-      this.onSettled?.({ snapshot: this.snapshotOf(entry), consumed });
+      try {
+        this.onSettled?.({ snapshot: this.snapshotOf(entry), consumed });
+      } catch {
+        // Completion listeners must not break settle bookkeeping; settle is
+        // fired from stream close handlers where a throw would surface as an
+        // unhandled rejection.
+      }
     }
   }
 

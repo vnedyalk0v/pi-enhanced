@@ -22,6 +22,15 @@ import { REPO_TASK_PHASES } from "./template.ts";
 const DEFAULT_MAX_RUNNING = 1;
 const DEFAULT_MAX_TRACKED = 16;
 
+export function selectReconTools(availableTools: Iterable<string>) {
+  const available = new Set(availableTools);
+  if (available.has("read") && available.has("fd") && available.has("rg")) {
+    return ["read", "fd", "rg"];
+  }
+  const fallback = ["read", "find", "grep", "ls"].filter((tool) => available.has(tool));
+  return fallback.length > 0 ? fallback : undefined;
+}
+
 type PhaseRuntime = {
   name: string;
   status: PhaseRunSnapshot["status"];
@@ -67,6 +76,8 @@ export type WorkflowManagerOptions = {
   onChange?: () => void;
   /** Injected into each workflow's SubagentManager (tests). */
   subagentOptions?: Omit<SubagentManagerOptions, "onSettled" | "onChange">;
+  reconTools?: string[];
+  reconExtensionPath?: string;
 };
 
 export class WorkflowManager {
@@ -75,12 +86,15 @@ export class WorkflowManager {
   private startingCount = 0;
   private disposed = false;
   private waitInterest = new InterestTracker();
+  private readonly listeners = new Set<() => void>();
   private readonly maxRunning: number;
   private readonly maxTracked: number;
   private readonly artifactsRoot?: string;
   private onSettled?: (info: WorkflowSettledInfo) => void;
   private onChange?: () => void;
   private subagentOptions?: Omit<SubagentManagerOptions, "onSettled" | "onChange">;
+  private reconTools?: string[];
+  private reconExtensionPath?: string;
 
   constructor(options: WorkflowManagerOptions = {}) {
     this.maxRunning = options.maxRunning ?? DEFAULT_MAX_RUNNING;
@@ -89,6 +103,8 @@ export class WorkflowManager {
     this.onSettled = options.onSettled;
     this.onChange = options.onChange;
     this.subagentOptions = options.subagentOptions;
+    this.reconTools = options.reconTools;
+    this.reconExtensionPath = options.reconExtensionPath;
   }
 
   list(): WorkflowSnapshot[] {
@@ -225,10 +241,11 @@ export class WorkflowManager {
       this.notify();
 
       // Background orchestration — never await here.
-      void this.runWorkflow(entry);
+      void this.runWorkflow(entry).catch(() => {});
 
       return this.snapshotOf(entry);
     } catch (error) {
+      this.entries.delete(id);
       if (subagents) await subagents.disposeAll();
       if (artifactsDir) await rm(artifactsDir, { recursive: true, force: true });
       throw error;
@@ -268,24 +285,11 @@ export class WorkflowManager {
         return;
       }
 
-      const synthesis = entry.priorOutputs.filter((o) => o.phase === "synthesis");
-      const synthOk = synthesis.some((o) => o.status === "ok");
-      const lastSynth = [...synthesis].reverse().find((o) => o.status === "ok") ?? synthesis.at(-1);
-
-      if (lastSynth?.status === "ok" && lastSynth.summary) {
-        // Prefer full body from artifact if we stored final already in runPhase
-        entry.finalSummary = lastSynth.summary;
-      }
-
-      // final.md written in runPhase for synthesis tasks; ensure path
-      if (!entry.finalArtifactPath) {
-        const body =
-          entry.finalSummary ||
-          buildFallbackSynthesis(entry.goal, entry.priorOutputs, entry.failedTaskCount);
-        entry.finalArtifactPath = await writeFinalArtifact(entry.artifactsDir, body);
-        entry.finalSummary = extractSummary(body);
-      }
-
+      // A successful synthesis task already wrote final.md and finalSummary in
+      // runPhase (ok requires a non-empty resultText); only the fallback remains.
+      const synthOk = entry.priorOutputs.some(
+        (o) => o.phase === "synthesis" && o.status === "ok",
+      );
       if (!synthOk) {
         // Still produce a synthesized result from preserved artifacts after partial failure.
         const fallback = buildFallbackSynthesis(
@@ -395,6 +399,8 @@ export class WorkflowManager {
           cwd: entry.cwd,
           model,
           thinking,
+          tools: phaseName === "reconnaissance" ? (this.reconTools ?? task.tools) : task.tools,
+          extensionPath: phaseName === "reconnaissance" ? this.reconExtensionPath : undefined,
         });
         tr.subagentId = snap.id;
         spawned.push({ task, subagentId: snap.id });
@@ -548,10 +554,18 @@ export class WorkflowManager {
     await this.persist(entry);
     entry.resolveSettle();
     this.prune();
-    this.notify();
+    try {
+      this.notify();
+    } catch {
+      // ignore
+    }
 
     if (!this.disposed) {
-      this.onSettled?.({ snapshot: this.snapshotOf(entry), consumed });
+      try {
+        this.onSettled?.({ snapshot: this.snapshotOf(entry), consumed });
+      } catch {
+        // ignore
+      }
     }
   }
 
@@ -590,8 +604,26 @@ export class WorkflowManager {
     };
   }
 
+  subscribe(listener: () => void) {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  }
+
   private notify() {
-    this.onChange?.();
+    try {
+      this.onChange?.();
+    } catch {
+      // UI listeners must not break process bookkeeping.
+    }
+    for (const listener of this.listeners) {
+      try {
+        listener();
+      } catch {
+        // UI listeners must not break process bookkeeping.
+      }
+    }
   }
 
   private prune() {
@@ -623,6 +655,8 @@ export class WorkflowManager {
         Promise.all(waits),
         abortPromise(signal, "Wait aborted; workflows continue in the background."),
       ]);
+      // disposeAll may clear entries between the settle and this continuation.
+      if (this.disposed) throw new Error("Workflow manager was disposed during wait.");
       return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
     } finally {
       for (const id of ids) this.waitInterest.release(id);
@@ -658,6 +692,8 @@ export class WorkflowManager {
           abortPromise(signal, "Cancel wait aborted; termination continues in the background."),
         ]);
       }
+      // disposeAll may clear entries between the settle and this continuation.
+      if (this.disposed) throw new Error("Workflow manager was disposed during cancel.");
       return ids.map((id) => this.snapshotOf(this.entries.get(id)!));
     } finally {
       for (const id of ids) {

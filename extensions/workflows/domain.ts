@@ -17,6 +17,7 @@ export type WorkflowTaskDef = {
   role: string;
   model?: string;
   thinking?: string;
+  tools?: string[];
 };
 
 /** Validated handoff record stored as artifact and fed to later phases. */

@@ -1,8 +1,8 @@
 import { resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { ResultDelivery } from "../shared/delivery.ts";
-import { TOOL_LIMITS_NOTE } from "../shared/text.ts";
+import { createManagerHost } from "../shared/host.ts";
+import { TOOL_LIMITS_NOTE, truncateOneLine } from "../shared/text.ts";
 import {
   buildKillResult,
   buildListResult,
@@ -40,85 +40,44 @@ const KillParams = Type.Object({
 
 export default function (pi: ExtensionAPI) {
   let manager: TerminalManager | undefined;
-  let uiCtx: ExtensionContext | undefined;
-  let disposed = false;
-  const delivery = new ResultDelivery<TerminalSnapshot>();
 
+  const host = createManagerHost<TerminalSnapshot>(pi, {
+    widgetId: WIDGET_ID,
+    customType: "background-terminal-result",
+    runningLabel: (n) =>
+      n === 1
+        ? "1 background terminal running • /ps to view"
+        : `${n} background terminals running • /ps to view`,
+    completion: (snap) => ({
+      content: buildTerminalResultMessage(snap),
+      details: {
+        id: snap.id,
+        title: snap.title,
+        status: snap.status,
+        exitCode: snap.exitCode,
+        signal: snap.signal,
+      },
+    }),
+    getRunning: () => manager?.getRunningCount(),
+    dispose: async () => {
+      const m = manager;
+      manager = undefined;
+      if (m) await m.disposeAll();
+    },
+  });
+
+  // Manager is created lazily on first tool use so ephemeral sessions without
+  // bg tools do not create spill directories.
   const getManager = (ctx: ExtensionContext) => {
-    if (disposed) throw new Error("Background terminal manager is shutting down.");
+    if (host.disposed) throw new Error("Background terminal manager is shutting down.");
     if (manager) return manager;
-    const sessionKey = ctx.sessionManager.getSessionId();
-
     manager = new TerminalManager({
-      sessionKey,
-      onSettled: ({ snapshot, consumed }) => {
-        if (disposed || consumed) return;
-        delivery.enqueue(snapshot.id, snapshot);
-        flushDelivery();
-      },
-      onChange: () => {
-        updateWidget();
-      },
+      sessionKey: ctx.sessionManager.getSessionId(),
+      onSettled: host.onSettled,
+      onChange: host.updateWidget,
     });
     return manager;
   };
-
-  const updateWidget = () => {
-    if (!uiCtx?.hasUI || !manager) return;
-    const running = manager.getRunningCount();
-    if (running === 0) {
-      uiCtx.ui.setWidget(WIDGET_ID, undefined);
-      return;
-    }
-    const label =
-      running === 1
-        ? "1 background terminal running • /ps to view"
-        : `${running} background terminals running • /ps to view`;
-    uiCtx.ui.setWidget(WIDGET_ID, [label]);
-  };
-
-  const flushDelivery = () => {
-    if (disposed) {
-      delivery.clear();
-      return;
-    }
-    for (const { value } of delivery.drainAll()) {
-      pi.sendMessage(
-        {
-          customType: "background-terminal-result",
-          content: buildTerminalResultMessage(value),
-          display: true,
-          details: {
-            id: value.id,
-            title: value.title,
-            status: value.status,
-            exitCode: value.exitCode,
-            signal: value.signal,
-          },
-        },
-        { deliverAs: "followUp", triggerTurn: true },
-      );
-    }
-  };
-
-  pi.on("session_start", async (_event, ctx) => {
-    disposed = false;
-    uiCtx = ctx;
-    // Manager is created lazily on first tool use so ephemeral sessions without
-    // bg tools do not create spill directories.
-  });
-
-  pi.on("session_shutdown", async () => {
-    disposed = true;
-    delivery.clear();
-    if (uiCtx?.hasUI) {
-      uiCtx.ui.setWidget(WIDGET_ID, undefined);
-    }
-    const m = manager;
-    manager = undefined;
-    uiCtx = undefined;
-    if (m) await m.disposeAll();
-  });
 
   pi.registerTool({
     name: "bg_start",
@@ -140,7 +99,7 @@ export default function (pi: ExtensionAPI) {
         title: params.title,
         cwd,
       });
-      updateWidget();
+      host.updateWidget();
       return {
         content: [{ type: "text" as const, text: buildStartResult(snap) }],
         details: { id: snap.id, pid: snap.pid, status: snap.status },
@@ -162,7 +121,7 @@ export default function (pi: ExtensionAPI) {
       }
       // If completion was pending, model is reading it now — don't also inject.
       if (snap.status !== "running") {
-        delivery.consume([snap.id]);
+        host.delivery.consume([snap.id]);
       }
       return {
         content: [{ type: "text" as const, text: buildStatusResult(snap) }],
@@ -206,8 +165,8 @@ export default function (pi: ExtensionAPI) {
       }
       try {
         const results = await m.kill(params.ids, signal);
-        delivery.consume(params.ids);
-        updateWidget();
+        host.delivery.consume(params.ids);
+        host.updateWidget();
         return {
           content: [{ type: "text" as const, text: buildKillResult(results) }],
           details: {
@@ -219,12 +178,7 @@ export default function (pi: ExtensionAPI) {
           },
         };
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        // If wait was aborted, still mark consumed so a late settle does not double-notify.
-        if (message.includes("Kill wait aborted")) {
-          delivery.consume(params.ids);
-          updateWidget();
-        }
+        host.consumeIfWaitAborted(error, params.ids);
         throw error;
       }
     },
@@ -254,11 +208,28 @@ export default function (pi: ExtensionAPI) {
             done(undefined);
           },
           () => tui.requestRender(),
+          {
+            getRows: () => tui.terminal.rows,
+            // Queue before waiting for process termination; the user can close
+            // the overlay and start another turn immediately.
+            onKillRequested: (snap) => {
+              pi.sendMessage(
+                {
+                  customType: "background-terminal-user-kill",
+                  content: `User requested termination of background terminal ${snap.id} "${truncateOneLine(snap.title, 120)}" from /ps.`,
+                  display: false,
+                  details: { id: snap.id, status: snap.status },
+                },
+                { deliverAs: "nextTurn", triggerTurn: false },
+              );
+            },
+          },
         );
         return {
           render: (width: number) => overlay.render(width),
           invalidate: () => {},
           handleInput: (data: string) => overlay.handleInput(data),
+          dispose: () => overlay.dispose(),
         };
       });
     },

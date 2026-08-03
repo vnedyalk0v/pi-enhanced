@@ -5,7 +5,13 @@ import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "@earendil-work
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { type BinaryName, ensureBinary } from "./binaries.ts";
-import { buildFdArgs, buildRgArgs, runBinary, type RunResult } from "./run.ts";
+import {
+  buildFdArgs,
+  buildRgArgs,
+  runBinary,
+  stripSpillPathClause,
+  type RunResult,
+} from "./run.ts";
 
 const FdParams = Type.Object({
   pattern: Type.String({
@@ -83,7 +89,7 @@ export default function (pi: ExtensionAPI) {
       await rm(directory, { recursive: true, force: true }).catch(() => {});
       return {
         ...result,
-        text: result.text.replace(` Full output: ${fullOutputPath}`, ""),
+        text: stripSpillPathClause(result.text),
         fullOutputPath: undefined,
       };
     }
