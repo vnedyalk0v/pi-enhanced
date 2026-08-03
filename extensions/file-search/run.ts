@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, open, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Transform, Writable } from "node:stream";
@@ -47,6 +47,46 @@ function appendHead(state: HeadState, text: string) {
   });
   state.text = truncation.content;
   if (truncation.truncated) state.truncation = truncation;
+}
+
+function incompleteUtf8SuffixLength(tail: Buffer) {
+  let leadIndex = tail.length - 1;
+  while (leadIndex >= 0 && (tail[leadIndex]! & 0xc0) === 0x80) leadIndex--;
+  if (leadIndex < 0) return 0;
+
+  const lead = tail[leadIndex]!;
+  let expected = 0;
+  if (lead >= 0xc2 && lead <= 0xdf) expected = 1;
+  else if (lead >= 0xe0 && lead <= 0xef) expected = 2;
+  else if (lead >= 0xf0 && lead <= 0xf4) expected = 3;
+  const present = tail.length - leadIndex - 1;
+  return expected > present ? present + 1 : 0;
+}
+
+async function trimIncompleteUtf8Suffix(path: string, size: number) {
+  const tailLength = Math.min(4, size);
+  const file = await open(path, "r+");
+  try {
+    const tail = Buffer.allocUnsafe(tailLength);
+    let bytesRead = 0;
+    while (bytesRead < tailLength) {
+      const result = await file.read(
+        tail,
+        bytesRead,
+        tailLength - bytesRead,
+        size - tailLength + bytesRead,
+      );
+      if (result.bytesRead === 0) break;
+      bytesRead += result.bytesRead;
+    }
+    const trimBytes = incompleteUtf8SuffixLength(tail.subarray(0, bytesRead));
+    if (trimBytes === 0) return size;
+    const safeSize = size - trimBytes;
+    await file.truncate(safeSize);
+    return safeSize;
+  } finally {
+    await file.close();
+  }
 }
 
 export function buildFdArgs(params: {
@@ -215,11 +255,13 @@ export async function runBinary(
       };
     }
 
+    if (spillTruncated) spillBytes = await trimIncompleteUtf8Suffix(tempFile, spillBytes);
+
     const notice =
       `\n\n[Output truncated: showing ${truncation.outputLines} of ${totalLines} lines` +
       ` (${formatSize(truncation.outputBytes)} of ${formatSize(totalBytes)}).` +
       (spillTruncated
-        ? ` Partial output (first ${formatSize(SPILL_MAX_BYTES)}): ${tempFile}]`
+        ? ` Partial output (first ${formatSize(spillBytes)}): ${tempFile}]`
         : ` Full output: ${tempFile}]`);
 
     return {

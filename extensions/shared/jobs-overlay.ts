@@ -36,7 +36,6 @@ export type JobsOverlayConfig<S extends { id: string }> = {
 
 type Mode = { kind: "list" } | { kind: "detail"; id: string; scroll: number };
 
-const MIN_BODY_LINES = 5;
 const MIN_LIST_ROWS = 3;
 const FALLBACK_ROWS = 30;
 
@@ -302,18 +301,27 @@ export class JobsOverlay<S extends { id: string }> {
       this.wrappedBodyCache = { id: snap.id, width: bodyWidth, lines: contentLines };
     }
 
-    const headerLines = lines.length + 3;
-    const maxBody = Math.max(MIN_BODY_LINES, rows - headerLines);
+    const availableRows = Math.max(0, Math.floor(rows));
+    const footerHint = truncateToWidth(
+      `  ${th.fg("dim", "↑/↓ scroll  x cancel  Esc back")}`,
+      width,
+    );
+    const footer =
+      availableRows >= 3
+        ? ["", footerHint, ""]
+        : availableRows > 0
+          ? [footerHint, ...Array<string>(availableRows - 1).fill("")]
+          : [];
+    const rendered = lines.slice(0, Math.max(0, availableRows - footer.length));
+    const maxBody = Math.max(0, availableRows - rendered.length - footer.length);
     const maxScroll = Math.max(0, contentLines.length - maxBody);
     const scroll = Math.min(mode.scroll, maxScroll);
     if (scroll !== mode.scroll) this.mode = { ...mode, scroll };
     for (const line of contentLines.slice(scroll, scroll + maxBody)) {
-      lines.push(truncateToWidth(`  ${line}`, width));
+      rendered.push(truncateToWidth(`  ${line}`, width));
     }
 
-    lines.push("");
-    lines.push(truncateToWidth(`  ${th.fg("dim", "↑/↓ scroll  x cancel  Esc back")}`, width));
-    lines.push("");
-    return lines;
+    rendered.push(...footer);
+    return rendered;
   }
 }

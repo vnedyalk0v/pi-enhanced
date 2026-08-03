@@ -10,7 +10,12 @@ const theme = {
   bold: (text: string) => text,
 } as unknown as Theme;
 
-function makeHarness(options?: { snapshots?: Snap[]; rows?: number; requestThrows?: boolean }) {
+function makeHarness(options?: {
+  snapshots?: Snap[];
+  rows?: number;
+  requestThrows?: boolean;
+  detailHeaders?: string[];
+}) {
   let snapshots = options?.snapshots ?? [{ id: "j-1", label: "first", running: true }];
   let rows = options?.rows ?? 30;
   const listeners = new Set<() => void>();
@@ -33,7 +38,7 @@ function makeHarness(options?: { snapshots?: Snap[]; rows?: number; requestThrow
       };
     },
     renderRow: (snap) => `${snap.id} ${snap.label}`,
-    detailHeader: (snap) => [`${snap.id} header`],
+    detailHeader: (snap) => options?.detailHeaders ?? [`${snap.id} header`],
     detailBody: (snap) => {
       detailBodyCalls++;
       return snap.label;
@@ -217,6 +222,38 @@ describe("JobsOverlay rendering", () => {
 
     assert.ok(short.length < tall.length);
     assert.ok(short.length <= 12, `rendered ${short.length} lines into 12 rows`);
+  });
+
+  it("caps detail body rows at the terminal height", () => {
+    const h = makeHarness({
+      snapshots: [{ id: "j-1", label: "one\ntwo\nthree\nfour\nfive", running: false }],
+      rows: 9,
+    });
+    h.overlay.handleInput("\r");
+
+    const rendered = h.overlay.render(60);
+    assert.equal(rendered.length, 9);
+    assert.match(rendered.join("\n"), /one/);
+    assert.doesNotMatch(rendered.join("\n"), /three/);
+
+    h.setRows(7);
+    const chromeOnly = h.overlay.render(60);
+    assert.equal(chromeOnly.length, 7);
+    assert.doesNotMatch(chromeOnly.join("\n"), /one/);
+    assert.match(chromeOnly.join("\n"), /↑\/↓ scroll/);
+
+    const realistic = makeHarness({
+      snapshots: [{ id: "j-2", label: "body", running: false }],
+      rows: 9,
+      detailHeaders: ["status", "worker", "cwd", "model"],
+    });
+    realistic.overlay.handleInput("\r");
+    for (let rows = 0; rows <= 9; rows++) {
+      realistic.setRows(rows);
+      const short = realistic.overlay.render(60);
+      assert.equal(short.length, rows, `rendered ${short.length} lines into ${rows} rows`);
+      if (rows > 0) assert.match(short.join("\n"), /Esc back/);
+    }
   });
 
   it("windows a long list and marks the hidden rows", () => {

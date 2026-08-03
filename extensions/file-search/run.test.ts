@@ -129,6 +129,28 @@ describe("runBinary", () => {
     await rm(dirname(result.fullOutputPath), { recursive: true });
   });
 
+  it("moves a partial spill boundary before an incomplete UTF-8 character", async () => {
+    const name = prefix();
+    const result = await runBinary(
+      process.execPath,
+      [
+        "-e",
+        `const out = Buffer.alloc(${SPILL_MAX_BYTES + 4}, 97); out.set(Buffer.from("€"), ${SPILL_MAX_BYTES - 1}); process.stdout.write(out);`,
+      ],
+      tmpdir(),
+      name,
+    );
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.truncated, true);
+    assert.ok(result.fullOutputPath);
+    const spill = await readFile(result.fullOutputPath);
+    assert.equal(spill.length, SPILL_MAX_BYTES - 1);
+    assert.doesNotThrow(() => new TextDecoder("utf-8", { fatal: true }).decode(spill));
+
+    await rm(dirname(result.fullOutputPath), { recursive: true });
+  });
+
   it("decodes UTF-8 characters split across writes without replacement characters", async () => {
     const name = prefix();
     const result = await runBinary(
