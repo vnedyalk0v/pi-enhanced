@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import {
   mkdirSync,
   mkdtempSync,
-  opendirSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -13,10 +12,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { CONFIG_DIR_NAME } from "@earendil-works/pi-coding-agent";
 import {
-  describeHiddenAgent,
   discoverAgents,
   findGitRoot,
-  findHiddenAgent,
   isSameTrustedProject,
   sharesGitRoot,
 } from "./agents.ts";
@@ -328,145 +325,6 @@ describe("discoverAgents", () => {
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }
-  });
-});
-
-describe("findHiddenAgent", () => {
-  it("explains a project agent hidden because the project is untrusted", () => {
-    writeAgent(
-      join(cwd, CONFIG_DIR_NAME, "agents"),
-      "worker.md",
-      "---\nname: worker\ndescription: general\n---\nBody.",
-    );
-
-    const hidden = findHiddenAgent("worker", cwd, cwd, false);
-    assert.ok(hidden);
-    assert.equal(hidden.reason, "project-untrusted");
-    assert.equal(hidden.filePath, join(cwd, CONFIG_DIR_NAME, "agents", "worker.md"));
-    assert.match(describeHiddenAgent("worker", cwd, hidden), /trusted projects/);
-  });
-
-  it("explains a session-project agent unavailable for an outside working_dir", () => {
-    writeAgent(
-      join(cwd, CONFIG_DIR_NAME, "agents"),
-      "worker.md",
-      "---\nname: worker\ndescription: general\n---\nBody.",
-    );
-    const outside = mkTempDir("pi-subagent-outside-");
-    try {
-      for (const sessionTrusted of [true, false]) {
-        const hidden = findHiddenAgent("worker", outside, cwd, sessionTrusted);
-        assert.ok(hidden);
-        assert.equal(hidden.reason, "working-dir-outside-project");
-        assert.match(describeHiddenAgent("worker", outside, hidden), /working_dir/);
-      }
-    } finally {
-      rmSync(outside, { recursive: true, force: true });
-    }
-  });
-
-  it("reports the nearest nested same-project definition as trust-blocked", () => {
-    const nested = join(cwd, "packages", "worker");
-    writeAgent(
-      join(cwd, CONFIG_DIR_NAME, "agents"),
-      "root.md",
-      "---\nname: nested\ndescription: shadowed root agent\n---\nBody.",
-    );
-    writeAgent(
-      join(nested, CONFIG_DIR_NAME, "agents"),
-      "nested.md",
-      "---\nname: nested\ndescription: nested project agent\n---\nBody.",
-    );
-
-    const hidden = findHiddenAgent("nested", nested, cwd, false);
-    assert.ok(hidden);
-    assert.equal(hidden.reason, "project-untrusted");
-    assert.equal(hidden.filePath, join(nested, CONFIG_DIR_NAME, "agents", "nested.md"));
-    assert.match(describeHiddenAgent("nested", nested, hidden), /Approve the project/);
-  });
-
-  it("bounds traversal across all project-directory entries", () => {
-    const dir = join(cwd, CONFIG_DIR_NAME, "agents");
-    const fixtures = Array.from({ length: 70 }, (_, i) => ({
-      filename: `agent-${String(i).padStart(2, "0")}.md`,
-      name: `agent-${i}`,
-    }));
-    for (const fixture of fixtures) {
-      writeAgent(
-        dir,
-        fixture.filename,
-        `---\nname: ${fixture.name}\ndescription: diagnostic fixture\n---\nBody.`,
-      );
-    }
-    for (let i = 0; i < 70; i++) {
-      writeFileSync(join(dir, `irrelevant-${i}.txt`), "ignored", "utf8");
-    }
-
-    // Observe the filesystem's own stable directory order instead of assuming
-    // lexicographic iteration, then verify an entry beyond the scanner's first
-    // 64 cannot be reached.
-    const handle = opendirSync(dir);
-    const visited = new Set<string>();
-    try {
-      for (let i = 0; i < 64; i++) {
-        const entry = handle.readSync();
-        assert.ok(entry);
-        visited.add(entry.name);
-      }
-    } finally {
-      handle.closeSync();
-    }
-    const excluded = fixtures.find((fixture) => !visited.has(fixture.filename));
-    assert.ok(excluded);
-
-    assert.equal(findHiddenAgent(excluded.name, cwd, cwd, false), undefined);
-  });
-
-  it("bounds aggregate bytes read across project definitions", () => {
-    const dir = join(cwd, CONFIG_DIR_NAME, "agents");
-    const fixtures = Array.from({ length: 20 }, (_, i) => ({
-      filename: `large-${String(i).padStart(2, "0")}.md`,
-      name: `large-${i}`,
-    }));
-    for (const fixture of fixtures) {
-      writeAgent(
-        dir,
-        fixture.filename,
-        `---\nname: ${fixture.name}\ndescription: diagnostic fixture\n${"# padding\n".repeat(3_000)}---\nBody.`,
-      );
-    }
-
-    const handle = opendirSync(dir);
-    const order: string[] = [];
-    try {
-      for (let entry = handle.readSync(); entry; entry = handle.readSync()) order.push(entry.name);
-    } finally {
-      handle.closeSync();
-    }
-    const first = fixtures.find((fixture) => fixture.filename === order[0]);
-    const beyondBudget = fixtures.find((fixture) => fixture.filename === order[17]);
-    assert.ok(first);
-    assert.ok(beyondBudget);
-
-    assert.equal(findHiddenAgent(first.name, cwd, cwd, false)?.reason, "project-untrusted");
-    assert.equal(findHiddenAgent(beyondBudget.name, cwd, cwd, false), undefined);
-  });
-
-  it("matches Pi frontmatter delimiters without reading the prompt body", () => {
-    const dir = join(cwd, CONFIG_DIR_NAME, "agents");
-    writeAgent(
-      dir,
-      "odd-newlines.md",
-      `---\rname: odd\rdescription: parser parity\r---suffix\r${"prompt body ".repeat(20_000)}`,
-    );
-
-    const hidden = findHiddenAgent("odd", cwd, cwd, false);
-    assert.ok(hidden);
-    assert.equal(hidden.reason, "project-untrusted");
-  });
-
-  it("returns undefined when the agent genuinely does not exist", () => {
-    assert.equal(findHiddenAgent("ghost", cwd, cwd, true), undefined);
   });
 });
 

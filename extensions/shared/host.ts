@@ -1,5 +1,4 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { ResultDelivery } from "./delivery.ts";
 import { WaitAbortedError } from "./time.ts";
 import { withUI } from "./ui.ts";
 
@@ -39,7 +38,8 @@ export function createManagerHost<S extends { id: string }>(
     content: string;
     details: Record<string, unknown>;
   }> = [];
-  const delivery = new ResultDelivery<S>();
+  /** Settled snapshots awaiting async completion delivery, by job id. */
+  const pendingDelivery = new Map<string, S>();
 
   const updateWidget = () => {
     const running = options.getRunning();
@@ -75,10 +75,12 @@ export function createManagerHost<S extends { id: string }>(
 
   const flushDelivery = () => {
     if (disposed) {
-      delivery.clear();
+      pendingDelivery.clear();
       return;
     }
-    for (const { value } of delivery.drainAll()) {
+    const draining = [...pendingDelivery.values()];
+    pendingDelivery.clear();
+    for (const value of draining) {
       const { content, details, triggerTurn } = options.completion(value);
       if (triggerTurn === false) {
         // While the agent is streaming, a followUp is drained straight into the
@@ -119,7 +121,7 @@ export function createManagerHost<S extends { id: string }>(
 
   pi.on("session_shutdown", async () => {
     disposed = true;
-    delivery.clear();
+    pendingDelivery.clear();
     heldWhileStreaming.length = 0;
     withUI(uiCtx, (ctx) => ctx.ui.setWidget(options.widgetId, undefined));
     sessionCtx = undefined;
@@ -131,12 +133,15 @@ export function createManagerHost<S extends { id: string }>(
     get disposed() {
       return disposed;
     },
-    delivery,
     updateWidget,
+    /** Drop queued completions for ids whose result the model is reading now. */
+    consume(ids: readonly string[]) {
+      for (const id of ids) pendingDelivery.delete(id);
+    },
     /** Manager onSettled callback: queue async completion unless already consumed. */
     onSettled({ snapshot, consumed }: { snapshot: S; consumed: boolean }) {
       if (disposed || consumed) return;
-      delivery.enqueue(snapshot.id, snapshot);
+      pendingDelivery.set(snapshot.id, snapshot);
       flushDelivery();
     },
     /**
@@ -145,7 +150,7 @@ export function createManagerHost<S extends { id: string }>(
      */
     consumeIfWaitAborted(error: unknown, ids: readonly string[]) {
       if (error instanceof WaitAbortedError) {
-        delivery.consume(ids);
+        for (const id of ids) pendingDelivery.delete(id);
         updateWidget();
       }
     },

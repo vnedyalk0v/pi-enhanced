@@ -20,21 +20,39 @@ export type JobsOverlayConfig<S extends { id: string }> = {
   /** Overlay title, e.g. "Subagents". */
   title: string;
   list: () => S[];
+  /**
+   * Detail-view snapshot, when `list()` omits fields too expensive to
+   * materialize per row (background-terminal stream text). Defaults to the
+   * matching entry from `list()`.
+   */
+  getDetail?: (id: string) => S | undefined;
   /** Subscribe to manager changes; returns an unsubscribe function. */
   subscribe: (listener: () => void) => () => void;
   /** One-line list row body (already themed); overlay adds marker and truncation. */
   renderRow: (snap: S, theme: Theme) => string;
+  /** Detail title after the id, e.g. a quoted terminal title. */
+  detailTitle?: (snap: S) => string;
+  /** Named detail views cycled with `t`; a single unnamed view when omitted. */
+  detailModes?: readonly string[];
   /** Themed header lines for the detail view (status, ids, paths, ...). */
-  detailHeader: (snap: S, theme: Theme) => string[];
+  detailHeader: (snap: S, theme: Theme, mode: string) => string[];
   /** Scrollable plain-text detail body (result, output, phase tree, ...). */
-  detailBody: (snap: S) => string;
+  detailBody: (snap: S, mode: string) => string;
+  /** False for preformatted bodies (terminal output): truncate rows, never wrap. */
+  wrapBody?: boolean;
   canCancel: (snap: S) => boolean;
+  /** Verb for the cancel key hint, e.g. "kill". Default "cancel". */
+  cancelLabel?: string;
   /** Called synchronously once cancellation is accepted, before termination waits. */
   onCancelRequested?: (snap: S) => void;
   cancel: (id: string) => Promise<unknown>;
 };
 
-type Mode = { kind: "list" } | { kind: "detail"; id: string; scroll: number };
+type Mode =
+  | { kind: "list" }
+  | { kind: "detail"; id: string; scroll: number; modeIndex: number };
+
+const SINGLE_MODE = [""] as const;
 
 const MIN_LIST_ROWS = 3;
 const FALLBACK_ROWS = 30;
@@ -51,7 +69,7 @@ export class JobsOverlay<S extends { id: string }> {
   private cachedWidth?: number;
   private cachedRows?: number;
   private cachedLines?: string[];
-  private wrappedBodyCache?: { id: string; width: number; lines: string[] };
+  private wrappedBodyCache?: { id: string; width: number; mode: string; lines: string[] };
   private cancelling = new Set<string>();
   private disposed = false;
   private config: JobsOverlayConfig<S>;
@@ -178,7 +196,7 @@ export class JobsOverlay<S extends { id: string }> {
     if (matchesKey(data, "return") || matchesKey(data, "enter")) {
       const snap = this.snapshots[this.selected];
       if (!snap) return;
-      this.mode = { kind: "detail", id: snap.id, scroll: 0 };
+      this.mode = { kind: "detail", id: snap.id, scroll: 0, modeIndex: 0 };
       this.rerender();
       return;
     }
@@ -200,9 +218,26 @@ export class JobsOverlay<S extends { id: string }> {
       this.rerender();
       return;
     }
+    if (data === "t" || data === "T") {
+      const modes = this.detailModes();
+      if (modes.length < 2) return;
+      this.mode = {
+        ...this.mode,
+        modeIndex: (this.mode.modeIndex + 1) % modes.length,
+        scroll: 0,
+      };
+      this.wrappedBodyCache = undefined;
+      this.rerender();
+      return;
+    }
     if (data === "x" || data === "X") {
       this.cancelJob(this.mode.id);
     }
+  }
+
+  private detailModes(): readonly string[] {
+    const modes = this.config.detailModes;
+    return modes && modes.length > 0 ? modes : SINGLE_MODE;
   }
 
   render(width: number): string[] {
@@ -258,52 +293,72 @@ export class JobsOverlay<S extends { id: string }> {
 
     lines.push("");
     lines.push(
-      truncateToWidth(`  ${th.fg("dim", "↑/↓ select  Enter detail  x cancel  Esc close")}`, width),
+      truncateToWidth(
+        `  ${th.fg("dim", `↑/↓ select  Enter detail  x ${this.cancelLabel()}  Esc close`)}`,
+        width,
+      ),
     );
     lines.push("");
     return lines;
+  }
+
+  private cancelLabel() {
+    return this.config.cancelLabel ?? "cancel";
   }
 
   private renderDetail(width: number, rows: number): string[] {
     const th = this.theme;
     const mode = this.mode;
     if (mode.kind !== "detail") return [];
-    const snap = this.snapshots.find((s) => s.id === mode.id);
+    const snap =
+      this.config.getDetail?.(mode.id) ?? this.snapshots.find((s) => s.id === mode.id);
     if (!snap) return [th.fg("dim", "  Job gone.")];
 
+    const modes = this.detailModes();
+    const detailMode = modes[Math.min(mode.modeIndex, modes.length - 1)]!;
     const lines: string[] = [""];
-    lines.push(this.titleRule(width, snap.id));
-    for (const header of this.config.detailHeader(snap, th)) {
+    lines.push(this.titleRule(width, `${snap.id}${this.config.detailTitle?.(snap) ?? ""}`));
+    for (const header of this.config.detailHeader(snap, th, detailMode)) {
       lines.push(truncateToWidth(`  ${header}`, width));
     }
     lines.push(th.fg("borderMuted", "─".repeat(Math.min(width, 40))));
 
     // Results are prose: a long paragraph is one logical line, so wrap to the
     // body width instead of truncating everything past the right edge away.
-    // Keep the wrapped rows across scroll renders; manager refreshes clear the
-    // cache when the underlying snapshot can have changed.
+    // Preformatted bodies (terminal output) opt out via wrapBody: false.
+    // Keep the processed rows across scroll renders; manager refreshes clear
+    // the cache when the underlying snapshot can have changed.
     const bodyWidth = Math.max(1, width - 2);
     const cachedBody = this.wrappedBodyCache;
     let contentLines =
-      cachedBody?.id === snap.id && cachedBody.width === bodyWidth
+      cachedBody?.id === snap.id &&
+      cachedBody.width === bodyWidth &&
+      cachedBody.mode === detailMode
         ? cachedBody.lines
         : undefined;
     if (!contentLines) {
       contentLines = [];
-      for (const raw of this.config.detailBody(snap).split("\n")) {
+      for (const raw of this.config.detailBody(snap, detailMode).split("\n")) {
         const line = terminalText(raw);
         if (!line) {
           contentLines.push("");
           continue;
         }
-        contentLines.push(...wrapTextWithAnsi(line, bodyWidth));
+        if (this.config.wrapBody === false) contentLines.push(line);
+        else contentLines.push(...wrapTextWithAnsi(line, bodyWidth));
       }
-      this.wrappedBodyCache = { id: snap.id, width: bodyWidth, lines: contentLines };
+      this.wrappedBodyCache = {
+        id: snap.id,
+        width: bodyWidth,
+        mode: detailMode,
+        lines: contentLines,
+      };
     }
 
     const availableRows = Math.max(0, Math.floor(rows));
+    const toggleHint = modes.length > 1 ? `  t ${modes.join("/")}` : "";
     const footerHint = truncateToWidth(
-      `  ${th.fg("dim", "↑/↓ scroll  x cancel  Esc back")}`,
+      `  ${th.fg("dim", `↑/↓ scroll${toggleHint}  x ${this.cancelLabel()}  Esc back`)}`,
       width,
     );
     const footer =

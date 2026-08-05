@@ -12,9 +12,7 @@ import {
 } from "../shared/text.ts";
 import { formatElapsed } from "../shared/time.ts";
 import {
-  describeHiddenAgent,
   discoverAgents,
-  findHiddenAgent,
   isSameTrustedProject,
   type AgentDefinition,
 } from "./agents.ts";
@@ -28,7 +26,6 @@ import {
   buildStatusResult,
   buildWaitResult,
   summarizeOutputTail,
-  truncateAtWord,
 } from "./format.ts";
 import { SubagentManager } from "./manager.ts";
 
@@ -185,10 +182,11 @@ export default function (pi: ExtensionAPI) {
         agentDef = agents.find((a) => a.name === agentName);
         if (!agentDef) {
           const available = agents.map((a) => a.name).join(", ") || "none";
-          const hidden = projectTrusted
-            ? undefined
-            : findHiddenAgent(agentName, cwd, ctx.cwd, ctx.isProjectTrusted());
-          const explanation = hidden ? ` ${describeHiddenAgent(agentName, cwd, hidden)}` : "";
+          // Project definitions stay invisible until the project is trusted and
+          // the worker directory shares it; say so rather than scanning for one.
+          const explanation = projectTrusted
+            ? ""
+            : " Project agents (.pi/agents) load only for trusted projects, and only when working_dir shares that project.";
           throw new Error(
             `Unknown agent: "${agentName}".${explanation} Available: ${truncateOneLine(available, 300)}.`,
           );
@@ -273,7 +271,7 @@ export default function (pi: ExtensionAPI) {
       const m = getManager();
       const snap = m.get(params.id);
       if (!snap) throw new Error(`Unknown subagent id: ${params.id}`);
-      if (snap.status !== "running") host.delivery.consume([snap.id]);
+      if (snap.status !== "running") host.consume([snap.id]);
       return {
         content: [{ type: "text" as const, text: buildStatusResult(snap) }],
         details: { id: snap.id, status: snap.status, agent: snap.agent },
@@ -307,7 +305,7 @@ export default function (pi: ExtensionAPI) {
       if (params.ids.length === 0) throw new Error("ids must not be empty");
       const m = getManager();
       const snaps = await m.wait(params.ids, signal);
-      host.delivery.consume(params.ids);
+      host.consume(params.ids);
       host.updateWidget();
       return {
         content: [{ type: "text" as const, text: buildWaitResult(snaps) }],
@@ -329,7 +327,7 @@ export default function (pi: ExtensionAPI) {
       const m = getManager();
       try {
         const snaps = await m.cancel(params.ids, signal);
-        host.delivery.consume(params.ids);
+        host.consume(params.ids);
         host.updateWidget();
         return {
           content: [{ type: "text" as const, text: buildCancelResult(snaps) }],
@@ -362,7 +360,7 @@ export default function (pi: ExtensionAPI) {
             "",
             prompt,
           ].join("\n"),
-          title: `btw: ${truncateAtWord(prompt, 40)}`,
+          title: `btw: ${truncateOneLine(prompt, 40)}`,
           cwd: ctx.cwd,
           model: modelLabel(ctx),
           thinking: ctx.thinkingLevel ?? "low",
@@ -450,7 +448,7 @@ export default function (pi: ExtensionAPI) {
             },
             cancel: (id) =>
               m.cancel([id]).then(() => {
-                host.delivery.consume([id]);
+                host.consume([id]);
                 host.updateWidget();
               }),
           },

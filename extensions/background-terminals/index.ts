@@ -10,8 +10,9 @@ import {
   buildStatusResult,
   buildTerminalResultMessage,
 } from "./format.ts";
+import { JobsOverlay } from "../shared/jobs-overlay.ts";
 import { TerminalManager, type TerminalSnapshot } from "./manager.ts";
-import { PsOverlay } from "./ps.ts";
+import { terminalOverlayConfig } from "./ps.ts";
 
 const WIDGET_ID = "background-terminals";
 
@@ -121,7 +122,7 @@ export default function (pi: ExtensionAPI) {
       }
       // If completion was pending, model is reading it now — don't also inject.
       if (snap.status !== "running") {
-        host.delivery.consume([snap.id]);
+        host.consume([snap.id]);
       }
       return {
         content: [{ type: "text" as const, text: buildStatusResult(snap) }],
@@ -165,7 +166,7 @@ export default function (pi: ExtensionAPI) {
       }
       try {
         const results = await m.kill(params.ids, signal);
-        host.delivery.consume(params.ids);
+        host.consume(params.ids);
         host.updateWidget();
         return {
           content: [{ type: "text" as const, text: buildKillResult(results) }],
@@ -200,30 +201,27 @@ export default function (pi: ExtensionAPI) {
 
       const m = getManager(ctx);
       await ctx.ui.custom((tui, theme, _kb, done) => {
-        const overlay = new PsOverlay(
-          m,
+        const overlay = new JobsOverlay<TerminalSnapshot>(
+          terminalOverlayConfig(m, (snap) => {
+            // Queue before waiting for process termination; the user can close
+            // the overlay and start another turn immediately.
+            pi.sendMessage(
+              {
+                customType: "background-terminal-user-kill",
+                content: `User requested termination of background terminal ${snap.id} "${truncateOneLine(snap.title, 120)}" from /ps.`,
+                display: false,
+                details: { id: snap.id, status: snap.status },
+              },
+              { deliverAs: "nextTurn", triggerTurn: false },
+            );
+          }),
           theme,
           () => {
             overlay.dispose();
             done(undefined);
           },
           () => tui.requestRender(),
-          {
-            getRows: () => tui.terminal.rows,
-            // Queue before waiting for process termination; the user can close
-            // the overlay and start another turn immediately.
-            onKillRequested: (snap) => {
-              pi.sendMessage(
-                {
-                  customType: "background-terminal-user-kill",
-                  content: `User requested termination of background terminal ${snap.id} "${truncateOneLine(snap.title, 120)}" from /ps.`,
-                  display: false,
-                  details: { id: snap.id, status: snap.status },
-                },
-                { deliverAs: "nextTurn", triggerTurn: false },
-              );
-            },
-          },
+          () => tui.terminal.rows,
         );
         return {
           render: (width: number) => overlay.render(width),
