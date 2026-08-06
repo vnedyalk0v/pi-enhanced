@@ -12,16 +12,8 @@ function streamOf(snap: TerminalSnapshot, mode: string) {
 }
 
 function streamSizeNote(stream: TerminalSnapshot["stdout"]) {
-  const spill = stream.spillPath
-    ? `${stream.spillTruncatedBytes > 0 ? "partial" : "full"}: ${terminalText(stream.spillPath)}`
-    : stream.spillTruncatedBytes > 0
-      ? "partial spill unavailable"
-      : "spill unavailable";
   if (stream.truncatedBytes > 0) {
-    return ` (viewing tail; ${formatSize(stream.truncatedBytes)} dropped; ${spill})`;
-  }
-  if (stream.spillTruncatedBytes > 0) {
-    return ` (${formatSize(stream.totalBytes)}; ${spill})`;
+    return ` (viewing tail; ${formatSize(stream.truncatedBytes)} dropped)`;
   }
   return ` (${formatSize(stream.totalBytes)})`;
 }
