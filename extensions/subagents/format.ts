@@ -58,15 +58,6 @@ export function summarizeOutputTail(tail: string) {
   return lines.join("\n");
 }
 
-/** One-line truncation that breaks at a word boundary instead of mid-word. */
-export function truncateAtWord(s: string, max: number) {
-  const one = s.replace(/\s+/g, " ").trim();
-  if (one.length <= max) return one;
-  const cut = one.slice(0, max);
-  const lastSpace = cut.lastIndexOf(" ");
-  return `${lastSpace > max / 2 ? cut.slice(0, lastSpace) : cut}…`;
-}
-
 export function describeSubagent(snap: SubagentSnapshot) {
   const elapsed = formatElapsed(snap.createdAt, snap.settledAt);
   const exit = formatExit(snap);

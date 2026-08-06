@@ -4,9 +4,10 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, it } from "node:test";
 import type { Theme } from "@earendil-works/pi-coding-agent";
+import { JobsOverlay } from "../shared/jobs-overlay.ts";
 import { buildStatusResult, buildTerminalResultMessage } from "./format.ts";
 import { TerminalManager, type SettledInfo, type TerminalSnapshot } from "./manager.ts";
-import { PsOverlay } from "./ps.ts";
+import { terminalOverlayConfig } from "./ps.ts";
 
 const managers: TerminalManager[] = [];
 
@@ -368,7 +369,7 @@ describe("TerminalManager", () => {
     const theme = {
       fg: (_color: string, text: string) => text,
     } as unknown as Theme;
-    const overlay = new PsOverlay(m, theme, () => {}, () => {});
+    const overlay = new JobsOverlay(terminalOverlayConfig(m), theme, () => {}, () => {});
 
     overlay.render(100);
     assert.deepEqual(materialized, []);
@@ -404,7 +405,7 @@ describe("TerminalManager", () => {
     const theme = {
       fg: (_color: string, text: string) => text,
     } as unknown as Theme;
-    const overlay = new PsOverlay(m, theme, () => {}, () => {});
+    const overlay = new JobsOverlay(terminalOverlayConfig(m), theme, () => {}, () => {});
     try {
       overlay.handleInput("\r");
       let detail = overlay.render(120).join("\n");
@@ -440,7 +441,7 @@ describe("TerminalManager", () => {
       const theme = {
         fg: (_color: string, text: string) => text,
       } as unknown as Theme;
-      const overlay = new PsOverlay(m, theme, () => {}, () => {});
+      const overlay = new JobsOverlay(terminalOverlayConfig(m), theme, () => {}, () => {});
       try {
         const list = overlay.render(120);
         assert.ok(list.some((line) => line.includes("title-safe")));

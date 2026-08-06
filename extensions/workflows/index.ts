@@ -124,7 +124,7 @@ export default function (pi: ExtensionAPI) {
       const m = getManager();
       const snap = m.get(params.id);
       if (!snap) throw new Error(`Unknown workflow id: ${params.id}`);
-      if (snap.status !== "running") host.delivery.consume([snap.id]);
+      if (snap.status !== "running") host.consume([snap.id]);
       return {
         content: [{ type: "text" as const, text: buildStatusResult(snap) }],
         details: {
@@ -163,7 +163,7 @@ export default function (pi: ExtensionAPI) {
       if (params.ids.length === 0) throw new Error("ids must not be empty");
       const m = getManager();
       const snaps = await m.wait(params.ids, signal);
-      host.delivery.consume(params.ids);
+      host.consume(params.ids);
       host.updateWidget();
       return {
         content: [{ type: "text" as const, text: buildWaitResult(snaps) }],
@@ -190,7 +190,7 @@ export default function (pi: ExtensionAPI) {
       const m = getManager();
       try {
         const snaps = await m.cancel(params.ids, signal);
-        host.delivery.consume(params.ids);
+        host.consume(params.ids);
         host.updateWidget();
         return {
           content: [{ type: "text" as const, text: buildCancelResult(snaps) }],
@@ -297,7 +297,7 @@ export default function (pi: ExtensionAPI) {
             },
             cancel: (id) =>
               m.cancel([id]).then(() => {
-                host.delivery.consume([id]);
+                host.consume([id]);
                 host.updateWidget();
               }),
           },

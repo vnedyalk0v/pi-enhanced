@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { SubagentSnapshot } from "./domain.ts";
-import { buildBtwAnswer, summarizeOutputTail, truncateAtWord } from "./format.ts";
+import { buildBtwAnswer, summarizeOutputTail } from "./format.ts";
 import { modelPatternMatchesRegistry } from "./index.ts";
 
 function snapshot(overrides: Partial<SubagentSnapshot>): SubagentSnapshot {
@@ -18,22 +18,6 @@ function snapshot(overrides: Partial<SubagentSnapshot>): SubagentSnapshot {
     ...overrides,
   };
 }
-
-describe("truncateAtWord", () => {
-  it("keeps short strings untouched", () => {
-    assert.equal(truncateAtWord("short question", 40), "short question");
-  });
-
-  it("cuts at a word boundary with an ellipsis", () => {
-    const result = truncateAtWord("what is the capital of France? Answer in one word.", 40);
-    assert.equal(result, "what is the capital of France? Answer…");
-  });
-
-  it("falls back to a hard cut when there is no usable space", () => {
-    const result = truncateAtWord("a".repeat(60), 40);
-    assert.equal(result, `${"a".repeat(40)}…`);
-  });
-});
 
 describe("summarizeOutputTail", () => {
   const assistant = (text: string) =>

@@ -48,9 +48,7 @@ export type ManagerOptions = {
   onSettled?: (info: SettledInfo) => void;
   onChange?: () => void;
   /** Inject the backend starter for tests. */
-  starters?: {
-    pi?: typeof startPiBackend;
-  };
+  starter?: typeof startPiBackend;
 };
 
 export class SubagentManager {
@@ -74,7 +72,7 @@ export class SubagentManager {
     this.maxRuntimeMs = options.maxRuntimeMs ?? DEFAULT_MAX_RUNTIME_MS;
     this.onSettled = options.onSettled;
     this.onChange = options.onChange;
-    this.starter = options.starters?.pi ?? startPiBackend;
+    this.starter = options.starter ?? startPiBackend;
   }
 
   private readonly listeners = new Set<() => void>();

@@ -56,11 +56,9 @@ describe("SubagentManager", () => {
   it("passes an extension path to the backend starter", async () => {
     let receivedExtensionPath: string | undefined;
     const m = createManager({
-      starters: {
-        pi: async ({ extensionPath }) => {
-          receivedExtensionPath = extensionPath;
-          return fakeJob({ exitCode: 0, resultText: "done" });
-        },
+      starter: async ({ extensionPath }) => {
+        receivedExtensionPath = extensionPath;
+        return fakeJob({ exitCode: 0, resultText: "done" });
       },
     });
 
@@ -83,17 +81,15 @@ describe("SubagentManager", () => {
       onChange: () => {
         changes += 1;
       },
-      starters: {
-        pi: async ({ onOutput }) => {
-          for (let i = 0; i < 120; i++) onOutput?.(`chunk ${i}\n`);
-          return {
-            handle: { pid: 12345, kill: finish, wait },
-            collect: async () => {
-              const result = await wait;
-              return { ...result, resultText: "done", output: "" };
-            },
-          };
-        },
+      starter: async ({ onOutput }) => {
+        for (let i = 0; i < 120; i++) onOutput?.(`chunk ${i}\n`);
+        return {
+          handle: { pid: 12345, kill: finish, wait },
+          collect: async () => {
+            const result = await wait;
+            return { ...result, resultText: "done", output: "" };
+          },
+        };
       },
     });
 
@@ -110,9 +106,7 @@ describe("SubagentManager", () => {
   it("spawns, settles done, and delivers unconsumed completion", async () => {
     const settled: Array<{ id: string; consumed: boolean }> = [];
     const m = createManager({
-      starters: {
-        pi: async () => fakeJob({ exitCode: 0, resultText: "hello", delayMs: 30 }),
-      },
+      starter: async () => fakeJob({ exitCode: 0, resultText: "hello", delayMs: 30 }),
       onSettled: ({ snapshot, consumed }) => {
         settled.push({ id: snapshot.id, consumed });
       },
@@ -141,21 +135,19 @@ describe("SubagentManager", () => {
       resolveSettled = resolve;
     });
     const m = createManager({
-      starters: {
-        pi: async () => ({
-          handle: {
-            pid: 12345,
-            kill: () => {},
-            wait: Promise.resolve({ exitCode: 1 }),
-          },
-          collect: async () => ({
-            exitCode: 1,
-            resultText: "",
-            errorText: "launch failed",
-            output: "",
-          }),
+      starter: async () => ({
+        handle: {
+          pid: 12345,
+          kill: () => {},
+          wait: Promise.resolve({ exitCode: 1 }),
+        },
+        collect: async () => ({
+          exitCode: 1,
+          resultText: "",
+          errorText: "launch failed",
+          output: "",
         }),
-      },
+      }),
       onSettled: ({ snapshot }) => {
         settledQuiet = snapshot.quiet;
         resolveSettled();
@@ -172,9 +164,7 @@ describe("SubagentManager", () => {
   it("async completion is not consumed when not waiting", async () => {
     const settled: boolean[] = [];
     const m = createManager({
-      starters: {
-        pi: async () => fakeJob({ exitCode: 0, resultText: "x", delayMs: 30 }),
-      },
+      starter: async () => fakeJob({ exitCode: 0, resultText: "x", delayMs: 30 }),
       onSettled: ({ consumed }) => settled.push(consumed),
     });
     const snap = await m.spawn({
@@ -197,21 +187,19 @@ describe("SubagentManager", () => {
     let m!: SubagentManager;
     m = createManager({
       maxTracked: 1,
-      starters: {
-        pi: async () => {
-          let finish!: () => void;
-          const wait = new Promise<{ exitCode: number }>((resolve) => {
-            finish = () => resolve({ exitCode: 0 });
-          });
-          finishers.push(finish);
-          return {
-            handle: { pid: 12345, kill: finish, wait },
-            collect: async () => {
-              const result = await wait;
-              return { ...result, resultText: "done", output: "" };
-            },
-          };
-        },
+      starter: async () => {
+        let finish!: () => void;
+        const wait = new Promise<{ exitCode: number }>((resolve) => {
+          finish = () => resolve({ exitCode: 0 });
+        });
+        finishers.push(finish);
+        return {
+          handle: { pid: 12345, kill: finish, wait },
+          collect: async () => {
+            const result = await wait;
+            return { ...result, resultText: "done", output: "" };
+          },
+        };
       },
       onSettled: ({ snapshot }) => settled.get(snapshot.id)?.(),
       onChange: () => observedIds.push(m.list().map((snapshot) => snapshot.id)),
@@ -245,9 +233,7 @@ describe("SubagentManager", () => {
 
   it("cancel kills a running subagent", async () => {
     const m = createManager({
-      starters: {
-        pi: async () => fakeJob({ exitCode: 0, resultText: "late", delayMs: 5000 }),
-      },
+      starter: async () => fakeJob({ exitCode: 0, resultText: "late", delayMs: 5000 }),
     });
     const snap = await m.spawn({
       prompt: "long",
@@ -267,12 +253,10 @@ describe("SubagentManager", () => {
       resolveSettled = resolve;
     });
     const m = createManager({
-      starters: {
-        pi: async () => ({
-          handle: { pid: 12345, kill: () => {}, wait },
-          collect: async () => ({ ...(await wait), resultText: "", output: "" }),
-        }),
-      },
+      starter: async () => ({
+        handle: { pid: 12345, kill: () => {}, wait },
+        collect: async () => ({ ...(await wait), resultText: "", output: "" }),
+      }),
       onSettled: ({ consumed }) => resolveSettled(consumed),
     });
     const snap = await m.spawn({ prompt: "long", cwd: process.cwd() });
@@ -293,12 +277,10 @@ describe("SubagentManager", () => {
       finish = () => resolve({ exitCode: 0 });
     });
     const m = createManager({
-      starters: {
-        pi: async () => ({
-          handle: { pid: 12345, kill: () => finish(), wait: gate },
-          collect: async () => ({ ...(await gate), resultText: "ok", output: "" }),
-        }),
-      },
+      starter: async () => ({
+        handle: { pid: 12345, kill: () => finish(), wait: gate },
+        collect: async () => ({ ...(await gate), resultText: "ok", output: "" }),
+      }),
     });
 
     const snap = await m.spawn({ prompt: "work", cwd: process.cwd() });
@@ -310,9 +292,7 @@ describe("SubagentManager", () => {
   it("enforces concurrency limit", async () => {
     const m = createManager({
       maxRunning: 1,
-      starters: {
-        pi: async () => fakeJob({ exitCode: 0, resultText: "a", delayMs: 2000 }),
-      },
+      starter: async () => fakeJob({ exitCode: 0, resultText: "a", delayMs: 2000 }),
     });
     await m.spawn({ prompt: "one", cwd: process.cwd() });
     await assert.rejects(
@@ -332,32 +312,30 @@ describe("SubagentManager", () => {
       maxRunning: 1,
       maxRuntimeMs: 30,
       killGraceMs: 10,
-      starters: {
-        pi: async () => {
-          calls += 1;
-          if (calls > 1) {
-            return fakeJob({ exitCode: 0, resultText: "next", delayMs: 10 });
-          }
-          return {
-            handle: {
-              pid: 12345,
-              kill: (signal = "SIGTERM") => {
-                signals.push(signal);
-                if (signal === "SIGKILL") finish();
-              },
-              wait,
+      starter: async () => {
+        calls += 1;
+        if (calls > 1) {
+          return fakeJob({ exitCode: 0, resultText: "next", delayMs: 10 });
+        }
+        return {
+          handle: {
+            pid: 12345,
+            kill: (signal = "SIGTERM") => {
+              signals.push(signal);
+              if (signal === "SIGKILL") finish();
             },
-            collect: async () => {
-              const result = await wait;
-              return {
-                ...result,
-                signal: signals.at(-1),
-                resultText: "",
-                output: "",
-              };
-            },
-          };
-        },
+            wait,
+          },
+          collect: async () => {
+            const result = await wait;
+            return {
+              ...result,
+              signal: signals.at(-1),
+              resultText: "",
+              output: "",
+            };
+          },
+        };
       },
     });
 
@@ -381,12 +359,10 @@ describe("SubagentManager", () => {
     let calls = 0;
     const m = createManager({
       maxRunning: 1,
-      starters: {
-        pi: async () => {
-          calls += 1;
-          if (calls === 1) await startGate;
-          return fakeJob({ exitCode: 0, resultText: "a", delayMs: 2000 });
-        },
+      starter: async () => {
+        calls += 1;
+        if (calls === 1) await startGate;
+        return fakeJob({ exitCode: 0, resultText: "a", delayMs: 2000 });
       },
     });
 
@@ -406,12 +382,10 @@ describe("SubagentManager", () => {
     let calls = 0;
     const m = createManager({
       maxRunning: 1,
-      starters: {
-        pi: async () => {
-          calls += 1;
-          if (calls === 1) throw new Error("starter failed");
-          return fakeJob({ exitCode: 0, resultText: "recovered", delayMs: 20 });
-        },
+      starter: async () => {
+        calls += 1;
+        if (calls === 1) throw new Error("starter failed");
+        return fakeJob({ exitCode: 0, resultText: "recovered", delayMs: 20 });
       },
     });
 
@@ -443,26 +417,24 @@ describe("SubagentManager", () => {
       finish = () => resolve({ exitCode: 1 });
     });
     const m = createManager({
-      starters: {
-        pi: async () => {
-          starterEntered();
-          await gate;
-          return {
-            handle: {
-              pid: 12345,
-              kill: () => {
-                kills += 1;
-                finish();
-              },
-              wait,
+      starter: async () => {
+        starterEntered();
+        await gate;
+        return {
+          handle: {
+            pid: 12345,
+            kill: () => {
+              kills += 1;
+              finish();
             },
-            collect: async () => {
-              collects += 1;
-              const result = await wait;
-              return { ...result, resultText: "", output: "" };
-            },
-          };
-        },
+            wait,
+          },
+          collect: async () => {
+            collects += 1;
+            const result = await wait;
+            return { ...result, resultText: "", output: "" };
+          },
+        };
       },
     });
 
@@ -482,11 +454,9 @@ describe("SubagentManager", () => {
     controller.abort();
     let calls = 0;
     const m = createManager({
-      starters: {
-        pi: async () => {
-          calls += 1;
-          return fakeJob({ exitCode: 0 });
-        },
+      starter: async () => {
+        calls += 1;
+        return fakeJob({ exitCode: 0 });
       },
     });
 
@@ -508,9 +478,7 @@ describe("SubagentManager", () => {
       originalKill(signal);
     };
     const m = createManager({
-      starters: {
-        pi: async () => job,
-      },
+      starter: async () => job,
     });
 
     const started = await m.spawn({
@@ -528,9 +496,7 @@ describe("SubagentManager", () => {
 
   it("tracks the named agent on the snapshot", async () => {
     const m = createManager({
-      starters: {
-        pi: async () => fakeJob({ exitCode: 0, resultText: "p", delayMs: 10 }),
-      },
+      starter: async () => fakeJob({ exitCode: 0, resultText: "p", delayMs: 10 }),
     });
     const snap = await m.spawn({ agent: "scout", prompt: "p", cwd: process.cwd() });
     assert.equal(snap.agent, "scout");
@@ -540,10 +506,8 @@ describe("SubagentManager", () => {
 
   it("failed exit becomes failed status", async () => {
     const m = createManager({
-      starters: {
-        pi: async () =>
-          fakeJob({ exitCode: 2, resultText: "", errorText: "boom", delayMs: 20 }),
-      },
+      starter: async () =>
+        fakeJob({ exitCode: 2, resultText: "", errorText: "boom", delayMs: 20 }),
     });
     const snap = await m.spawn({ prompt: "f", cwd: process.cwd() });
     await m.wait([snap.id]);
@@ -555,19 +519,17 @@ describe("SubagentManager", () => {
     let calls = 0;
     const m = createManager({
       maxRunning: 1,
-      starters: {
-        pi: async () => {
-          calls += 1;
-          if (calls > 1) {
-            return fakeJob({ exitCode: 0, resultText: "recovered", delayMs: 10 });
-          }
-          const job = fakeJob({ exitCode: 0, delayMs: 10 });
-          job.collect = async () => {
-            await job.handle.wait;
-            throw new PiResultRecordTooLargeError();
-          };
-          return job;
-        },
+      starter: async () => {
+        calls += 1;
+        if (calls > 1) {
+          return fakeJob({ exitCode: 0, resultText: "recovered", delayMs: 10 });
+        }
+        const job = fakeJob({ exitCode: 0, delayMs: 10 });
+        job.collect = async () => {
+          await job.handle.wait;
+          throw new PiResultRecordTooLargeError();
+        };
+        return job;
       },
     });
 
