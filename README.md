@@ -120,10 +120,10 @@ bad-request, and transient provider errors do not trigger fallback.
 The file-search extension resolves `fd` and `rg` from `PATH` first (`fdfind` is
 also accepted on Linux), then from `~/.pi/agent/bin/`.
 
-When missing, pinned binaries are downloaded on macOS and Linux for x64 and
-arm64, verified with SHA-256, and installed into that directory. On Windows or
-another unsupported target, install `fd` and `rg` with the platform package
-manager and expose them on `PATH`.
+Both must be installed with your platform package manager
+(`brew install fd ripgrep`, `apt install fd-find ripgrep`, or the upstream
+release pages). When one is missing, the corresponding tool reports the install
+command instead of running.
 
 ## Operational limits
 
@@ -166,9 +166,8 @@ confirms before running one interactively.
 ## Troubleshooting
 
 - `pi` not found: install the CLI and confirm it is on `PATH`.
-- `fd` or `rg` installation fails: check HTTPS access, `tar`, directory
-  permissions, and the reported digest; install manually on unsupported
-  platforms.
+- `fd` or `rg` not found: install it with your package manager and confirm it is
+  on `PATH` (the tool error names the install command).
 - Firecrawl fails: set `FIRECRAWL_API_KEY` for scrape/crawl. Only missing-key or
   quota-exhausted search uses the fallback.
 - Concurrency limit reached: wait for or cancel an existing `bt-*`, `sa-*`, or
