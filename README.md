@@ -58,7 +58,7 @@ before installation and use it only in trusted working directories.
 | Conversation | `ask_user`, `/copy-all`, `/summary` | Structured choices, clipboard export, and model-generated session summaries |
 | File search | `fd`, `rg` | Fast filename and content search with bounded model output |
 | Git and UI | `/git-info`, `github-dark-default` | Footer branch status and an automatically selected GitHub-style theme |
-| Background terminals | `bg_start`, `bg_status`, `bg_list`, `bg_kill`, `/ps` | Long-running non-interactive commands with completion delivery and bounded spill logs |
+| Background terminals | `bg_start`, `bg_status`, `bg_list`, `bg_kill`, `/ps` | Long-running non-interactive commands with completion delivery and a bounded output tail |
 | Web research | `fc_search`, `fc_scrape`, `fc_crawl` | Firecrawl search/scrape/crawl with DuckDuckGo fallback for no-key or quota-exhausted search |
 | Subagents | `sa_spawn`, `sa_agents`, `sa_status`, `sa_list`, `sa_wait`, `sa_cancel`, `/sa`, `/btw` | Isolated native pi workers (ad-hoc or named agent definitions) with bounded concurrency |
 | Workflows | `wf_start`, `wf_status`, `wf_list`, `wf_wait`, `wf_cancel`, `/wf`, `/workflow` | Reconnaissance, implementation, review, and synthesis with validated handoffs and artifacts |
@@ -120,10 +120,10 @@ bad-request, and transient provider errors do not trigger fallback.
 The file-search extension resolves `fd` and `rg` from `PATH` first (`fdfind` is
 also accepted on Linux), then from `~/.pi/agent/bin/`.
 
-When missing, pinned binaries are downloaded on macOS and Linux for x64 and
-arm64, verified with SHA-256, and installed into that directory. On Windows or
-another unsupported target, install `fd` and `rg` with the platform package
-manager and expose them on `PATH`.
+Both must be installed with your platform package manager
+(`brew install fd ripgrep`, `apt install fd-find ripgrep`, or the upstream
+release pages). When one is missing, the corresponding tool reports the install
+command instead of running.
 
 ## Operational limits
 
@@ -143,11 +143,11 @@ and workflows. `/btw` answers are delivered directly to the user, marked as
 untrusted content; delivery waits until the agent is idle so the answer never
 starts or steers a model turn.
 
-Background streams retain a 2 MiB in-memory tail and spill up to 16 MiB per
-stream, capped at 64 MiB per Pi session, to a private OS-temporary directory.
-Partial spill logs are labeled, and all logs are removed at Pi session shutdown.
-Truncated `fd`/`rg` results spill full output to a private temporary file with
-the same 16 MiB cap; larger spills are labeled partial. Native subagent JSON
+Background streams retain a 2 MiB in-memory tail per stream; older output is
+dropped and is not recoverable, so redirect a command to a file when you need
+its complete log. Truncated `fd`/`rg` results spill full output to a private
+temporary file with a 16 MiB cap; larger spills are labeled partial and all
+spill files are removed at Pi session shutdown. Native subagent JSON
 result records have a 4 MiB UTF-8 ceiling. An oversized record fails the worker
 instead of returning a truncated successful result. Subagents (standalone and
 workflow children) are force-killed after 30 minutes of runtime.
@@ -166,15 +166,15 @@ confirms before running one interactively.
 ## Troubleshooting
 
 - `pi` not found: install the CLI and confirm it is on `PATH`.
-- `fd` or `rg` installation fails: check HTTPS access, `tar`, directory
-  permissions, and the reported digest; install manually on unsupported
-  platforms.
+- `fd` or `rg` not found: install it with your package manager and confirm it is
+  on `PATH` (the tool error names the install command).
 - Firecrawl fails: set `FIRECRAWL_API_KEY` for scrape/crawl. Only missing-key or
   quota-exhausted search uses the fallback.
 - Concurrency limit reached: wait for or cancel an existing `bt-*`, `sa-*`, or
   `wf-*` job.
-- Missing output: inspect `bg_status` for spill logs, `wf_status` for workflow
-  artifacts, or the full-output path returned by truncated `fd`/`rg` results.
+- Missing output: inspect `bg_status` for the retained tail, `wf_status` for
+  workflow artifacts, or the full-output path returned by truncated `fd`/`rg`
+  results.
 
 ## Development
 

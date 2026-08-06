@@ -1,8 +1,9 @@
 import { resolve } from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createManagerHost } from "../shared/host.ts";
 import { TOOL_LIMITS_NOTE, truncateOneLine } from "../shared/text.ts";
+import { JobsOverlay } from "../shared/jobs-overlay.ts";
 import {
   buildKillResult,
   buildListResult,
@@ -10,7 +11,6 @@ import {
   buildStatusResult,
   buildTerminalResultMessage,
 } from "./format.ts";
-import { JobsOverlay } from "../shared/jobs-overlay.ts";
 import { TerminalManager, type TerminalSnapshot } from "./manager.ts";
 import { terminalOverlayConfig } from "./ps.ts";
 
@@ -67,13 +67,9 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // Manager is created lazily on first tool use so ephemeral sessions without
-  // bg tools do not create spill directories.
-  const getManager = (ctx: ExtensionContext) => {
+  const getManager = () => {
     if (host.disposed) throw new Error("Background terminal manager is shutting down.");
-    if (manager) return manager;
-    manager = new TerminalManager({
-      sessionKey: ctx.sessionManager.getSessionId(),
+    manager ??= new TerminalManager({
       onSettled: host.onSettled,
       onChange: host.updateWidget,
     });
@@ -93,7 +89,7 @@ export default function (pi: ExtensionAPI) {
     ],
     parameters: StartParams,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const m = getManager(ctx);
+      const m = getManager();
       const cwd = resolve(ctx.cwd, params.working_dir ?? ".");
       const snap = await m.start({
         command: params.command,
@@ -115,7 +111,7 @@ export default function (pi: ExtensionAPI) {
     promptSnippet: "Inspect a background terminal's status and recent output",
     parameters: StatusParams,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const m = getManager(ctx);
+      const m = getManager();
       const snap = m.get(params.id);
       if (!snap) {
         throw new Error(`Unknown terminal id: ${params.id}`);
@@ -143,7 +139,7 @@ export default function (pi: ExtensionAPI) {
     promptSnippet: "List background terminals",
     parameters: Type.Object({}),
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
-      const m = getManager(ctx);
+      const m = getManager();
       const snaps = m.list();
       return {
         content: [{ type: "text" as const, text: buildListResult(snaps) }],
@@ -160,7 +156,7 @@ export default function (pi: ExtensionAPI) {
     promptSnippet: "Stop background terminals",
     parameters: KillParams,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      const m = getManager(ctx);
+      const m = getManager();
       if (params.ids.length === 0) {
         throw new Error("ids must not be empty");
       }
@@ -199,7 +195,7 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      const m = getManager(ctx);
+      const m = getManager();
       await ctx.ui.custom((tui, theme, _kb, done) => {
         const overlay = new JobsOverlay<TerminalSnapshot>(
           terminalOverlayConfig(m, (snap) => {
