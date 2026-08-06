@@ -4,7 +4,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { type BinaryName, ensureBinary } from "./binaries.ts";
+import { type BinaryName, resolveBinary, resolveExisting } from "./binaries.ts";
 import {
   buildFdArgs,
   buildRgArgs,
@@ -42,19 +42,12 @@ const RgParams = Type.Object({
 
 const binaryCache = new Map<BinaryName, string>();
 
-async function getBinary(
-  name: BinaryName,
-  notify?: (message: string) => void,
-  signal?: AbortSignal,
-): Promise<string> {
+async function getBinary(name: BinaryName): Promise<string> {
   const cached = binaryCache.get(name);
   if (cached) return cached;
-  const result = await ensureBinary(name, { signal });
-  if (result.installed) {
-    notify?.(`Installed ${name} to local Pi bin directory`);
-  }
-  binaryCache.set(name, result.path);
-  return result.path;
+  const path = await resolveBinary(name);
+  binaryCache.set(name, path);
+  return path;
 }
 
 /**
@@ -106,18 +99,12 @@ export default function (pi: ExtensionAPI) {
     );
   });
 
-  pi.on("session_start", async (_event, ctx) => {
-    // Resolve quietly at startup; install only if missing.
+  pi.on("session_start", async () => {
+    // Warm the cache quietly; a missing binary surfaces its install hint on
+    // first tool use, where the model can act on it.
     for (const name of ["fd", "rg"] as const) {
-      try {
-        const result = await ensureBinary(name);
-        binaryCache.set(name, result.path);
-        if (result.installed && ctx.hasUI) {
-          ctx.ui.notify(`Installed ${name} for file-search tools`, "info");
-        }
-      } catch {
-        // Leave resolution to first tool use so the model sees a clear error.
-      }
+      const path = await resolveExisting(name).catch(() => null);
+      if (path) binaryCache.set(name, path);
     }
     // Prefer our tools over built-in find/grep for this package.
     preferFdAndRg(pi);
@@ -140,9 +127,7 @@ export default function (pi: ExtensionAPI) {
     parameters: FdParams,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       try {
-        const binary = await getBinary("fd", (msg) => {
-          if (ctx.hasUI) ctx.ui.notify(msg, "info");
-        }, signal);
+        const binary = await getBinary("fd");
         const args = buildFdArgs(params);
         const result = await trackSpill(
           await runBinary(binary, args, ctx.cwd, "pi-fd", signal),
@@ -195,9 +180,7 @@ export default function (pi: ExtensionAPI) {
     parameters: RgParams,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       try {
-        const binary = await getBinary("rg", (msg) => {
-          if (ctx.hasUI) ctx.ui.notify(msg, "info");
-        }, signal);
+        const binary = await getBinary("rg");
         const args = buildRgArgs(params);
         const result = await trackSpill(
           await runBinary(binary, args, ctx.cwd, "pi-rg", signal),
