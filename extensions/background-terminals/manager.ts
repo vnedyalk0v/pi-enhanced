@@ -1,19 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
-import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Readable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { InterestTracker, pruneSettled } from "../shared/lifecycle.ts";
 import { abortPromise, sleep } from "../shared/time.ts";
-import {
-  createSpillDir,
-  MAX_SESSION_SPILL_BYTES,
-  OutputBuffer,
-  openSpillStreams,
-  removeSpillDir,
-  type OutputView,
-} from "./output.ts";
+import { OutputBuffer, type OutputView } from "./output.ts";
 
 export type TerminalStatus = "running" | "done" | "failed" | "killed";
 
@@ -52,7 +44,6 @@ export type SettledInfo = {
 };
 
 export type ManagerOptions = {
-  sessionKey: string;
   maxRunning?: number;
   maxTracked?: number;
   killGraceMs?: number;
@@ -88,14 +79,10 @@ const OUTPUT_NOTIFY_INTERVAL_MS = 100;
 export class TerminalManager {
   private entries = new Map<string, Entry>();
   private counter = 0;
-  private startingCount = 0;
   private disposed = false;
   private killInterest = new InterestTracker();
   private listeners = new Set<() => void>();
   private outputNotifyTimer?: ReturnType<typeof setTimeout>;
-  private spillDirPromise?: Promise<string>;
-  private spillOpenings = new Set<Promise<Awaited<ReturnType<typeof openSpillStreams>>>>();
-  private readonly spillBudget = { remainingBytes: MAX_SESSION_SPILL_BYTES };
   private readonly isRetained = (entry: Entry) =>
     entry.status === "running" || this.killInterest.has(entry.id);
   private readonly maxRunning: number;
@@ -104,7 +91,7 @@ export class TerminalManager {
   private onSettled?: (info: SettledInfo) => void;
   private onChange?: () => void;
 
-  constructor(options: ManagerOptions) {
+  constructor(options: ManagerOptions = {}) {
     this.maxRunning = options.maxRunning ?? DEFAULT_MAX_RUNNING;
     this.maxTracked = options.maxTracked ?? DEFAULT_MAX_TRACKED;
     this.killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
@@ -196,7 +183,7 @@ export class TerminalManager {
     if (this.disposed) {
       throw new Error("Background terminal manager is disposed.");
     }
-    if (this.getRunningCount() + this.startingCount >= this.maxRunning) {
+    if (this.getRunningCount() >= this.maxRunning) {
       throw new Error(
         `Concurrency limit: at most ${this.maxRunning} background terminals may run at once.`,
       );
@@ -213,28 +200,11 @@ export class TerminalManager {
     }
     const title = (options.title.trim().slice(0, 80) || "terminal");
 
-    this.startingCount += 1;
     this.counter += 1;
     const id = `bt-${this.counter}`;
 
-    const spillOpening = this.acquireSpillStreams(id);
-    this.spillOpenings.add(spillOpening);
-    let spill: Awaited<typeof spillOpening>;
-    try {
-      spill = await spillOpening;
-    } catch (error) {
-      this.startingCount -= 1;
-      throw error;
-    } finally {
-      this.spillOpenings.delete(spillOpening);
-    }
-    const stdout = new OutputBuffer(undefined, { ...spill.stdout, budget: this.spillBudget });
-    const stderr = new OutputBuffer(undefined, { ...spill.stderr, budget: this.spillBudget });
-    if (this.disposed) {
-      this.startingCount -= 1;
-      await Promise.all([stdout.close(), stderr.close()]);
-      throw new Error("Background terminal manager is disposed.");
-    }
+    const stdout = new OutputBuffer();
+    const stderr = new OutputBuffer();
 
     let resolveSettle!: () => void;
     const settlePromise = new Promise<void>((resolveSettleFn) => {
@@ -269,13 +239,6 @@ export class TerminalManager {
         windowsHide: true,
       });
     } catch (error) {
-      try {
-        await stdout.close();
-        await stderr.close();
-        await removeSpillFiles(spill);
-      } finally {
-        this.startingCount -= 1;
-      }
       throw new Error(boundedError(error));
     }
 
@@ -292,19 +255,9 @@ export class TerminalManager {
     const captureOutput = (stream: Readable | null, output: OutputBuffer) => {
       if (!stream) return;
       const decoder = new StringDecoder("utf8");
-      let waitingForDrain = false;
       const push = (text: string) => {
         if (!text) return;
-        if (!output.push(text)) {
-          stream.pause();
-          if (!waitingForDrain) {
-            waitingForDrain = true;
-            void output.waitForDrain().then(() => {
-              waitingForDrain = false;
-              if (entry.status === "running") stream.resume();
-            });
-          }
-        }
+        output.push(text);
         this.notifyOutput();
       };
       // A multi-byte UTF-8 char can straddle two chunks; StringDecoder carries
@@ -351,7 +304,6 @@ export class TerminalManager {
     });
 
     this.entries.set(id, entry);
-    this.startingCount -= 1;
     this.notify();
     return this.snapshotOf(entry);
   }
@@ -373,9 +325,6 @@ export class TerminalManager {
     entry.signal = result.signal;
     if (result.errorText) entry.errorText = result.errorText;
     entry.child = undefined;
-
-    await entry.stdout.close();
-    await entry.stderr.close();
 
     const consumed = this.killInterest.has(entry.id);
     entry.resolveSettle();
@@ -544,39 +493,11 @@ export class TerminalManager {
       sleep(this.killGraceMs + 1000),
     ]);
 
-    for (const entry of this.entries.values()) {
-      await entry.stdout.close();
-      await entry.stderr.close();
-    }
-
     this.entries.clear();
     this.listeners.clear();
     this.killInterest.clear();
-    await Promise.allSettled([...this.spillOpenings]);
-    const spillDir = await this.spillDirPromise?.catch(() => undefined);
-    if (spillDir) await removeSpillDir(spillDir);
     this.notify();
   }
-
-  private async acquireSpillStreams(id: string) {
-    this.spillDirPromise ??= createSpillDir().catch((error) => {
-      this.spillDirPromise = undefined;
-      throw error;
-    });
-    const dir = await this.spillDirPromise;
-    if (this.disposed) throw new Error("Background terminal manager is disposed.");
-    return openSpillStreams(dir, id);
-  }
-}
-
-async function removeSpillFiles(spill: {
-  stdout: { path: string };
-  stderr: { path: string };
-}) {
-  await Promise.all([
-    rm(spill.stdout.path, { force: true }).catch(() => {}),
-    rm(spill.stderr.path, { force: true }).catch(() => {}),
-  ]);
 }
 
 function boundedError(error: unknown, max = 500) {

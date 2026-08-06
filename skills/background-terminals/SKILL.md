@@ -26,4 +26,4 @@ After starting, continue useful work instead of polling. The terminal sends one 
 - Use `bg_kill` when a process is no longer needed or is stuck; termination continues even if the tool wait is aborted.
 - Tell the user they can open `/ps` to inspect live output and kill terminals interactively.
 
-Prefer meaningful titles and avoid starting duplicate servers or watchers. Full output is captured to spill files; tool and completion output shows a concise tail. Terminals are session-scoped and are stopped during shutdown or reload.
+Prefer meaningful titles and avoid starting duplicate servers or watchers. A bounded tail of recent output is retained; older output is dropped, so redirect the command to a file when the complete log matters. Terminals are session-scoped and are stopped during shutdown or reload.
