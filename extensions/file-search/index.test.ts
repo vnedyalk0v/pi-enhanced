@@ -11,9 +11,10 @@ import fileSearch from "./index.ts";
 type Handler = (...args: unknown[]) => Promise<unknown>;
 type Tool = { execute: Handler };
 
-function captureExtension() {
+function captureExtension(initialTools: string[] = []) {
   const handlers = new Map<string, Handler>();
   const tools = new Map<string, Tool>();
+  let activeTools = [...initialTools];
   const pi = {
     on(event: string, handler: Handler) {
       handlers.set(event, handler);
@@ -25,11 +26,13 @@ function captureExtension() {
         execute: async (...args) => Reflect.apply(tool.execute, undefined, args),
       });
     },
-    getActiveTools: () => [],
-    setActiveTools: () => {},
+    getActiveTools: () => [...activeTools],
+    setActiveTools: (next: string[]) => {
+      activeTools = [...next];
+    },
   };
   fileSearch(pi as unknown as ExtensionAPI);
-  return { handlers, tools };
+  return { handlers, tools, activeTools: () => activeTools };
 }
 
 describe("file-search lifecycle", () => {
@@ -159,5 +162,89 @@ const timer = setInterval(() => {
       await handlers.get("session_shutdown")!({});
       await rm(root, { recursive: true, force: true });
     }
+  });
+});
+
+async function withStubs(names: Array<"fd" | "rg">, run: () => Promise<void>) {
+  const agentDir = await mkdtemp(join(tmpdir(), "pi-file-search-agent-"));
+  const pathDir = await mkdtemp(join(tmpdir(), "pi-file-search-path-"));
+  const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+  const originalPath = process.env.PATH;
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  process.env.PATH = pathDir;
+  try {
+    // Resolution shells out to `which`, which itself must be found on PATH.
+    // Stub it too so resolution is fully isolated from the host's real PATH
+    // (which may have real fd/rg installed) instead of depending on it.
+    const whichStub = join(pathDir, "which");
+    await writeFile(
+      whichStub,
+      `#!${process.execPath}
+const { existsSync } = require("node:fs");
+const { join } = require("node:path");
+const candidate = join(${JSON.stringify(pathDir)}, process.argv[2]);
+if (existsSync(candidate)) {
+  console.log(candidate);
+  process.exit(0);
+}
+process.exit(1);
+`,
+    );
+    await chmod(whichStub, 0o755);
+    for (const name of names) {
+      const binary = join(pathDir, name);
+      await writeFile(binary, `#!${process.execPath}\n`);
+      await chmod(binary, 0o755);
+    }
+    await run();
+  } finally {
+    if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
+    await Promise.all([
+      rm(agentDir, { recursive: true, force: true }),
+      rm(pathDir, { recursive: true, force: true }),
+    ]);
+  }
+}
+
+describe("file-search built-in retirement", () => {
+  it("retires find and grep when both binaries resolve", async () => {
+    await withStubs(["fd", "rg"], async () => {
+      const { handlers, activeTools } = captureExtension(["read", "find", "grep", "bash"]);
+      await handlers.get("session_start")!({});
+      const active = activeTools();
+      assert.ok(active.includes("read"));
+      assert.ok(active.includes("bash"));
+      assert.ok(active.includes("fd"));
+      assert.ok(active.includes("rg"));
+      assert.equal(active.includes("find"), false);
+      assert.equal(active.includes("grep"), false);
+    });
+  });
+
+  it("keeps find and grep when neither binary resolves", async () => {
+    await withStubs([], async () => {
+      const { handlers, activeTools } = captureExtension(["read", "find", "grep", "bash"]);
+      await handlers.get("session_start")!({});
+      const active = activeTools();
+      assert.ok(active.includes("find"));
+      assert.ok(active.includes("grep"));
+      assert.ok(active.includes("fd"));
+      assert.ok(active.includes("rg"));
+    });
+  });
+
+  it("retires only the built-in whose replacement resolved", async () => {
+    await withStubs(["fd"], async () => {
+      const { handlers, activeTools } = captureExtension(["read", "find", "grep", "bash"]);
+      await handlers.get("session_start")!({});
+      const active = activeTools();
+      assert.equal(active.includes("find"), false);
+      assert.ok(active.includes("grep"));
+      assert.ok(active.includes("fd"));
+      assert.ok(active.includes("rg"));
+    });
   });
 });

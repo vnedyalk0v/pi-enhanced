@@ -24,28 +24,36 @@ stable. The package does not need a TypeScript runtime dependency.
 
 ## Install
 
-Install the latest tagged release globally:
+Install globally:
 
 ```sh
-pi install git:github.com/vnedyalk0v/pi-enhanced@v0.1.0
+pi install git:github.com/vnedyalk0v/pi-enhanced
 ```
 
 For a project-local installation:
 
 ```sh
-pi install -l git:github.com/vnedyalk0v/pi-enhanced@v0.1.0
+pi install -l git:github.com/vnedyalk0v/pi-enhanced
 ```
 
 Try the package for one run without changing Pi settings:
 
 ```sh
-pi -e git:github.com/vnedyalk0v/pi-enhanced@v0.1.0
+pi -e git:github.com/vnedyalk0v/pi-enhanced
 ```
 
 To load a local checkout:
 
 ```sh
 pi -e ./
+```
+
+Without a ref, Pi clones the default branch. Once a release tag is published,
+append it to pin the package to that release, and run the same command again to
+move an existing installation onto a newer ref:
+
+```sh
+pi install git:github.com/vnedyalk0v/pi-enhanced@v0.1.0
 ```
 
 Pi packages execute with the user's system permissions. Review the source
@@ -130,7 +138,7 @@ load in full:
 {
   "packages": [
     {
-      "source": "git:github.com/vnedyalk0v/pi-enhanced@v0.1.0",
+      "source": "git:github.com/vnedyalk0v/pi-enhanced",
       "extensions": ["!extensions/file-search/**"]
     }
   ]

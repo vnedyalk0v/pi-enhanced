@@ -40,39 +40,39 @@ const RgParams = Type.Object({
   maxCount: Type.Optional(Type.Number({ description: "Max matches per file" })),
 });
 
-const binaryCache = new Map<BinaryName, string>();
-
-async function getBinary(name: BinaryName): Promise<string> {
-  const cached = binaryCache.get(name);
-  if (cached) return cached;
-  const path = await resolveBinary(name);
-  binaryCache.set(name, path);
-  return path;
-}
-
-/**
- * Make fd/rg the default discovery tools for this package:
- * keep them active and deactivate built-in find/grep when present.
- */
-function preferFdAndRg(pi: ExtensionAPI) {
-  const active = pi.getActiveTools();
-  const next = active.filter((name) => name !== "find" && name !== "grep");
-  if (!next.includes("fd")) next.push("fd");
-  if (!next.includes("rg")) next.push("rg");
-
-  const same =
-    next.length === active.length &&
-    next.every((name) => active.includes(name)) &&
-    active.includes("fd") &&
-    active.includes("rg") &&
-    !active.includes("find") &&
-    !active.includes("grep");
-  if (!same) pi.setActiveTools(next);
-}
-
 export default function (pi: ExtensionAPI) {
   const spillDirectories = new Set<string>();
+  const binaryCache = new Map<BinaryName, string>();
   let shuttingDown = false;
+
+  async function getBinary(name: BinaryName): Promise<string> {
+    const cached = binaryCache.get(name);
+    if (cached) return cached;
+    const path = await resolveBinary(name);
+    binaryCache.set(name, path);
+    return path;
+  }
+
+  /**
+   * Make fd/rg the default discovery tools for this package. A built-in is
+   * only retired once its replacement has actually resolved — otherwise the
+   * session loses a working tool and gains one that can only report an
+   * install hint.
+   */
+  function preferFdAndRg() {
+    const active = pi.getActiveTools();
+    const next = active.filter(
+      (name) =>
+        !(name === "find" && binaryCache.has("fd")) &&
+        !(name === "grep" && binaryCache.has("rg")),
+    );
+    if (!next.includes("fd")) next.push("fd");
+    if (!next.includes("rg")) next.push("rg");
+
+    const same =
+      next.length === active.length && next.every((name) => active.includes(name));
+    if (!same) pi.setActiveTools(next);
+  }
 
   async function trackSpill(result: RunResult) {
     const { fullOutputPath } = result;
@@ -107,12 +107,12 @@ export default function (pi: ExtensionAPI) {
       if (path) binaryCache.set(name, path);
     }
     // Prefer our tools over built-in find/grep for this package.
-    preferFdAndRg(pi);
+    preferFdAndRg();
   });
 
   // Re-apply after branch/session switches that may restore tool sets.
   pi.on("session_tree", async () => {
-    preferFdAndRg(pi);
+    preferFdAndRg();
   });
 
   pi.registerTool({
