@@ -1,6 +1,11 @@
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import { InterestTracker, pruneSettled } from "../shared/lifecycle.ts";
+import {
+  InterestTracker,
+  pruneSettled,
+  resolveLimit,
+  type LimitValue,
+} from "../shared/lifecycle.ts";
 import { abortPromise, sleep } from "../shared/time.ts";
 import { startPiBackend, type BackendJob } from "./backend.ts";
 import type { SettledInfo, SpawnOptions, SubagentSnapshot, SubagentStatus } from "./domain.ts";
@@ -14,13 +19,6 @@ const DEFAULT_KILL_GRACE_MS = 3000;
 const DEFAULT_MAX_RUNTIME_MS = 30 * 60_000;
 const OUTPUT_TAIL_CHARS = 24_000;
 const OUTPUT_NOTIFY_INTERVAL_MS = 100;
-
-type LimitValue = number | (() => number);
-
-function resolveLimit(value: LimitValue | undefined, fallback: number) {
-  if (value === undefined) return fallback;
-  return typeof value === "function" ? value() : value;
-}
 
 type Entry = {
   id: string;
@@ -47,7 +45,6 @@ type Entry = {
 };
 
 export type ManagerOptions = {
-  /** Static limit or live getter (e.g. package config via /pe-settings). */
   maxRunning?: LimitValue;
   maxTracked?: number;
   killGraceMs?: number;

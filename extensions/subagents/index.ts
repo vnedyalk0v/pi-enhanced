@@ -3,7 +3,11 @@ import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-c
 import { Type } from "typebox";
 import { createManagerHost, modelLabel } from "../shared/host.ts";
 import { JobsOverlay } from "../shared/jobs-overlay.ts";
-import { loadPackageConfig } from "../shared/package-config.ts";
+import {
+  loadPackageConfigFor,
+  projectTrustedOf,
+  type PackageConfigCtx,
+} from "../shared/package-config.ts";
 import { terminalText } from "../shared/terminal-text.ts";
 import {
   formatExit,
@@ -112,12 +116,9 @@ export function modelPatternMatchesRegistry(
 
 export default function (pi: ExtensionAPI) {
   let manager: SubagentManager | undefined;
-  let configCtx: { cwd: string; projectTrusted: boolean } | undefined;
+  let configCtx: PackageConfigCtx | undefined;
 
-  const packageConfig = () =>
-    configCtx
-      ? loadPackageConfig(configCtx)
-      : loadPackageConfig({ cwd: process.cwd(), projectTrusted: false });
+  const packageConfig = () => loadPackageConfigFor(configCtx);
 
   const host = createManagerHost<SubagentSnapshot>(pi, {
     widgetId: WIDGET_ID,
@@ -145,9 +146,6 @@ export default function (pi: ExtensionAPI) {
       if (m) await m.disposeAll();
     },
   });
-
-  const projectTrustedOf = (ctx: { isProjectTrusted?: () => boolean }) =>
-    typeof ctx.isProjectTrusted === "function" ? ctx.isProjectTrusted() : false;
 
   const rememberConfigCtx = (ctx: ExtensionContext) => {
     configCtx = { cwd: ctx.cwd, projectTrusted: projectTrustedOf(ctx) };

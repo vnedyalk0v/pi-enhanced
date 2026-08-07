@@ -12,6 +12,7 @@ import {
   type SelectItem,
   type SettingItem,
 } from "@earendil-works/pi-tui";
+import { modelLabel } from "../shared/host.ts";
 import {
   DEFAULT_PACKAGE_CONFIG,
   THINKING_LEVELS,
@@ -20,6 +21,7 @@ import {
   globalConfigPath,
   loadPackageConfig,
   patchConfigFile,
+  projectTrustedOf,
   readConfigFile,
   type ConfigScope,
   type PackageConfigFile,
@@ -43,10 +45,6 @@ function withOverrideChoice(base: string[], override: number | undefined) {
   return base.includes(s) ? base : [UNSET, s, ...base.filter((v) => v !== UNSET)];
 }
 
-function projectTrustedOf(ctx: { isProjectTrusted?: () => boolean }) {
-  return typeof ctx.isProjectTrusted === "function" ? ctx.isProjectTrusted() : false;
-}
-
 export function effectiveConfig(ctx: { cwd: string; isProjectTrusted?: () => boolean }) {
   return loadPackageConfig({ cwd: ctx.cwd, projectTrusted: projectTrustedOf(ctx) });
 }
@@ -55,10 +53,6 @@ export type SessionModelCtx = Pick<
   ExtensionContext,
   "model" | "thinkingLevel" | "modelRegistry" | "scopedModels"
 >;
-
-export function piModelLabel(ctx: Pick<ExtensionContext, "model">) {
-  return ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
-}
 
 /** Models the user can pick for subagents: same provider as the active Pi model. */
 export function modelsForCurrentProvider(ctx: SessionModelCtx): AnyModel[] {
@@ -104,7 +98,7 @@ export function thinkingLevelsFor(
 
 function displayModel(override: string | undefined, ctx: SessionModelCtx) {
   if (override?.trim()) return override.trim();
-  const pi = piModelLabel(ctx);
+  const pi = modelLabel(ctx);
   return pi ? `${INHERIT} → ${pi}` : INHERIT;
 }
 
@@ -119,7 +113,7 @@ function displayNumeric(override: number | undefined) {
 }
 
 export function modelItems(ctx: SessionModelCtx, current: string | undefined): SelectItem[] {
-  const pi = piModelLabel(ctx);
+  const pi = modelLabel(ctx);
   const items: SelectItem[] = [
     {
       value: INHERIT,
@@ -209,7 +203,7 @@ export function buildItems(
   const sa = file.subagents;
   const bg = file.backgroundTerminals;
   const wf = file.workflows;
-  const pi = piModelLabel(ctx);
+  const pi = modelLabel(ctx);
   const levels = thinkingLevelsFor(ctx, sa?.defaultModel);
   return [
     {
@@ -294,7 +288,7 @@ export function applyChange(
     if (newValue === "project" && !projectTrusted) {
       return {
         scope: "global",
-        error: "Project scope requires a trusted project.",
+        error: "Project scope requires a trusted project. Use /trust or stay on global.",
       };
     }
     return { scope: newValue };
@@ -396,7 +390,7 @@ export default function (pi: ExtensionAPI) {
       if (ctx.mode !== "tui") {
         if (ctx.hasUI) {
           const cfg = effectiveConfig(ctx);
-          const piModel = piModelLabel(ctx) ?? "(no model)";
+          const piModel = modelLabel(ctx) ?? "(no model)";
           const piThink = ctx.thinkingLevel ?? "(none)";
           ctx.ui.notify(
             [
@@ -433,44 +427,17 @@ export default function (pi: ExtensionAPI) {
             Math.min(items.length + 2, 14),
             getSettingsListTheme(),
             (id, newValue) => {
-              if (id === "scope") {
-                if (newValue === "project" && !projectTrustedOf(ctx)) {
-                  ctx.ui.notify(
-                    "Project scope requires a trusted project. Use /trust or stay on global.",
-                    "warning",
-                  );
-                  settingsList.updateValue("scope", scope);
-                  tui.requestRender();
-                  return;
-                }
-                const result = applyChange(scope, ctx.cwd, id, newValue, {
-                  projectTrusted: projectTrustedOf(ctx),
-                });
-                if (result.error) {
-                  ctx.ui.notify(result.error, "error");
-                  settingsList.updateValue("scope", scope);
-                  tui.requestRender();
-                  return;
-                }
-                scope = result.scope;
-                rebuildList();
-                tui.requestRender();
-                return;
-              }
-
-              const trusted = projectTrustedOf(ctx);
+              // applyChange owns the trust check: it default-denies project
+              // scope and reports back which scope is now active.
               const result = applyChange(scope, ctx.cwd, id, newValue, {
-                projectTrusted: trusted,
+                projectTrusted: projectTrustedOf(ctx),
               });
-              if (result.error) {
-                ctx.ui.notify(result.error, "error");
-                if (result.scope !== scope) scope = result.scope;
-                rebuildList();
-                tui.requestRender();
-                return;
-              }
-              // Model change can change available thinking levels — full rebuild.
-              if (id === "subagents.defaultModel") {
+              if (result.error) ctx.ui.notify(result.error, "error");
+              const scopeChanged = result.scope !== scope;
+              scope = result.scope;
+              // A different scope file, a rejected edit, or a model change (which
+              // changes the available thinking levels) all need fresh rows.
+              if (result.error || scopeChanged || id === "subagents.defaultModel") {
                 rebuildList();
               } else {
                 syncListFromDisk(settingsList, scope, ctx.cwd, ctx);
@@ -487,7 +454,7 @@ export default function (pi: ExtensionAPI) {
         return {
           render(width: number) {
             const eff = cachedEffective;
-            const piModel = piModelLabel(ctx) ?? "—";
+            const piModel = modelLabel(ctx) ?? "—";
             const piThink = ctx.thinkingLevel ?? "—";
             const header = [
               theme.fg("accent", theme.bold("pi-enhanced settings")),

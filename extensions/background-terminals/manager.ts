@@ -3,7 +3,12 @@ import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Readable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
-import { InterestTracker, pruneSettled } from "../shared/lifecycle.ts";
+import {
+  InterestTracker,
+  pruneSettled,
+  resolveLimit,
+  type LimitValue,
+} from "../shared/lifecycle.ts";
 import { abortPromise, sleep } from "../shared/time.ts";
 import { OutputBuffer, type OutputView } from "./output.ts";
 
@@ -43,15 +48,7 @@ export type SettledInfo = {
   consumed: boolean;
 };
 
-type LimitValue = number | (() => number);
-
-function resolveLimit(value: LimitValue | undefined, fallback: number) {
-  if (value === undefined) return fallback;
-  return typeof value === "function" ? value() : value;
-}
-
 export type ManagerOptions = {
-  /** Static limit or live getter (e.g. package config via /pe-settings). */
   maxRunning?: LimitValue;
   maxTracked?: number;
   killGraceMs?: number;

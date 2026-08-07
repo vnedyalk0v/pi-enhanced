@@ -2,7 +2,12 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { existsSync, statSync } from "node:fs";
-import { InterestTracker, pruneSettled } from "../shared/lifecycle.ts";
+import {
+  InterestTracker,
+  pruneSettled,
+  resolveLimit,
+  type LimitValue,
+} from "../shared/lifecycle.ts";
 import { abortPromise, sleep } from "../shared/time.ts";
 import type { ManagerOptions as SubagentManagerOptions } from "../subagents/manager.ts";
 import { SubagentManager } from "../subagents/manager.ts";
@@ -67,15 +72,7 @@ export type WorkflowSettledInfo = {
   consumed: boolean;
 };
 
-type LimitValue = number | (() => number);
-
-function resolveLimit(value: LimitValue | undefined, fallback: number) {
-  if (value === undefined) return fallback;
-  return typeof value === "function" ? value() : value;
-}
-
 export type WorkflowManagerOptions = {
-  /** Static limit or live getter (e.g. package config via /pe-settings). */
   maxRunning?: LimitValue;
   maxTracked?: number;
   /** Optional caller-owned root for artifact dirs. */
