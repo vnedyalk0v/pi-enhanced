@@ -511,6 +511,20 @@ describe("TerminalManager", () => {
     assert.equal(alive, false);
   });
 
+  it("disposeAll notifies subscribers before dropping them", async () => {
+    const m = createManager();
+    let notifications = 0;
+    const unsubscribe = m.subscribe(() => {
+      notifications += 1;
+    });
+
+    await m.disposeAll();
+
+    assert.equal(notifications, 1);
+    assert.doesNotThrow(() => unsubscribe());
+    await assert.doesNotReject(() => m.disposeAll());
+  });
+
   it("rejects a startup after disposal", async () => {
     const m = createManager();
     await m.disposeAll();

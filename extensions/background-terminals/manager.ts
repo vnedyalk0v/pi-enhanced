@@ -507,9 +507,11 @@ export class TerminalManager {
     ]);
 
     this.entries.clear();
-    this.listeners.clear();
     this.killInterest.clear();
+    // Notify before dropping subscribers, so an open /ps overlay repaints the
+    // emptied list one last time.
     this.notify();
+    this.listeners.clear();
   }
 }
 
