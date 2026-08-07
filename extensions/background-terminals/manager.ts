@@ -43,8 +43,16 @@ export type SettledInfo = {
   consumed: boolean;
 };
 
+type LimitValue = number | (() => number);
+
+function resolveLimit(value: LimitValue | undefined, fallback: number) {
+  if (value === undefined) return fallback;
+  return typeof value === "function" ? value() : value;
+}
+
 export type ManagerOptions = {
-  maxRunning?: number;
+  /** Static limit or live getter (e.g. package config via /pe-settings). */
+  maxRunning?: LimitValue;
   maxTracked?: number;
   killGraceMs?: number;
   onSettled?: (info: SettledInfo) => void;
@@ -85,18 +93,22 @@ export class TerminalManager {
   private outputNotifyTimer?: ReturnType<typeof setTimeout>;
   private readonly isRetained = (entry: Entry) =>
     entry.status === "running" || this.killInterest.has(entry.id);
-  private readonly maxRunning: number;
+  private readonly maxRunningOpt: LimitValue | undefined;
   private readonly maxTracked: number;
   private readonly killGraceMs: number;
   private onSettled?: (info: SettledInfo) => void;
   private onChange?: () => void;
 
   constructor(options: ManagerOptions = {}) {
-    this.maxRunning = options.maxRunning ?? DEFAULT_MAX_RUNNING;
+    this.maxRunningOpt = options.maxRunning;
     this.maxTracked = options.maxTracked ?? DEFAULT_MAX_TRACKED;
     this.killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
     this.onSettled = options.onSettled;
     this.onChange = options.onChange;
+  }
+
+  private maxRunning() {
+    return resolveLimit(this.maxRunningOpt, DEFAULT_MAX_RUNNING);
   }
 
   subscribe(listener: () => void) {
@@ -183,9 +195,10 @@ export class TerminalManager {
     if (this.disposed) {
       throw new Error("Background terminal manager is disposed.");
     }
-    if (this.getRunningCount() >= this.maxRunning) {
+    const maxRunning = this.maxRunning();
+    if (this.getRunningCount() >= maxRunning) {
       throw new Error(
-        `Concurrency limit: at most ${this.maxRunning} background terminals may run at once.`,
+        `Concurrency limit: at most ${maxRunning} background terminals may run at once.`,
       );
     }
 
