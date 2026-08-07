@@ -1,8 +1,14 @@
 import { resolve } from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createManagerHost } from "../shared/host.ts";
+import {
+  loadPackageConfigFor,
+  projectTrustedOf,
+  type PackageConfigCtx,
+} from "../shared/package-config.ts";
 import { TOOL_LIMITS_NOTE, truncateOneLine } from "../shared/text.ts";
+import { JobsOverlay } from "../shared/jobs-overlay.ts";
 import {
   buildKillResult,
   buildListResult,
@@ -11,7 +17,7 @@ import {
   buildTerminalResultMessage,
 } from "./format.ts";
 import { TerminalManager, type TerminalSnapshot } from "./manager.ts";
-import { PsOverlay } from "./ps.ts";
+import { terminalOverlayConfig } from "./ps.ts";
 
 const WIDGET_ID = "background-terminals";
 
@@ -40,6 +46,9 @@ const KillParams = Type.Object({
 
 export default function (pi: ExtensionAPI) {
   let manager: TerminalManager | undefined;
+  let configCtx: PackageConfigCtx | undefined;
+
+  const packageConfig = () => loadPackageConfigFor(configCtx);
 
   const host = createManagerHost<TerminalSnapshot>(pi, {
     widgetId: WIDGET_ID,
@@ -66,13 +75,11 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  // Manager is created lazily on first tool use so ephemeral sessions without
-  // bg tools do not create spill directories.
-  const getManager = (ctx: ExtensionContext) => {
+  const getManager = (ctx?: { cwd: string; isProjectTrusted?: () => boolean }) => {
+    if (ctx) configCtx = { cwd: ctx.cwd, projectTrusted: projectTrustedOf(ctx) };
     if (host.disposed) throw new Error("Background terminal manager is shutting down.");
-    if (manager) return manager;
-    manager = new TerminalManager({
-      sessionKey: ctx.sessionManager.getSessionId(),
+    manager ??= new TerminalManager({
+      maxRunning: () => packageConfig().backgroundTerminals.maxRunning,
       onSettled: host.onSettled,
       onChange: host.updateWidget,
     });
@@ -114,14 +121,14 @@ export default function (pi: ExtensionAPI) {
     promptSnippet: "Inspect a background terminal's status and recent output",
     parameters: StatusParams,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const m = getManager(ctx);
+      const m = getManager();
       const snap = m.get(params.id);
       if (!snap) {
         throw new Error(`Unknown terminal id: ${params.id}`);
       }
       // If completion was pending, model is reading it now — don't also inject.
       if (snap.status !== "running") {
-        host.delivery.consume([snap.id]);
+        host.consume([snap.id]);
       }
       return {
         content: [{ type: "text" as const, text: buildStatusResult(snap) }],
@@ -142,7 +149,7 @@ export default function (pi: ExtensionAPI) {
     promptSnippet: "List background terminals",
     parameters: Type.Object({}),
     async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
-      const m = getManager(ctx);
+      const m = getManager();
       const snaps = m.list();
       return {
         content: [{ type: "text" as const, text: buildListResult(snaps) }],
@@ -159,13 +166,13 @@ export default function (pi: ExtensionAPI) {
     promptSnippet: "Stop background terminals",
     parameters: KillParams,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      const m = getManager(ctx);
+      const m = getManager();
       if (params.ids.length === 0) {
         throw new Error("ids must not be empty");
       }
       try {
         const results = await m.kill(params.ids, signal);
-        host.delivery.consume(params.ids);
+        host.consume(params.ids);
         host.updateWidget();
         return {
           content: [{ type: "text" as const, text: buildKillResult(results) }],
@@ -198,32 +205,29 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      const m = getManager(ctx);
+      const m = getManager();
       await ctx.ui.custom((tui, theme, _kb, done) => {
-        const overlay = new PsOverlay(
-          m,
+        const overlay = new JobsOverlay<TerminalSnapshot>(
+          terminalOverlayConfig(m, (snap) => {
+            // Queue before waiting for process termination; the user can close
+            // the overlay and start another turn immediately.
+            pi.sendMessage(
+              {
+                customType: "background-terminal-user-kill",
+                content: `User requested termination of background terminal ${snap.id} "${truncateOneLine(snap.title, 120)}" from /ps.`,
+                display: false,
+                details: { id: snap.id, status: snap.status },
+              },
+              { deliverAs: "nextTurn", triggerTurn: false },
+            );
+          }),
           theme,
           () => {
             overlay.dispose();
             done(undefined);
           },
           () => tui.requestRender(),
-          {
-            getRows: () => tui.terminal.rows,
-            // Queue before waiting for process termination; the user can close
-            // the overlay and start another turn immediately.
-            onKillRequested: (snap) => {
-              pi.sendMessage(
-                {
-                  customType: "background-terminal-user-kill",
-                  content: `User requested termination of background terminal ${snap.id} "${truncateOneLine(snap.title, 120)}" from /ps.`,
-                  display: false,
-                  details: { id: snap.id, status: snap.status },
-                },
-                { deliverAs: "nextTurn", triggerTurn: false },
-              );
-            },
-          },
+          () => tui.terminal.rows,
         );
         return {
           render: (width: number) => overlay.render(width),

@@ -1,7 +1,21 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { ResultDelivery } from "./delivery.ts";
 import { WaitAbortedError } from "./time.ts";
-import { withUI } from "./ui.ts";
+
+/**
+ * Pi invalidates a captured ctx after session replacement or reload; every
+ * property access then throws, so `ctx?.hasUI` is not a sufficient guard.
+ * Runs a UI side effect, swallowing a stale-ctx throw; false if it did not run.
+ */
+export function withUI(ctx: ExtensionContext | undefined, fn: (ctx: ExtensionContext) => void) {
+  if (!ctx) return false;
+  try {
+    if (!ctx.hasUI) return false;
+    fn(ctx);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export type ManagerHostOptions<S extends { id: string }> = {
   widgetId: string;
@@ -39,7 +53,8 @@ export function createManagerHost<S extends { id: string }>(
     content: string;
     details: Record<string, unknown>;
   }> = [];
-  const delivery = new ResultDelivery<S>();
+  /** Settled snapshots awaiting async completion delivery, by job id. */
+  const pendingDelivery = new Map<string, S>();
 
   const updateWidget = () => {
     const running = options.getRunning();
@@ -75,10 +90,12 @@ export function createManagerHost<S extends { id: string }>(
 
   const flushDelivery = () => {
     if (disposed) {
-      delivery.clear();
+      pendingDelivery.clear();
       return;
     }
-    for (const { value } of delivery.drainAll()) {
+    const draining = [...pendingDelivery.values()];
+    pendingDelivery.clear();
+    for (const value of draining) {
       const { content, details, triggerTurn } = options.completion(value);
       if (triggerTurn === false) {
         // While the agent is streaming, a followUp is drained straight into the
@@ -119,7 +136,7 @@ export function createManagerHost<S extends { id: string }>(
 
   pi.on("session_shutdown", async () => {
     disposed = true;
-    delivery.clear();
+    pendingDelivery.clear();
     heldWhileStreaming.length = 0;
     withUI(uiCtx, (ctx) => ctx.ui.setWidget(options.widgetId, undefined));
     sessionCtx = undefined;
@@ -131,12 +148,15 @@ export function createManagerHost<S extends { id: string }>(
     get disposed() {
       return disposed;
     },
-    delivery,
     updateWidget,
+    /** Drop queued completions for ids whose result the model is reading now. */
+    consume(ids: readonly string[]) {
+      for (const id of ids) pendingDelivery.delete(id);
+    },
     /** Manager onSettled callback: queue async completion unless already consumed. */
     onSettled({ snapshot, consumed }: { snapshot: S; consumed: boolean }) {
       if (disposed || consumed) return;
-      delivery.enqueue(snapshot.id, snapshot);
+      pendingDelivery.set(snapshot.id, snapshot);
       flushDelivery();
     },
     /**
@@ -145,7 +165,7 @@ export function createManagerHost<S extends { id: string }>(
      */
     consumeIfWaitAborted(error: unknown, ids: readonly string[]) {
       if (error instanceof WaitAbortedError) {
-        delivery.consume(ids);
+        for (const id of ids) pendingDelivery.delete(id);
         updateWidget();
       }
     },
@@ -153,6 +173,6 @@ export function createManagerHost<S extends { id: string }>(
 }
 
 /** Parent session's model as a provider/id label for child spawn defaults. */
-export function modelLabel(ctx: ExtensionContext) {
+export function modelLabel(ctx: Pick<ExtensionContext, "model">) {
   return ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
 }

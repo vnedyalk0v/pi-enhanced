@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Theme } from "@earendil-works/pi-coding-agent";
+import { JobsOverlay } from "../shared/jobs-overlay.ts";
 import type { TerminalManager, TerminalSnapshot } from "./manager.ts";
-import { PsOverlay } from "./ps.ts";
+import { terminalOverlayConfig } from "./ps.ts";
 
 const theme = {
   fg: (_color: string, text: string) => text,
@@ -53,18 +54,15 @@ function makeHarness(count = 1, initialRows = 30, requestThrows = false) {
       return [];
     },
   } as unknown as TerminalManager;
-  const overlay = new PsOverlay(
-    manager,
+  const overlay = new JobsOverlay<TerminalSnapshot>(
+    terminalOverlayConfig(manager, (snap) => {
+      events.push(`requested:${snap.id}`);
+      if (requestThrows) throw new Error("stale notification context");
+    }),
     theme,
     () => closes++,
     () => renders++,
-    {
-      getRows: () => rows,
-      onKillRequested: (snap) => {
-        events.push(`requested:${snap.id}`);
-        if (requestThrows) throw new Error("stale notification context");
-      },
-    },
+    () => rows,
   );
 
   return {
@@ -86,7 +84,7 @@ function makeHarness(count = 1, initialRows = 30, requestThrows = false) {
   };
 }
 
-describe("PsOverlay", () => {
+describe("terminal overlay (/ps)", () => {
   it("invalidates the viewport cache when terminal height changes", () => {
     const h = makeHarness(32, 30);
     const tall = h.overlay.render(60);

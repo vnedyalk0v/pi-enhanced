@@ -15,7 +15,7 @@ The package follows three boundaries:
 
 | Dependency | Requirement |
 | --- | --- |
-| Pi | `0.83.0` |
+| Pi | `0.84.1` |
 | Node.js | `24.12.0` or newer |
 | npm and Git | Available on `PATH` |
 
@@ -24,28 +24,36 @@ stable. The package does not need a TypeScript runtime dependency.
 
 ## Install
 
-Install the latest tagged release globally:
+Install globally:
 
 ```sh
-pi install git:github.com/vnedyalk0v/pi-enhanced@v0.1.0
+pi install git:github.com/vnedyalk0v/pi-enhanced
 ```
 
 For a project-local installation:
 
 ```sh
-pi install -l git:github.com/vnedyalk0v/pi-enhanced@v0.1.0
+pi install -l git:github.com/vnedyalk0v/pi-enhanced
 ```
 
 Try the package for one run without changing Pi settings:
 
 ```sh
-pi -e git:github.com/vnedyalk0v/pi-enhanced@v0.1.0
+pi -e git:github.com/vnedyalk0v/pi-enhanced
 ```
 
 To load a local checkout:
 
 ```sh
 pi -e ./
+```
+
+Without a ref, Pi clones the default branch. Once a release tag is published,
+append it to pin the package to that release, and run the same command again to
+move an existing installation onto a newer ref:
+
+```sh
+pi install git:github.com/vnedyalk0v/pi-enhanced@v0.1.0
 ```
 
 Pi packages execute with the user's system permissions. Review the source
@@ -55,10 +63,11 @@ before installation and use it only in trusted working directories.
 
 | Area | Interfaces | What it adds |
 | --- | --- | --- |
+| Package settings | `/pe-settings` | Defaults for subagent model/thinking, concurrency, and related limits |
 | Conversation | `ask_user`, `/copy-all`, `/summary` | Structured choices, clipboard export, and model-generated session summaries |
 | File search | `fd`, `rg` | Fast filename and content search with bounded model output |
 | Git and UI | `/git-info`, `github-dark-default` | Footer branch status and an automatically selected GitHub-style theme |
-| Background terminals | `bg_start`, `bg_status`, `bg_list`, `bg_kill`, `/ps` | Long-running non-interactive commands with completion delivery and bounded spill logs |
+| Background terminals | `bg_start`, `bg_status`, `bg_list`, `bg_kill`, `/ps` | Long-running non-interactive commands with completion delivery and a bounded output tail |
 | Web research | `fc_search`, `fc_scrape`, `fc_crawl` | Firecrawl search/scrape/crawl with DuckDuckGo fallback for no-key or quota-exhausted search |
 | Subagents | `sa_spawn`, `sa_agents`, `sa_status`, `sa_list`, `sa_wait`, `sa_cancel`, `/sa`, `/btw` | Isolated native pi workers (ad-hoc or named agent definitions) with bounded concurrency |
 | Workflows | `wf_start`, `wf_status`, `wf_list`, `wf_wait`, `wf_cancel`, `/wf`, `/workflow` | Reconnaissance, implementation, review, and synthesis with validated handoffs and artifacts |
@@ -67,6 +76,52 @@ The package also provides on-demand skills for background terminals,
 subagents, web research, and workflows.
 
 ## Configure
+
+### Package settings (`/pe-settings`)
+
+Use `/pe-settings` in interactive TUI to set package-wide defaults:
+
+- subagent default model and thinking level (default: **inherit from Pi**)
+- subagent concurrency and max runtime
+- background terminal concurrency
+- workflow concurrency and per-workflow child pool size
+
+**Model / thinking UX:**
+- With no package override, workers use the **active Pi session model and thinking level**.
+- The model picker lists models from the **same provider** as the current Pi model
+  (for example only OpenAI models when Pi is on your OpenAI subscription).
+- Thinking levels listed are those **supported by the effective model**
+  (Pi model, or the package model override if set).
+
+Settings are stored as JSON overrides (missing keys keep package defaults):
+
+| Scope | Path |
+| --- | --- |
+| Global | `~/.pi/agent/extensions/pi-enhanced.json` |
+| Project (trusted only) | `.pi/pi-enhanced.json` |
+
+Project values override global. Model/thinking resolution for `sa_spawn` is:
+spawn params → agent definition → package defaults (`/pe-settings`) → **Pi session**.
+
+Outside TUI, `/pe-settings` prints the effective config (read-only). You can also
+edit the JSON files directly.
+
+Example:
+
+```json
+{
+  "subagents": {
+    "defaultModel": "anthropic/claude-haiku-4-5",
+    "defaultThinking": "low",
+    "maxRunning": 4,
+    "maxRuntimeMinutes": 30
+  },
+  "backgroundTerminals": { "maxRunning": 8 },
+  "workflows": { "maxRunning": 1, "childMaxRunning": 4 }
+}
+```
+
+### Enable / disable resources
 
 Run `pi config` to enable or disable individual extensions, skills, and themes.
 Press Tab to switch between global and project-local settings, or start directly
@@ -83,7 +138,7 @@ load in full:
 {
   "packages": [
     {
-      "source": "git:github.com/vnedyalk0v/pi-enhanced@v0.1.0",
+      "source": "git:github.com/vnedyalk0v/pi-enhanced",
       "extensions": ["!extensions/file-search/**"]
     }
   ]
@@ -120,21 +175,22 @@ bad-request, and transient provider errors do not trigger fallback.
 The file-search extension resolves `fd` and `rg` from `PATH` first (`fdfind` is
 also accepted on Linux), then from `~/.pi/agent/bin/`.
 
-When missing, pinned binaries are downloaded on macOS and Linux for x64 and
-arm64, verified with SHA-256, and installed into that directory. On Windows or
-another unsupported target, install `fd` and `rg` with the platform package
-manager and expose them on `PATH`.
+Both must be installed with your platform package manager
+(`brew install fd ripgrep`, `apt install fd-find ripgrep`, or the upstream
+release pages). When one is missing, the corresponding tool reports the install
+command instead of running.
 
 ## Operational limits
 
-| Resource | Running limit | Retained results |
+| Resource | Default running limit | Retained results |
 | --- | ---: | ---: |
 | Background terminals | 8 | 32 |
 | Standalone subagents | 4 | 32 |
 | Workflows | 1 | 16 |
 
-Each workflow owns a separate four-child subagent pool. Starting jobs reserve
-capacity immediately.
+Limits are configurable via `/pe-settings` (or `pi-enhanced.json`). Each workflow
+owns a separate child subagent pool (default 4). Starting jobs reserve capacity
+immediately.
 
 Automatic completion messages stay metadata-only; the model retrieves child
 output explicitly via `bg_status`, `sa_status`, or `wf_status`. The `/ps`,
@@ -143,14 +199,15 @@ and workflows. `/btw` answers are delivered directly to the user, marked as
 untrusted content; delivery waits until the agent is idle so the answer never
 starts or steers a model turn.
 
-Background streams retain a 2 MiB in-memory tail and spill up to 16 MiB per
-stream, capped at 64 MiB per Pi session, to a private OS-temporary directory.
-Partial spill logs are labeled, and all logs are removed at Pi session shutdown.
-Truncated `fd`/`rg` results spill full output to a private temporary file with
-the same 16 MiB cap; larger spills are labeled partial. Native subagent JSON
+Background streams retain a 2 MiB in-memory tail per stream; older output is
+dropped and is not recoverable, so redirect a command to a file when you need
+its complete log. Truncated `fd`/`rg` results spill full output to a private
+temporary file with a 16 MiB cap; larger spills are labeled partial and all
+spill files are removed at Pi session shutdown. Native subagent JSON
 result records have a 4 MiB UTF-8 ceiling. An oversized record fails the worker
 instead of returning a truncated successful result. Subagents (standalone and
-workflow children) are force-killed after 30 minutes of runtime.
+workflow children) are force-killed after 30 minutes of runtime by default
+(configurable via `/pe-settings`).
 Workflow artifacts use private OS-temporary directories reported by
 `wf_status`; completed artifacts survive the session but are not durable or
 cross-machine storage.
@@ -166,15 +223,15 @@ confirms before running one interactively.
 ## Troubleshooting
 
 - `pi` not found: install the CLI and confirm it is on `PATH`.
-- `fd` or `rg` installation fails: check HTTPS access, `tar`, directory
-  permissions, and the reported digest; install manually on unsupported
-  platforms.
+- `fd` or `rg` not found: install it with your package manager and confirm it is
+  on `PATH` (the tool error names the install command).
 - Firecrawl fails: set `FIRECRAWL_API_KEY` for scrape/crawl. Only missing-key or
   quota-exhausted search uses the fallback.
 - Concurrency limit reached: wait for or cancel an existing `bt-*`, `sa-*`, or
   `wf-*` job.
-- Missing output: inspect `bg_status` for spill logs, `wf_status` for workflow
-  artifacts, or the full-output path returned by truncated `fd`/`rg` results.
+- Missing output: inspect `bg_status` for the retained tail, `wf_status` for
+  workflow artifacts, or the full-output path returned by truncated `fd`/`rg`
+  results.
 
 ## Development
 

@@ -1,6 +1,11 @@
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import { InterestTracker, pruneSettled } from "../shared/lifecycle.ts";
+import {
+  InterestTracker,
+  pruneSettled,
+  resolveLimit,
+  type LimitValue,
+} from "../shared/lifecycle.ts";
 import { abortPromise, sleep } from "../shared/time.ts";
 import { startPiBackend, type BackendJob } from "./backend.ts";
 import type { SettledInfo, SpawnOptions, SubagentSnapshot, SubagentStatus } from "./domain.ts";
@@ -10,7 +15,7 @@ const DEFAULT_MAX_RUNNING = 4;
 const DEFAULT_MAX_TRACKED = 32;
 const DEFAULT_KILL_GRACE_MS = 3000;
 // ponytail: fixed ceiling, not per-task tuning; raise via ManagerOptions.maxRuntimeMs
-// if a legitimate task needs longer than 30 minutes.
+// or package config (pe-settings / pi-enhanced.json) if a task needs longer than 30 minutes.
 const DEFAULT_MAX_RUNTIME_MS = 30 * 60_000;
 const OUTPUT_TAIL_CHARS = 24_000;
 const OUTPUT_NOTIFY_INTERVAL_MS = 100;
@@ -40,17 +45,15 @@ type Entry = {
 };
 
 export type ManagerOptions = {
-  maxRunning?: number;
+  maxRunning?: LimitValue;
   maxTracked?: number;
   killGraceMs?: number;
   /** Force-kill a subagent that runs longer than this (default 30 minutes). */
-  maxRuntimeMs?: number;
+  maxRuntimeMs?: LimitValue;
   onSettled?: (info: SettledInfo) => void;
   onChange?: () => void;
   /** Inject the backend starter for tests. */
-  starters?: {
-    pi?: typeof startPiBackend;
-  };
+  starter?: typeof startPiBackend;
 };
 
 export class SubagentManager {
@@ -59,22 +62,30 @@ export class SubagentManager {
   private startingCount = 0;
   private disposed = false;
   private waitInterest = new InterestTracker();
-  private readonly maxRunning: number;
+  private readonly maxRunningOpt: LimitValue | undefined;
   private readonly maxTracked: number;
   private readonly killGraceMs: number;
-  private readonly maxRuntimeMs: number;
+  private readonly maxRuntimeMsOpt: LimitValue | undefined;
   private onSettled?: (info: SettledInfo) => void;
   private onChange?: () => void;
   private readonly starter: typeof startPiBackend;
 
   constructor(options: ManagerOptions = {}) {
-    this.maxRunning = options.maxRunning ?? DEFAULT_MAX_RUNNING;
+    this.maxRunningOpt = options.maxRunning;
     this.maxTracked = options.maxTracked ?? DEFAULT_MAX_TRACKED;
     this.killGraceMs = options.killGraceMs ?? DEFAULT_KILL_GRACE_MS;
-    this.maxRuntimeMs = options.maxRuntimeMs ?? DEFAULT_MAX_RUNTIME_MS;
+    this.maxRuntimeMsOpt = options.maxRuntimeMs;
     this.onSettled = options.onSettled;
     this.onChange = options.onChange;
-    this.starter = options.starters?.pi ?? startPiBackend;
+    this.starter = options.starter ?? startPiBackend;
+  }
+
+  private maxRunning() {
+    return resolveLimit(this.maxRunningOpt, DEFAULT_MAX_RUNNING);
+  }
+
+  private maxRuntimeMs() {
+    return resolveLimit(this.maxRuntimeMsOpt, DEFAULT_MAX_RUNTIME_MS);
   }
 
   private readonly listeners = new Set<() => void>();
@@ -168,9 +179,10 @@ export class SubagentManager {
   async spawn(options: SpawnOptions & { signal?: AbortSignal }): Promise<SubagentSnapshot> {
     if (this.disposed) throw new Error("Subagent manager is disposed.");
     options.signal?.throwIfAborted();
-    if (this.runningCount() + this.startingCount >= this.maxRunning) {
+    const maxRunning = this.maxRunning();
+    if (this.runningCount() + this.startingCount >= maxRunning) {
       throw new Error(
-        `Concurrency limit: at most ${this.maxRunning} subagents may run at once.`,
+        `Concurrency limit: at most ${maxRunning} subagents may run at once.`,
       );
     }
 
@@ -247,7 +259,10 @@ export class SubagentManager {
       this.notify();
 
       // Background collection — never await here.
-      void this.collectEntry(entry, job);
+      // Resolve the runtime limit before the detached collector runs so a
+      // failing package-config getter cannot race past a successful start.
+      const maxRuntimeMs = this.maxRuntimeMs();
+      void this.collectEntry(entry, job, maxRuntimeMs);
 
       return this.snapshotOf(entry);
     } finally {
@@ -255,14 +270,14 @@ export class SubagentManager {
     }
   }
 
-  private async collectEntry(entry: Entry, job: BackendJob) {
+  private async collectEntry(entry: Entry, job: BackendJob, maxRuntimeMs: number) {
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
       entry.killSignaled = true;
       job.handle.kill("SIGTERM");
       setTimeout(() => job.handle.kill("SIGKILL"), this.killGraceMs).unref?.();
-    }, this.maxRuntimeMs);
+    }, maxRuntimeMs);
     timer.unref?.();
 
     try {
@@ -277,7 +292,7 @@ export class SubagentManager {
           signal: result.signal,
           resultText: result.resultText || undefined,
           errorText: timedOut
-            ? `Killed: exceeded max runtime of ${Math.round(this.maxRuntimeMs / 60_000)}m`
+            ? `Killed: exceeded max runtime of ${Math.round(maxRuntimeMs / 60_000)}m`
             : result.errorText,
           output: result.output,
         });

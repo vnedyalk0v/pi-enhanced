@@ -4,6 +4,11 @@ import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createManagerHost, modelLabel } from "../shared/host.ts";
 import { JobsOverlay } from "../shared/jobs-overlay.ts";
+import {
+  loadPackageConfigFor,
+  projectTrustedOf,
+  type PackageConfigCtx,
+} from "../shared/package-config.ts";
 import { terminalText } from "../shared/terminal-text.ts";
 import type { WorkflowSnapshot } from "./domain.ts";
 import { TOOL_LIMITS_NOTE, truncateOneLine } from "../shared/text.ts";
@@ -42,6 +47,9 @@ const IdsParams = Type.Object({
 
 export default function (pi: ExtensionAPI) {
   let manager: WorkflowManager | undefined;
+  let configCtx: PackageConfigCtx | undefined;
+
+  const packageConfig = () => loadPackageConfigFor(configCtx);
 
   const host = createManagerHost<WorkflowSnapshot>(pi, {
     widgetId: WIDGET_ID,
@@ -67,13 +75,19 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  const getManager = () => {
+  const getManager = (ctx?: { cwd: string; isProjectTrusted?: () => boolean }) => {
+    if (ctx) configCtx = { cwd: ctx.cwd, projectTrusted: projectTrustedOf(ctx) };
     if (host.disposed) throw new Error("Workflow manager is shutting down.");
     if (manager) return manager;
     const reconTools = selectReconTools(pi.getAllTools().map((tool) => tool.name));
     manager = new WorkflowManager({
+      maxRunning: () => packageConfig().workflows.maxRunning,
       reconTools,
       reconExtensionPath: reconTools?.includes("fd") ? FILE_SEARCH_EXTENSION : undefined,
+      subagentOptions: {
+        maxRunning: () => packageConfig().workflows.childMaxRunning,
+        maxRuntimeMs: () => packageConfig().subagents.maxRuntimeMs,
+      },
       onSettled: host.onSettled,
       onChange: host.updateWidget,
     });
@@ -92,14 +106,15 @@ export default function (pi: ExtensionAPI) {
     ],
     parameters: StartParams,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      const m = getManager();
+      const m = getManager(ctx);
       const cwd = resolve(ctx.cwd, params.working_dir ?? ".");
+      const cfg = packageConfig();
       const snap = await m.start({
         goal: params.goal,
         title: params.title,
         cwd,
-        model: modelLabel(ctx),
-        thinking: ctx.thinkingLevel,
+        model: cfg.subagents.defaultModel || modelLabel(ctx),
+        thinking: cfg.subagents.defaultThinking || ctx.thinkingLevel,
         signal,
       });
       host.updateWidget();
@@ -124,7 +139,7 @@ export default function (pi: ExtensionAPI) {
       const m = getManager();
       const snap = m.get(params.id);
       if (!snap) throw new Error(`Unknown workflow id: ${params.id}`);
-      if (snap.status !== "running") host.delivery.consume([snap.id]);
+      if (snap.status !== "running") host.consume([snap.id]);
       return {
         content: [{ type: "text" as const, text: buildStatusResult(snap) }],
         details: {
@@ -163,7 +178,7 @@ export default function (pi: ExtensionAPI) {
       if (params.ids.length === 0) throw new Error("ids must not be empty");
       const m = getManager();
       const snaps = await m.wait(params.ids, signal);
-      host.delivery.consume(params.ids);
+      host.consume(params.ids);
       host.updateWidget();
       return {
         content: [{ type: "text" as const, text: buildWaitResult(snaps) }],
@@ -190,7 +205,7 @@ export default function (pi: ExtensionAPI) {
       const m = getManager();
       try {
         const snaps = await m.cancel(params.ids, signal);
-        host.delivery.consume(params.ids);
+        host.consume(params.ids);
         host.updateWidget();
         return {
           content: [{ type: "text" as const, text: buildCancelResult(snaps) }],
@@ -213,13 +228,14 @@ export default function (pi: ExtensionAPI) {
         if (ctx.hasUI) ctx.ui.notify("Usage: /workflow <goal>", "warning");
         return;
       }
-      const m = getManager();
+      const m = getManager(ctx);
+      const cfg = packageConfig();
       try {
         const snap = await m.start({
           goal,
           cwd: ctx.cwd,
-          model: modelLabel(ctx),
-          thinking: ctx.thinkingLevel,
+          model: cfg.subagents.defaultModel || modelLabel(ctx),
+          thinking: cfg.subagents.defaultThinking || ctx.thinkingLevel,
         });
         host.updateWidget();
         if (ctx.hasUI) {
@@ -247,7 +263,7 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      const m = getManager();
+      const m = getManager(ctx);
       await ctx.ui.custom((tui, theme, _kb, done) => {
         const overlay = new JobsOverlay<WorkflowSnapshot>(
           {
@@ -297,7 +313,7 @@ export default function (pi: ExtensionAPI) {
             },
             cancel: (id) =>
               m.cancel([id]).then(() => {
-                host.delivery.consume([id]);
+                host.consume([id]);
                 host.updateWidget();
               }),
           },

@@ -55,56 +55,54 @@ function fakeJob(result: {
 }
 
 /** Scripted backend: fail recon "relevant", succeed everything else. */
-function partialFailureStarters() {
+function partialFailureStarter() {
   let piCalls = 0;
-  return {
-    pi: async (opts: { prompt: string; title?: string }) => {
-      piCalls += 1;
-      const prompt = opts.prompt;
-      // relevant scout
-      if (prompt.includes("task key: relevant")) {
-        return fakeJob({
-          exitCode: 1,
-          errorText: "scout crashed",
-          resultText: "",
-          delayMs: 20,
-        });
-      }
-      if (prompt.includes("task key: structure")) {
-        return fakeJob({
-          exitCode: 0,
-          resultText: "Structure: src/, tests/, package.json entry at src/index.ts.",
-          delayMs: 20,
-        });
-      }
-      if (prompt.includes("task key: implement")) {
-        return fakeJob({
-          exitCode: 0,
-          resultText: "Implemented: added cache layer in src/cache.ts.",
-          delayMs: 25,
-        });
-      }
-      if (prompt.includes("task key: review")) {
-        return fakeJob({
-          exitCode: 0,
-          resultText: "Review: looks good; add one unit test for edge case.",
-          delayMs: 20,
-        });
-      }
-      if (prompt.includes("task key: synthesize")) {
-        return fakeJob({
-          exitCode: 0,
-          resultText:
-            "Final: implemented caching. One recon scout failed; used structure brief. Review requested a test.",
-          delayMs: 20,
-        });
-      }
+  return async (opts: { prompt: string; title?: string }) => {
+    piCalls += 1;
+    const prompt = opts.prompt;
+    // relevant scout
+    if (prompt.includes("task key: relevant")) {
+      return fakeJob({
+        exitCode: 1,
+        errorText: "scout crashed",
+        resultText: "",
+        delayMs: 20,
+      });
+    }
+    if (prompt.includes("task key: structure")) {
       return fakeJob({
         exitCode: 0,
-        resultText: `pi ok #${piCalls}`,
-        delayMs: 10,
+        resultText: "Structure: src/, tests/, package.json entry at src/index.ts.",
+        delayMs: 20,
       });
-    },
+    }
+    if (prompt.includes("task key: implement")) {
+      return fakeJob({
+        exitCode: 0,
+        resultText: "Implemented: added cache layer in src/cache.ts.",
+        delayMs: 25,
+      });
+    }
+    if (prompt.includes("task key: review")) {
+      return fakeJob({
+        exitCode: 0,
+        resultText: "Review: looks good; add one unit test for edge case.",
+        delayMs: 20,
+      });
+    }
+    if (prompt.includes("task key: synthesize")) {
+      return fakeJob({
+        exitCode: 0,
+        resultText:
+          "Final: implemented caching. One recon scout failed; used structure brief. Review requested a test.",
+        delayMs: 20,
+      });
+    }
+    return fakeJob({
+      exitCode: 0,
+      resultText: `pi ok #${piCalls}`,
+      delayMs: 10,
+    });
   };
 }
 
@@ -136,11 +134,9 @@ async function waitForMissing(path: string) {
 
 describe("WorkflowManager", () => {
   it("creates distinct private default directories that survive disposal", async () => {
-    const starters = {
-      pi: async () => fakeJob({ exitCode: 0, resultText: "ok", delayMs: 10 }),
-    };
-    const firstManager = new WorkflowManager({ subagentOptions: { starters } });
-    const secondManager = new WorkflowManager({ subagentOptions: { starters } });
+    const starter = async () => fakeJob({ exitCode: 0, resultText: "ok", delayMs: 10 });
+    const firstManager = new WorkflowManager({ subagentOptions: { starter } });
+    const secondManager = new WorkflowManager({ subagentOptions: { starter } });
     managers.push(firstManager, secondManager);
 
     const [first, second] = await Promise.all([
@@ -165,16 +161,14 @@ describe("WorkflowManager", () => {
   it("isolates workflow artifacts across managers sharing a root", async () => {
     const artifactsRoot = await mkdtemp(join(tmpdir(), "wf-shared-test-"));
     tempDirs.push(artifactsRoot);
-    const starters = {
-      pi: async () => fakeJob({ exitCode: 0, resultText: "ok", delayMs: 10 }),
-    };
+    const starter = async () => fakeJob({ exitCode: 0, resultText: "ok", delayMs: 10 });
     const firstManager = new WorkflowManager({
       artifactsRoot,
-      subagentOptions: { starters },
+      subagentOptions: { starter },
     });
     const secondManager = new WorkflowManager({
       artifactsRoot,
-      subagentOptions: { starters },
+      subagentOptions: { starter },
     });
     managers.push(firstManager, secondManager);
 
@@ -218,10 +212,8 @@ describe("WorkflowManager", () => {
       maxRunning: 1,
       maxTracked: 1,
       subagentOptions: {
-        starters: {
-          pi: async () =>
-            fakeJob({ exitCode: 0, resultText: "ok scout/review/synth", delayMs: 30 }),
-        },
+        starter: async () =>
+          fakeJob({ exitCode: 0, resultText: "ok scout/review/synth", delayMs: 30 }),
       },
       onSettled: ({ snapshot }) => {
         if (snapshot.goal === "third workflow") resolveThird();
@@ -252,9 +244,7 @@ describe("WorkflowManager", () => {
         throw new Error("stale");
       },
       subagentOptions: {
-        starters: {
-          pi: async () => fakeJob({ exitCode: 0, resultText: "ok", delayMs: 1 }),
-        },
+        starter: async () => fakeJob({ exitCode: 0, resultText: "ok", delayMs: 1 }),
       },
     });
 
@@ -270,9 +260,7 @@ describe("WorkflowManager", () => {
         throw new Error("stale");
       },
       subagentOptions: {
-        starters: {
-          pi: async () => fakeJob({ exitCode: 0, resultText: "ok", delayMs: 1 }),
-        },
+        starter: async () => fakeJob({ exitCode: 0, resultText: "ok", delayMs: 1 }),
       },
     });
 
@@ -285,9 +273,7 @@ describe("WorkflowManager", () => {
   it("wait fails cleanly when the manager is disposed mid-wait", async () => {
     const { m } = await createManager({
       subagentOptions: {
-        starters: {
-          pi: async () => fakeJob({ exitCode: 0, resultText: "ok", delayMs: 30 }),
-        },
+        starter: async () => fakeJob({ exitCode: 0, resultText: "ok", delayMs: 30 }),
       },
     });
 
@@ -311,9 +297,7 @@ describe("WorkflowManager", () => {
         throw new Error("stale");
       },
       subagentOptions: {
-        starters: {
-          pi: async () => fakeJob({ exitCode: 0, resultText: "ok", delayMs: 1 }),
-        },
+        starter: async () => fakeJob({ exitCode: 0, resultText: "ok", delayMs: 1 }),
       },
     });
 
@@ -342,21 +326,19 @@ describe("WorkflowManager", () => {
       maxRunning: 2,
       maxTracked: 1,
       subagentOptions: {
-        starters: {
-          pi: async ({ prompt }) => {
-            if (!prompt.includes("retained workflow")) {
-              return fakeJob({ exitCode: 0, resultText: "slow", delayMs: 30_000 });
-            }
-            const gate = prompt.includes("first retained workflow") ? firstGate : secondGate;
-            const wait = gate.then(() => ({ exitCode: 0 }));
-            return {
-              handle: { pid: 99_001, kill: () => {}, wait },
-              collect: async () => {
-                const result = await wait;
-                return { ...result, resultText: "done", output: "" };
-              },
-            };
-          },
+        starter: async ({ prompt }) => {
+          if (!prompt.includes("retained workflow")) {
+            return fakeJob({ exitCode: 0, resultText: "slow", delayMs: 30_000 });
+          }
+          const gate = prompt.includes("first retained workflow") ? firstGate : secondGate;
+          const wait = gate.then(() => ({ exitCode: 0 }));
+          return {
+            handle: { pid: 99_001, kill: () => {}, wait },
+            collect: async () => {
+              const result = await wait;
+              return { ...result, resultText: "done", output: "" };
+            },
+          };
         },
       },
       onSettled: ({ snapshot }) => settled.get(snapshot.id)?.(),
@@ -463,12 +445,10 @@ describe("WorkflowManager", () => {
       reconTools,
       reconExtensionPath: "/package/extensions/file-search/index.ts",
       subagentOptions: {
-        starters: {
-          pi: async ({ prompt, tools, extensionPath }) => {
-            const key = prompt.match(/task key: (\w+)/)?.[1] ?? "";
-            calls.push({ key, tools, extensionPath });
-            return fakeJob({ exitCode: 0, resultText: `${key} complete` });
-          },
+        starter: async ({ prompt, tools, extensionPath }) => {
+          const key = prompt.match(/task key: (\w+)/)?.[1] ?? "";
+          calls.push({ key, tools, extensionPath });
+          return fakeJob({ exitCode: 0, resultText: `${key} complete` });
         },
       },
     });
@@ -497,7 +477,7 @@ describe("WorkflowManager", () => {
     const settled: Array<{ status: string; consumed: boolean }> = [];
     const { m, artifactsRoot } = await createManager({
       subagentOptions: {
-        starters: partialFailureStarters(),
+        starter: partialFailureStarter(),
         maxRunning: 4,
       },
       onSettled: ({ snapshot, consumed }) => {
@@ -563,10 +543,8 @@ describe("WorkflowManager", () => {
     const settled: boolean[] = [];
     const { m } = await createManager({
       subagentOptions: {
-        starters: {
-          pi: async () =>
-            fakeJob({ exitCode: 0, resultText: "ok scout/review/synth", delayMs: 10 }),
-        },
+        starter: async () =>
+          fakeJob({ exitCode: 0, resultText: "ok scout/review/synth", delayMs: 10 }),
       },
       onSettled: ({ consumed }) => settled.push(consumed),
     });
@@ -590,9 +568,7 @@ describe("WorkflowManager", () => {
   it("cancel stops a running workflow", async () => {
     const { m } = await createManager({
       subagentOptions: {
-        starters: {
-          pi: async () => fakeJob({ exitCode: 0, resultText: "slow", delayMs: 30_000 }),
-        },
+        starter: async () => fakeJob({ exitCode: 0, resultText: "slow", delayMs: 30_000 }),
       },
     });
 
@@ -622,14 +598,12 @@ describe("WorkflowManager", () => {
     const { m } = await createManager({
       onSettled: ({ consumed }) => resolveSettled(consumed),
       subagentOptions: {
-        starters: {
-          pi: async () => {
-            backendStarted();
-            return {
-              handle: { pid: 99_001, kill: () => {}, wait },
-              collect: async () => ({ ...(await wait), resultText: "", output: "" }),
-            };
-          },
+        starter: async () => {
+          backendStarted();
+          return {
+            handle: { pid: 99_001, kill: () => {}, wait },
+            collect: async () => ({ ...(await wait), resultText: "", output: "" }),
+          };
         },
       },
     });
@@ -655,11 +629,9 @@ describe("WorkflowManager", () => {
     const { m } = await createManager({
       onSettled: resolveSettled,
       subagentOptions: {
-        starters: {
-          pi: async () => {
-            starts += 1;
-            return fakeJob({ exitCode: 0, resultText: "unexpected" });
-          },
+        starter: async () => {
+          starts += 1;
+          return fakeJob({ exitCode: 0, resultText: "unexpected" });
         },
       },
     });
@@ -710,19 +682,17 @@ describe("WorkflowManager", () => {
       });
       const { m } = await createManager({
         subagentOptions: {
-          starters: {
-            pi: async () => {
-              starterEntered();
-              await release;
-              return {
-                handle: {
-                  pid: 99_003,
-                  kill: jobKilled,
-                  wait: Promise.resolve({ exitCode: 1 }),
-                },
-                collect: async () => ({ exitCode: 1, resultText: "", output: "" }),
-              };
-            },
+          starter: async () => {
+            starterEntered();
+            await release;
+            return {
+              handle: {
+                pid: 99_003,
+                kill: jobKilled,
+                wait: Promise.resolve({ exitCode: 1 }),
+              },
+              collect: async () => ({ exitCode: 1, resultText: "", output: "" }),
+            };
           },
         },
       });
@@ -774,25 +744,23 @@ describe("WorkflowManager", () => {
       });
       const { m } = await createManager({
         subagentOptions: {
-          starters: {
-            pi: async () => {
-              starterEntered();
-              await release;
-              return {
-                handle: {
-                  pid: 99_002,
-                  kill: () => {
-                    jobKilled();
-                    finishJob();
-                  },
-                  wait,
+          starter: async () => {
+            starterEntered();
+            await release;
+            return {
+              handle: {
+                pid: 99_002,
+                kill: () => {
+                  jobKilled();
+                  finishJob();
                 },
-                collect: async () => {
-                  const result = await wait;
-                  return { ...result, resultText: "", output: "" };
-                },
-              };
-            },
+                wait,
+              },
+              collect: async () => {
+                const result = await wait;
+                return { ...result, resultText: "", output: "" };
+              },
+            };
           },
         },
       });
@@ -824,9 +792,7 @@ describe("WorkflowManager", () => {
   it("rejects empty goal", async () => {
     const { m } = await createManager({
       subagentOptions: {
-        starters: {
-          pi: async () => fakeJob({ exitCode: 0, resultText: "x", delayMs: 5 }),
-        },
+        starter: async () => fakeJob({ exitCode: 0, resultText: "x", delayMs: 5 }),
       },
     });
     await assert.rejects(
@@ -839,16 +805,14 @@ describe("WorkflowManager", () => {
     const largeResult = `large valid result\n${"é".repeat(512_000)}`;
     const { m } = await createManager({
       subagentOptions: {
-        starters: {
-          pi: async (opts: { prompt: string }) =>
-            fakeJob({
-              exitCode: 0,
-              resultText: opts.prompt.includes("task key: synthesize")
-                ? largeResult
-                : "phase ok",
-              delayMs: 5,
-            }),
-        },
+        starter: async (opts: { prompt: string }) =>
+          fakeJob({
+            exitCode: 0,
+            resultText: opts.prompt.includes("task key: synthesize")
+              ? largeResult
+              : "phase ok",
+            delayMs: 5,
+          }),
       },
     });
 
@@ -863,17 +827,15 @@ describe("WorkflowManager", () => {
   it("records an oversized synthesis as failed without a complete artifact", async () => {
     const { m } = await createManager({
       subagentOptions: {
-        starters: {
-          pi: async (opts: { prompt: string }) => {
-            const job = fakeJob({ exitCode: 0, resultText: "phase ok", delayMs: 5 });
-            if (opts.prompt.includes("task key: synthesize")) {
-              job.collect = async () => {
-                await job.handle.wait;
-                throw new PiResultRecordTooLargeError();
-              };
-            }
-            return job;
-          },
+        starter: async (opts: { prompt: string }) => {
+          const job = fakeJob({ exitCode: 0, resultText: "phase ok", delayMs: 5 });
+          if (opts.prompt.includes("task key: synthesize")) {
+            job.collect = async () => {
+              await job.handle.wait;
+              throw new PiResultRecordTooLargeError();
+            };
+          }
+          return job;
         },
       },
     });
@@ -895,17 +857,15 @@ describe("WorkflowManager", () => {
   it("fallback synthesis when synthesis agent fails", async () => {
     const { m } = await createManager({
       subagentOptions: {
-        starters: {
-          pi: async (opts: { prompt: string }) => {
-            if (opts.prompt.includes("task key: synthesize")) {
-              return fakeJob({ exitCode: 1, errorText: "synth boom", delayMs: 10 });
-            }
-            return fakeJob({
-              exitCode: 0,
-              resultText: "phase ok detail for handoff",
-              delayMs: 10,
-            });
-          },
+        starter: async (opts: { prompt: string }) => {
+          if (opts.prompt.includes("task key: synthesize")) {
+            return fakeJob({ exitCode: 1, errorText: "synth boom", delayMs: 10 });
+          }
+          return fakeJob({
+            exitCode: 0,
+            resultText: "phase ok detail for handoff",
+            delayMs: 10,
+          });
         },
       },
     });

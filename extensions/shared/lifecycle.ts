@@ -1,3 +1,11 @@
+/** Static limit, or a getter re-read per use (e.g. package config via /pe-settings). */
+export type LimitValue = number | (() => number);
+
+export function resolveLimit(value: LimitValue | undefined, fallback: number) {
+  if (value === undefined) return fallback;
+  return typeof value === "function" ? value() : value;
+}
+
 /**
  * Tracks how many active waiters (wait/cancel/kill) still care about an id's
  * settled result, so async completion delivery can skip ids already consumed

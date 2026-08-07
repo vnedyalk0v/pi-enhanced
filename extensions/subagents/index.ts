@@ -3,6 +3,11 @@ import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-c
 import { Type } from "typebox";
 import { createManagerHost, modelLabel } from "../shared/host.ts";
 import { JobsOverlay } from "../shared/jobs-overlay.ts";
+import {
+  loadPackageConfigFor,
+  projectTrustedOf,
+  type PackageConfigCtx,
+} from "../shared/package-config.ts";
 import { terminalText } from "../shared/terminal-text.ts";
 import {
   formatExit,
@@ -12,9 +17,7 @@ import {
 } from "../shared/text.ts";
 import { formatElapsed } from "../shared/time.ts";
 import {
-  describeHiddenAgent,
   discoverAgents,
-  findHiddenAgent,
   isSameTrustedProject,
   type AgentDefinition,
 } from "./agents.ts";
@@ -28,7 +31,6 @@ import {
   buildStatusResult,
   buildWaitResult,
   summarizeOutputTail,
-  truncateAtWord,
 } from "./format.ts";
 import { SubagentManager } from "./manager.ts";
 
@@ -48,13 +50,13 @@ const SpawnParams = Type.Object({
   model: Type.Optional(
     Type.String({
       description:
-        "Model override, provider/id pattern. Default: the agent definition's model, else the parent's current model.",
+        "Model override, provider/id pattern. Default: agent definition, else /pe-settings package override, else active Pi session model.",
     }),
   ),
   thinking: Type.Optional(
     Type.String({
       description:
-        "Thinking level override (off|minimal|low|medium|high|...). Default: the agent definition's thinking, else the parent's current level.",
+        "Thinking level override (off|minimal|low|medium|high|...). Default: agent definition, else /pe-settings package override, else active Pi session thinking.",
     }),
   ),
   working_dir: Type.Optional(
@@ -114,6 +116,10 @@ export function modelPatternMatchesRegistry(
 
 export default function (pi: ExtensionAPI) {
   let manager: SubagentManager | undefined;
+  let configCtx: PackageConfigCtx | undefined;
+
+  const packageConfig = () => loadPackageConfigFor(configCtx);
+
   const host = createManagerHost<SubagentSnapshot>(pi, {
     widgetId: WIDGET_ID,
     customType: "subagent-result",
@@ -141,9 +147,15 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
+  const rememberConfigCtx = (ctx: ExtensionContext) => {
+    configCtx = { cwd: ctx.cwd, projectTrusted: projectTrustedOf(ctx) };
+  };
+
   const getManager = () => {
     if (host.disposed) throw new Error("Subagent manager is shutting down.");
     manager ??= new SubagentManager({
+      maxRunning: () => packageConfig().subagents.maxRunning,
+      maxRuntimeMs: () => packageConfig().subagents.maxRuntimeMs,
       onSettled: host.onSettled,
       onChange: host.updateWidget,
     });
@@ -162,7 +174,9 @@ export default function (pi: ExtensionAPI) {
     ],
     parameters: SpawnParams,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      rememberConfigCtx(ctx);
       const m = getManager();
+      const cfg = packageConfig();
 
       // Validate before any discovery or confirm dialog so a bogus override
       // fails fast instead of after the user approved a project agent.
@@ -185,10 +199,11 @@ export default function (pi: ExtensionAPI) {
         agentDef = agents.find((a) => a.name === agentName);
         if (!agentDef) {
           const available = agents.map((a) => a.name).join(", ") || "none";
-          const hidden = projectTrusted
-            ? undefined
-            : findHiddenAgent(agentName, cwd, ctx.cwd, ctx.isProjectTrusted());
-          const explanation = hidden ? ` ${describeHiddenAgent(agentName, cwd, hidden)}` : "";
+          // Project definitions stay invisible until the project is trusted and
+          // the worker directory shares it; say so rather than scanning for one.
+          const explanation = projectTrusted
+            ? ""
+            : " Project agents (.pi/agents) load only for trusted projects, and only when working_dir shares that project.";
           throw new Error(
             `Unknown agent: "${agentName}".${explanation} Available: ${truncateOneLine(available, 300)}.`,
           );
@@ -214,8 +229,14 @@ export default function (pi: ExtensionAPI) {
         }
       }
 
-      const model = modelOverride || agentDef?.model || modelLabel(ctx);
-      const thinking = params.thinking?.trim() || agentDef?.thinking || ctx.thinkingLevel;
+      // Precedence: explicit spawn params → agent definition → package defaults → parent.
+      const model =
+        modelOverride || agentDef?.model || cfg.subagents.defaultModel || modelLabel(ctx);
+      const thinking =
+        params.thinking?.trim() ||
+        agentDef?.thinking ||
+        cfg.subagents.defaultThinking ||
+        ctx.thinkingLevel;
 
       const snap = await m.spawn({
         agent: agentDef?.name,
@@ -273,7 +294,7 @@ export default function (pi: ExtensionAPI) {
       const m = getManager();
       const snap = m.get(params.id);
       if (!snap) throw new Error(`Unknown subagent id: ${params.id}`);
-      if (snap.status !== "running") host.delivery.consume([snap.id]);
+      if (snap.status !== "running") host.consume([snap.id]);
       return {
         content: [{ type: "text" as const, text: buildStatusResult(snap) }],
         details: { id: snap.id, status: snap.status, agent: snap.agent },
@@ -307,7 +328,7 @@ export default function (pi: ExtensionAPI) {
       if (params.ids.length === 0) throw new Error("ids must not be empty");
       const m = getManager();
       const snaps = await m.wait(params.ids, signal);
-      host.delivery.consume(params.ids);
+      host.consume(params.ids);
       host.updateWidget();
       return {
         content: [{ type: "text" as const, text: buildWaitResult(snaps) }],
@@ -329,7 +350,7 @@ export default function (pi: ExtensionAPI) {
       const m = getManager();
       try {
         const snaps = await m.cancel(params.ids, signal);
-        host.delivery.consume(params.ids);
+        host.consume(params.ids);
         host.updateWidget();
         return {
           content: [{ type: "text" as const, text: buildCancelResult(snaps) }],
@@ -353,7 +374,9 @@ export default function (pi: ExtensionAPI) {
         if (ctx.hasUI) ctx.ui.notify("Usage: /btw <question>", "warning");
         return;
       }
+      rememberConfigCtx(ctx);
       const m = getManager();
+      const cfg = packageConfig();
       try {
         const snap = await m.spawn({
           prompt: [
@@ -362,10 +385,10 @@ export default function (pi: ExtensionAPI) {
             "",
             prompt,
           ].join("\n"),
-          title: `btw: ${truncateAtWord(prompt, 40)}`,
+          title: `btw: ${truncateOneLine(prompt, 40)}`,
           cwd: ctx.cwd,
-          model: modelLabel(ctx),
-          thinking: ctx.thinkingLevel ?? "low",
+          model: cfg.subagents.defaultModel || modelLabel(ctx),
+          thinking: cfg.subagents.defaultThinking || ctx.thinkingLevel || "low",
           quiet: true,
         });
         host.updateWidget();
@@ -450,7 +473,7 @@ export default function (pi: ExtensionAPI) {
             },
             cancel: (id) =>
               m.cancel([id]).then(() => {
-                host.delivery.consume([id]);
+                host.consume([id]);
                 host.updateWidget();
               }),
           },

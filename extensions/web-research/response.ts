@@ -1,8 +1,9 @@
-const oversizedPrefixes = new WeakMap<object, string>();
+/** Error carrying the bytes read before the response blew the size cap. */
+type OversizedResponseError = Error & { responsePrefix: string };
 
 export function getOversizedResponsePrefix(error: unknown) {
-  return typeof error === "object" && error !== null
-    ? oversizedPrefixes.get(error)
+  return error instanceof Error
+    ? (error as Partial<OversizedResponseError>).responsePrefix
     : undefined;
 }
 
@@ -41,8 +42,10 @@ export async function readResponseText(
       if (value.byteLength > remaining) {
         text += decoder.decode(value.subarray(0, remaining), { stream: true });
         text += decoder.decode();
-        const error = new Error(`${label} response exceeded ${maxBytes} bytes`);
-        oversizedPrefixes.set(error, text);
+        const error = Object.assign(
+          new Error(`${label} response exceeded ${maxBytes} bytes`),
+          { responsePrefix: text },
+        ) satisfies OversizedResponseError;
         await reader.cancel(error).catch(() => {});
         throw error;
       }

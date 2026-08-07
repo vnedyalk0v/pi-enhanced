@@ -92,19 +92,10 @@ function formatStreamTail(stream: TerminalSnapshot["stdout"]) {
   });
 
   let text = truncation.content || "(empty)";
-  const log = stream.spillPath
-    ? stream.spillTruncatedBytes > 0
-      ? `Partial log: ${stream.spillPath} (${formatSize(stream.spillTruncatedBytes)} not written)`
-      : `Full log: ${stream.spillPath}`
-    : stream.spillTruncatedBytes > 0
-      ? `Partial log unavailable (${formatSize(stream.spillTruncatedBytes)} not written)`
-      : "Log available in /ps viewer";
   if (truncation.truncated || stream.truncatedBytes > 0) {
     text +=
       `\n\n[truncated: showing last ${formatSize(truncation.outputBytes)} of ${formatSize(stream.totalBytes)}.` +
-      ` ${log}]`;
-  } else if (stream.spillTruncatedBytes > 0) {
-    text += `\n\n[${log}]`;
+      " Older output is not retained; redirect the command to a file to keep it all]";
   }
   return text;
 }

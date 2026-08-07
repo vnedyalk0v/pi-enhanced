@@ -4,7 +4,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { type BinaryName, ensureBinary } from "./binaries.ts";
+import { type BinaryName, resolveBinary, resolveExisting } from "./binaries.ts";
 import {
   buildFdArgs,
   buildRgArgs,
@@ -40,46 +40,39 @@ const RgParams = Type.Object({
   maxCount: Type.Optional(Type.Number({ description: "Max matches per file" })),
 });
 
-const binaryCache = new Map<BinaryName, string>();
-
-async function getBinary(
-  name: BinaryName,
-  notify?: (message: string) => void,
-  signal?: AbortSignal,
-): Promise<string> {
-  const cached = binaryCache.get(name);
-  if (cached) return cached;
-  const result = await ensureBinary(name, { signal });
-  if (result.installed) {
-    notify?.(`Installed ${name} to local Pi bin directory`);
-  }
-  binaryCache.set(name, result.path);
-  return result.path;
-}
-
-/**
- * Make fd/rg the default discovery tools for this package:
- * keep them active and deactivate built-in find/grep when present.
- */
-function preferFdAndRg(pi: ExtensionAPI) {
-  const active = pi.getActiveTools();
-  const next = active.filter((name) => name !== "find" && name !== "grep");
-  if (!next.includes("fd")) next.push("fd");
-  if (!next.includes("rg")) next.push("rg");
-
-  const same =
-    next.length === active.length &&
-    next.every((name) => active.includes(name)) &&
-    active.includes("fd") &&
-    active.includes("rg") &&
-    !active.includes("find") &&
-    !active.includes("grep");
-  if (!same) pi.setActiveTools(next);
-}
-
 export default function (pi: ExtensionAPI) {
   const spillDirectories = new Set<string>();
+  const binaryCache = new Map<BinaryName, string>();
   let shuttingDown = false;
+
+  async function getBinary(name: BinaryName): Promise<string> {
+    const cached = binaryCache.get(name);
+    if (cached) return cached;
+    const path = await resolveBinary(name);
+    binaryCache.set(name, path);
+    return path;
+  }
+
+  /**
+   * Make fd/rg the default discovery tools for this package. A built-in is
+   * only retired once its replacement has actually resolved — otherwise the
+   * session loses a working tool and gains one that can only report an
+   * install hint.
+   */
+  function preferFdAndRg() {
+    const active = pi.getActiveTools();
+    const next = active.filter(
+      (name) =>
+        !(name === "find" && binaryCache.has("fd")) &&
+        !(name === "grep" && binaryCache.has("rg")),
+    );
+    if (!next.includes("fd")) next.push("fd");
+    if (!next.includes("rg")) next.push("rg");
+
+    const same =
+      next.length === active.length && next.every((name) => active.includes(name));
+    if (!same) pi.setActiveTools(next);
+  }
 
   async function trackSpill(result: RunResult) {
     const { fullOutputPath } = result;
@@ -106,26 +99,20 @@ export default function (pi: ExtensionAPI) {
     );
   });
 
-  pi.on("session_start", async (_event, ctx) => {
-    // Resolve quietly at startup; install only if missing.
+  pi.on("session_start", async () => {
+    // Warm the cache quietly; a missing binary surfaces its install hint on
+    // first tool use, where the model can act on it.
     for (const name of ["fd", "rg"] as const) {
-      try {
-        const result = await ensureBinary(name);
-        binaryCache.set(name, result.path);
-        if (result.installed && ctx.hasUI) {
-          ctx.ui.notify(`Installed ${name} for file-search tools`, "info");
-        }
-      } catch {
-        // Leave resolution to first tool use so the model sees a clear error.
-      }
+      const path = await resolveExisting(name).catch(() => null);
+      if (path) binaryCache.set(name, path);
     }
     // Prefer our tools over built-in find/grep for this package.
-    preferFdAndRg(pi);
+    preferFdAndRg();
   });
 
   // Re-apply after branch/session switches that may restore tool sets.
   pi.on("session_tree", async () => {
-    preferFdAndRg(pi);
+    preferFdAndRg();
   });
 
   pi.registerTool({
@@ -140,9 +127,7 @@ export default function (pi: ExtensionAPI) {
     parameters: FdParams,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       try {
-        const binary = await getBinary("fd", (msg) => {
-          if (ctx.hasUI) ctx.ui.notify(msg, "info");
-        }, signal);
+        const binary = await getBinary("fd");
         const args = buildFdArgs(params);
         const result = await trackSpill(
           await runBinary(binary, args, ctx.cwd, "pi-fd", signal),
@@ -195,9 +180,7 @@ export default function (pi: ExtensionAPI) {
     parameters: RgParams,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       try {
-        const binary = await getBinary("rg", (msg) => {
-          if (ctx.hasUI) ctx.ui.notify(msg, "info");
-        }, signal);
+        const binary = await getBinary("rg");
         const args = buildRgArgs(params);
         const result = await trackSpill(
           await runBinary(binary, args, ctx.cwd, "pi-rg", signal),

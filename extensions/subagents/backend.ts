@@ -8,7 +8,6 @@ import {
   runProcess,
   type RunHandle,
 } from "./run.ts";
-import { tailText } from "../shared/text.ts";
 
 export type PiBackendOptions = {
   prompt: string;
@@ -144,7 +143,7 @@ export async function startPiBackend(options: PiBackendOptions): Promise<Backend
           resultText,
           errorText:
             exitCode !== 0 && !resultText
-              ? tailText(output, 1500) || `pi exited ${exitCode}`
+              ? output.slice(-1500) || `pi exited ${exitCode}`
               : undefined,
           output,
         };

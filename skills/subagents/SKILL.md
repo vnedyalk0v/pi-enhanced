@@ -19,7 +19,8 @@ Named `sa_*` so they do not clash with packages that register `subagent` / `suba
 
 ## Named agents vs ad-hoc
 
-Omit `agent` for an ad-hoc worker with full default tools and the parent's model/thinking.
+Omit `agent` for an ad-hoc worker with full default tools and package/parent model/thinking
+(see `/pe-settings`).
 
 Pass `agent: "<name>"` to use a discovered agent definition instead — a markdown file with
 frontmatter that pins tools, model, and/or thinking for that role:
@@ -45,10 +46,13 @@ discoverable before picking a name.
 ## Defaults
 
 - **Model/thinking**: explicit `sa_spawn` params win, then the agent definition's
-  `model`/`thinking`, then the parent's current model/thinking level.
+  `model`/`thinking`, then package overrides from `/pe-settings` (or
+  `pi-enhanced.json`), then the **active Pi session** model/thinking. Package
+  defaults inherit Pi until you set an override; the model picker is limited to
+  the current Pi provider, and thinking choices follow that model's supported levels.
 - **Tools**: the agent definition's `tools` list if set; otherwise pi's full default set.
-- **Runtime**: workers are force-killed after 30 minutes; split longer work into
-  smaller self-contained tasks.
+- **Runtime / concurrency**: package defaults via `/pe-settings` (default max 4
+  concurrent; force-kill after 30 minutes). Split longer work into smaller tasks.
 
 ## Prompting children
 
