@@ -230,13 +230,14 @@ export default function (pi: ExtensionAPI) {
         if (ctx.hasUI) ctx.ui.notify("Usage: /workflow <goal>", "warning");
         return;
       }
-      const m = getManager();
+      const m = getManager(ctx);
+      const cfg = packageConfig();
       try {
         const snap = await m.start({
           goal,
           cwd: ctx.cwd,
-          model: modelLabel(ctx),
-          thinking: ctx.thinkingLevel,
+          model: cfg.subagents.defaultModel || modelLabel(ctx),
+          thinking: cfg.subagents.defaultThinking || ctx.thinkingLevel,
         });
         host.updateWidget();
         if (ctx.hasUI) {
@@ -264,7 +265,7 @@ export default function (pi: ExtensionAPI) {
         return;
       }
 
-      const m = getManager();
+      const m = getManager(ctx);
       await ctx.ui.custom((tui, theme, _kb, done) => {
         const overlay = new JobsOverlay<WorkflowSnapshot>(
           {
