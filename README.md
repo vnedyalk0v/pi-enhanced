@@ -15,7 +15,7 @@ The package follows three boundaries:
 
 | Dependency | Requirement |
 | --- | --- |
-| Pi | `0.83.0` |
+| Pi | `0.84.1` |
 | Node.js | `24.12.0` or newer |
 | npm and Git | Available on `PATH` |
 
@@ -55,6 +55,7 @@ before installation and use it only in trusted working directories.
 
 | Area | Interfaces | What it adds |
 | --- | --- | --- |
+| Package settings | `/pe-settings` | Defaults for subagent model/thinking, concurrency, and related limits |
 | Conversation | `ask_user`, `/copy-all`, `/summary` | Structured choices, clipboard export, and model-generated session summaries |
 | File search | `fd`, `rg` | Fast filename and content search with bounded model output |
 | Git and UI | `/git-info`, `github-dark-default` | Footer branch status and an automatically selected GitHub-style theme |
@@ -67,6 +68,52 @@ The package also provides on-demand skills for background terminals,
 subagents, web research, and workflows.
 
 ## Configure
+
+### Package settings (`/pe-settings`)
+
+Use `/pe-settings` in interactive TUI to set package-wide defaults:
+
+- subagent default model and thinking level (default: **inherit from Pi**)
+- subagent concurrency and max runtime
+- background terminal concurrency
+- workflow concurrency and per-workflow child pool size
+
+**Model / thinking UX:**
+- With no package override, workers use the **active Pi session model and thinking level**.
+- The model picker lists models from the **same provider** as the current Pi model
+  (for example only OpenAI models when Pi is on your OpenAI subscription).
+- Thinking levels listed are those **supported by the effective model**
+  (Pi model, or the package model override if set).
+
+Settings are stored as JSON overrides (missing keys keep package defaults):
+
+| Scope | Path |
+| --- | --- |
+| Global | `~/.pi/agent/extensions/pi-enhanced.json` |
+| Project (trusted only) | `.pi/pi-enhanced.json` |
+
+Project values override global. Model/thinking resolution for `sa_spawn` is:
+spawn params → agent definition → package defaults (`/pe-settings`) → **Pi session**.
+
+Outside TUI, `/pe-settings` prints the effective config (read-only). You can also
+edit the JSON files directly.
+
+Example:
+
+```json
+{
+  "subagents": {
+    "defaultModel": "anthropic/claude-haiku-4-5",
+    "defaultThinking": "low",
+    "maxRunning": 4,
+    "maxRuntimeMinutes": 30
+  },
+  "backgroundTerminals": { "maxRunning": 8 },
+  "workflows": { "maxRunning": 1, "childMaxRunning": 4 }
+}
+```
+
+### Enable / disable resources
 
 Run `pi config` to enable or disable individual extensions, skills, and themes.
 Press Tab to switch between global and project-local settings, or start directly
@@ -127,14 +174,15 @@ command instead of running.
 
 ## Operational limits
 
-| Resource | Running limit | Retained results |
+| Resource | Default running limit | Retained results |
 | --- | ---: | ---: |
 | Background terminals | 8 | 32 |
 | Standalone subagents | 4 | 32 |
 | Workflows | 1 | 16 |
 
-Each workflow owns a separate four-child subagent pool. Starting jobs reserve
-capacity immediately.
+Limits are configurable via `/pe-settings` (or `pi-enhanced.json`). Each workflow
+owns a separate child subagent pool (default 4). Starting jobs reserve capacity
+immediately.
 
 Automatic completion messages stay metadata-only; the model retrieves child
 output explicitly via `bg_status`, `sa_status`, or `wf_status`. The `/ps`,
@@ -150,7 +198,8 @@ temporary file with a 16 MiB cap; larger spills are labeled partial and all
 spill files are removed at Pi session shutdown. Native subagent JSON
 result records have a 4 MiB UTF-8 ceiling. An oversized record fails the worker
 instead of returning a truncated successful result. Subagents (standalone and
-workflow children) are force-killed after 30 minutes of runtime.
+workflow children) are force-killed after 30 minutes of runtime by default
+(configurable via `/pe-settings`).
 Workflow artifacts use private OS-temporary directories reported by
 `wf_status`; completed artifacts survive the session but are not durable or
 cross-machine storage.

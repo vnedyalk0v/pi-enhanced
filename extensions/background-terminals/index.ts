@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createManagerHost } from "../shared/host.ts";
+import { loadPackageConfig } from "../shared/package-config.ts";
 import { TOOL_LIMITS_NOTE, truncateOneLine } from "../shared/text.ts";
 import { JobsOverlay } from "../shared/jobs-overlay.ts";
 import {
@@ -41,6 +42,12 @@ const KillParams = Type.Object({
 
 export default function (pi: ExtensionAPI) {
   let manager: TerminalManager | undefined;
+  let configCtx: { cwd: string; projectTrusted: boolean } | undefined;
+
+  const packageConfig = () =>
+    configCtx
+      ? loadPackageConfig(configCtx)
+      : loadPackageConfig({ cwd: process.cwd(), projectTrusted: false });
 
   const host = createManagerHost<TerminalSnapshot>(pi, {
     widgetId: WIDGET_ID,
@@ -67,9 +74,14 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  const getManager = () => {
+  const projectTrustedOf = (ctx: { isProjectTrusted?: () => boolean }) =>
+    typeof ctx.isProjectTrusted === "function" ? ctx.isProjectTrusted() : false;
+
+  const getManager = (ctx?: { cwd: string; isProjectTrusted?: () => boolean }) => {
+    if (ctx) configCtx = { cwd: ctx.cwd, projectTrusted: projectTrustedOf(ctx) };
     if (host.disposed) throw new Error("Background terminal manager is shutting down.");
     manager ??= new TerminalManager({
+      maxRunning: () => packageConfig().backgroundTerminals.maxRunning,
       onSettled: host.onSettled,
       onChange: host.updateWidget,
     });
@@ -89,7 +101,7 @@ export default function (pi: ExtensionAPI) {
     ],
     parameters: StartParams,
     async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-      const m = getManager();
+      const m = getManager(ctx);
       const cwd = resolve(ctx.cwd, params.working_dir ?? ".");
       const snap = await m.start({
         command: params.command,

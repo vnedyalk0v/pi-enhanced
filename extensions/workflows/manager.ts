@@ -67,8 +67,16 @@ export type WorkflowSettledInfo = {
   consumed: boolean;
 };
 
+type LimitValue = number | (() => number);
+
+function resolveLimit(value: LimitValue | undefined, fallback: number) {
+  if (value === undefined) return fallback;
+  return typeof value === "function" ? value() : value;
+}
+
 export type WorkflowManagerOptions = {
-  maxRunning?: number;
+  /** Static limit or live getter (e.g. package config via /pe-settings). */
+  maxRunning?: LimitValue;
   maxTracked?: number;
   /** Optional caller-owned root for artifact dirs. */
   artifactsRoot?: string;
@@ -87,7 +95,7 @@ export class WorkflowManager {
   private disposed = false;
   private waitInterest = new InterestTracker();
   private readonly listeners = new Set<() => void>();
-  private readonly maxRunning: number;
+  private readonly maxRunningOpt: LimitValue | undefined;
   private readonly maxTracked: number;
   private readonly artifactsRoot?: string;
   private onSettled?: (info: WorkflowSettledInfo) => void;
@@ -97,7 +105,7 @@ export class WorkflowManager {
   private reconExtensionPath?: string;
 
   constructor(options: WorkflowManagerOptions = {}) {
-    this.maxRunning = options.maxRunning ?? DEFAULT_MAX_RUNNING;
+    this.maxRunningOpt = options.maxRunning;
     this.maxTracked = options.maxTracked ?? DEFAULT_MAX_TRACKED;
     this.artifactsRoot = options.artifactsRoot;
     this.onSettled = options.onSettled;
@@ -105,6 +113,10 @@ export class WorkflowManager {
     this.subagentOptions = options.subagentOptions;
     this.reconTools = options.reconTools;
     this.reconExtensionPath = options.reconExtensionPath;
+  }
+
+  private maxRunning() {
+    return resolveLimit(this.maxRunningOpt, DEFAULT_MAX_RUNNING);
   }
 
   list(): WorkflowSnapshot[] {
@@ -129,9 +141,10 @@ export class WorkflowManager {
   ): Promise<WorkflowSnapshot> {
     if (this.disposed) throw new Error("Workflow manager is disposed.");
     options.signal?.throwIfAborted();
-    if (this.runningCount() + this.startingCount >= this.maxRunning) {
+    const maxRunning = this.maxRunning();
+    if (this.runningCount() + this.startingCount >= maxRunning) {
       throw new Error(
-        `Concurrency limit: at most ${this.maxRunning} workflows may run at once.`,
+        `Concurrency limit: at most ${maxRunning} workflows may run at once.`,
       );
     }
 
