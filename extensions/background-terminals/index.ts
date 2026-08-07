@@ -2,7 +2,11 @@ import { resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createManagerHost } from "../shared/host.ts";
-import { loadPackageConfig } from "../shared/package-config.ts";
+import {
+  loadPackageConfigFor,
+  projectTrustedOf,
+  type PackageConfigCtx,
+} from "../shared/package-config.ts";
 import { TOOL_LIMITS_NOTE, truncateOneLine } from "../shared/text.ts";
 import { JobsOverlay } from "../shared/jobs-overlay.ts";
 import {
@@ -42,12 +46,9 @@ const KillParams = Type.Object({
 
 export default function (pi: ExtensionAPI) {
   let manager: TerminalManager | undefined;
-  let configCtx: { cwd: string; projectTrusted: boolean } | undefined;
+  let configCtx: PackageConfigCtx | undefined;
 
-  const packageConfig = () =>
-    configCtx
-      ? loadPackageConfig(configCtx)
-      : loadPackageConfig({ cwd: process.cwd(), projectTrusted: false });
+  const packageConfig = () => loadPackageConfigFor(configCtx);
 
   const host = createManagerHost<TerminalSnapshot>(pi, {
     widgetId: WIDGET_ID,
@@ -73,9 +74,6 @@ export default function (pi: ExtensionAPI) {
       if (m) await m.disposeAll();
     },
   });
-
-  const projectTrustedOf = (ctx: { isProjectTrusted?: () => boolean }) =>
-    typeof ctx.isProjectTrusted === "function" ? ctx.isProjectTrusted() : false;
 
   const getManager = (ctx?: { cwd: string; isProjectTrusted?: () => boolean }) => {
     if (ctx) configCtx = { cwd: ctx.cwd, projectTrusted: projectTrustedOf(ctx) };

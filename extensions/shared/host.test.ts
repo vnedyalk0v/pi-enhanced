@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { createManagerHost, modelLabel } from "./host.ts";
+import { createManagerHost, modelLabel, withUI } from "./host.ts";
 import { WaitAbortedError } from "./time.ts";
 
 type Handler = (...args: unknown[]) => Promise<unknown>;
@@ -210,6 +210,49 @@ describe("createManagerHost", () => {
       ["x-1"],
     );
     assert.deepEqual(widgets.get("test-widget"), ["3 running"]);
+  });
+});
+
+describe("withUI", () => {
+  it("rejects a missing context", () => {
+    assert.equal(
+      withUI(undefined, () => assert.fail("should not run")),
+      false,
+    );
+  });
+
+  it("runs a UI effect with a healthy context", () => {
+    const ctx = { hasUI: true } as ExtensionContext;
+    let called = false;
+
+    assert.equal(
+      withUI(ctx, () => {
+        called = true;
+      }),
+      true,
+    );
+    assert.equal(called, true);
+  });
+
+  it("does not run without a UI", () => {
+    const ctx = { hasUI: false } as ExtensionContext;
+    assert.equal(
+      withUI(ctx, () => assert.fail("should not run")),
+      false,
+    );
+  });
+
+  it("swallows stale context access", () => {
+    const ctx = {
+      get hasUI() {
+        throw new Error("stale");
+      },
+    } as unknown as ExtensionContext;
+
+    assert.equal(
+      withUI(ctx, () => assert.fail("should not run")),
+      false,
+    );
   });
 });
 

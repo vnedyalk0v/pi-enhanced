@@ -1,6 +1,21 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { WaitAbortedError } from "./time.ts";
-import { withUI } from "./ui.ts";
+
+/**
+ * Pi invalidates a captured ctx after session replacement or reload; every
+ * property access then throws, so `ctx?.hasUI` is not a sufficient guard.
+ * Runs a UI side effect, swallowing a stale-ctx throw; false if it did not run.
+ */
+export function withUI(ctx: ExtensionContext | undefined, fn: (ctx: ExtensionContext) => void) {
+  if (!ctx) return false;
+  try {
+    if (!ctx.hasUI) return false;
+    fn(ctx);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export type ManagerHostOptions<S extends { id: string }> = {
   widgetId: string;
@@ -158,6 +173,6 @@ export function createManagerHost<S extends { id: string }>(
 }
 
 /** Parent session's model as a provider/id label for child spawn defaults. */
-export function modelLabel(ctx: ExtensionContext) {
+export function modelLabel(ctx: Pick<ExtensionContext, "model">) {
   return ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
 }

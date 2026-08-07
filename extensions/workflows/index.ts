@@ -4,7 +4,11 @@ import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createManagerHost, modelLabel } from "../shared/host.ts";
 import { JobsOverlay } from "../shared/jobs-overlay.ts";
-import { loadPackageConfig } from "../shared/package-config.ts";
+import {
+  loadPackageConfigFor,
+  projectTrustedOf,
+  type PackageConfigCtx,
+} from "../shared/package-config.ts";
 import { terminalText } from "../shared/terminal-text.ts";
 import type { WorkflowSnapshot } from "./domain.ts";
 import { TOOL_LIMITS_NOTE, truncateOneLine } from "../shared/text.ts";
@@ -43,12 +47,9 @@ const IdsParams = Type.Object({
 
 export default function (pi: ExtensionAPI) {
   let manager: WorkflowManager | undefined;
-  let configCtx: { cwd: string; projectTrusted: boolean } | undefined;
+  let configCtx: PackageConfigCtx | undefined;
 
-  const packageConfig = () =>
-    configCtx
-      ? loadPackageConfig(configCtx)
-      : loadPackageConfig({ cwd: process.cwd(), projectTrusted: false });
+  const packageConfig = () => loadPackageConfigFor(configCtx);
 
   const host = createManagerHost<WorkflowSnapshot>(pi, {
     widgetId: WIDGET_ID,
@@ -73,9 +74,6 @@ export default function (pi: ExtensionAPI) {
       if (m) await m.disposeAll();
     },
   });
-
-  const projectTrustedOf = (ctx: { isProjectTrusted?: () => boolean }) =>
-    typeof ctx.isProjectTrusted === "function" ? ctx.isProjectTrusted() : false;
 
   const getManager = (ctx?: { cwd: string; isProjectTrusted?: () => boolean }) => {
     if (ctx) configCtx = { cwd: ctx.cwd, projectTrusted: projectTrustedOf(ctx) };

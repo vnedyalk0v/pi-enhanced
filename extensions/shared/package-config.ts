@@ -186,17 +186,29 @@ export function resolvePackageConfig(file: PackageConfigFile): ResolvedPackageCo
   };
 }
 
+export type PackageConfigCtx = {
+  cwd: string;
+  projectTrusted: boolean;
+};
+
 /**
  * Load effective package config. Project file is only applied when the project
  * is trusted (same rule as other project-local Pi config).
  */
-export function loadPackageConfig(options: {
-  cwd: string;
-  projectTrusted: boolean;
-}): ResolvedPackageConfig {
+export function loadPackageConfig(options: PackageConfigCtx): ResolvedPackageConfig {
   const globalFile = readConfigFile(globalConfigPath());
   const projectFile = options.projectTrusted ? readConfigFile(projectConfigPath(options.cwd)) : {};
   return resolvePackageConfig(mergeConfigFiles(globalFile, projectFile));
+}
+
+/** Extension ctx may predate `isProjectTrusted`; default-deny when it is absent. */
+export function projectTrustedOf(ctx: { isProjectTrusted?: () => boolean }) {
+  return typeof ctx.isProjectTrusted === "function" ? ctx.isProjectTrusted() : false;
+}
+
+/** Config for a remembered session ctx, or an untrusted cwd before one is seen. */
+export function loadPackageConfigFor(ctx: PackageConfigCtx | undefined) {
+  return loadPackageConfig(ctx ?? { cwd: process.cwd(), projectTrusted: false });
 }
 
 function pruneEmpty<T extends Record<string, unknown>>(obj: T): Partial<T> {
